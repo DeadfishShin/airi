@@ -7,12 +7,43 @@ import type { ProductEventService } from '../../../services/domain/product-event
 
 import { useLogger } from '@guiiai/logg'
 import { errorMessageFrom } from '@moeru/std'
+import { and, eq } from 'drizzle-orm'
 
-import { createBadRequestError, createServiceUnavailableError } from '../../../utils/error'
+import { createBadRequestError, createInternalError, createServiceUnavailableError } from '../../../utils/error'
 import { claimReceiptFromCheckoutSession } from '../claim'
-import { resolvePaymentOrderId } from '../legacy-session'
+
+import * as paymentSchema from '../../../schemas/payment'
 
 const logger = useLogger('stripe')
+
+/**
+ * Finds the `payment_order` id for a verified Checkout Session.
+ *
+ * New Sessions store `metadata.payment_order_id`. Sessions copied by
+ * `0023_payment_order.sql` are found by Stripe session id.
+ */
+export async function resolvePaymentOrderId(
+  db: Database,
+  session: Stripe.Checkout.Session,
+): Promise<string> {
+  const fromMetadata = session.metadata?.payment_order_id
+  if (fromMetadata)
+    return fromMetadata
+
+  const [existing] = await db
+    .select({ id: paymentSchema.paymentOrder.id })
+    .from(paymentSchema.paymentOrder)
+    .where(and(
+      eq(paymentSchema.paymentOrder.provider, 'stripe'),
+      eq(paymentSchema.paymentOrder.providerOrderId, session.id),
+    ))
+    .limit(1)
+
+  if (existing)
+    return existing.id
+
+  throw createInternalError('Payment confirmation is missing payment_order_id')
+}
 
 /**
  * Verifies a Stripe webhook, maps a Checkout Session to a claim receipt,

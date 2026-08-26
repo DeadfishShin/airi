@@ -30,8 +30,8 @@ CREATE INDEX "payment_order_user_id_idx" ON "payment_order" USING btree ("user_i
 CREATE UNIQUE INDEX "provider_account_provider_customer_uidx" ON "provider_account" USING btree ("provider","provider_customer_id") WHERE deleted_at IS NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "provider_account_provider_user_uidx" ON "provider_account" USING btree ("provider","user_id") WHERE deleted_at IS NULL;--> statement-breakpoint
 CREATE INDEX "provider_account_user_id_idx" ON "provider_account" USING btree ("user_id");--> statement-breakpoint
--- Expand only. Keep stripe_* tables and user_flux.stripe_customer_id until
--- in-progress Checkout Sessions finish, expire, or get manual handling.
+-- Old replicas still use stripe_* tables and user_flux.stripe_customer_id.
+-- This file must not drop them.
 -- stripe_customer allowed several live rows per user. Copy the oldest live row and all deleted rows.
 INSERT INTO "provider_account" ("id", "user_id", "provider", "provider_customer_id", "created_at", "updated_at", "deleted_at")
 SELECT "id", "user_id", 'stripe', "stripe_customer_id", "created_at", "updated_at", "deleted_at"

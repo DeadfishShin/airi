@@ -10,8 +10,7 @@ import { mockDB } from '../../libs/mock-db'
 import { createTestRedis } from '../../libs/tests/redis'
 import { createBillingService } from '../../services/domain/billing/billing-service'
 import { createPaymentService } from '../../services/domain/payment'
-import { resolvePaymentOrderId } from './legacy-session'
-import { createWebhookOperation } from './operations/webhook'
+import { createWebhookOperation, resolvePaymentOrderId } from './operations/webhook'
 
 import * as schema from '../../schemas'
 
@@ -39,7 +38,7 @@ function checkoutSession(overrides: Record<string, unknown> = {}) {
   } as unknown as Stripe.Checkout.Session
 }
 
-describe('legacy Stripe Session lookup', () => {
+describe('payment order lookup', () => {
   let db: Database
   let payment: ReturnType<typeof createPaymentService>
 
@@ -60,7 +59,6 @@ describe('legacy Stripe Session lookup', () => {
     await db.delete(schema.fluxTransaction).where(eq(schema.fluxTransaction.userId, 'user-legacy-1'))
     await db.delete(schema.userFlux).where(eq(schema.userFlux.userId, 'user-legacy-1'))
     await db.delete(schema.paymentOrder).where(eq(schema.paymentOrder.userId, 'user-legacy-1'))
-    await db.delete(schema.stripeCheckoutSession).where(eq(schema.stripeCheckoutSession.userId, 'user-legacy-1'))
     await db.delete(schema.providerAccount).where(eq(schema.providerAccount.userId, 'user-legacy-1'))
   })
 
@@ -76,25 +74,6 @@ describe('legacy Stripe Session lookup', () => {
       creditedAt: status === 'paid' ? new Date() : undefined,
     }).returning()
     return order!
-  }
-
-  async function insertLegacyCheckout(overrides: Partial<{
-    stripeSessionId: string
-    fluxCredited: boolean
-    status: string
-  }> = {}) {
-    const [row] = await db.insert(schema.stripeCheckoutSession).values({
-      userId: 'user-legacy-1',
-      stripeSessionId: overrides.stripeSessionId ?? 'cs_legacy_1',
-      mode: 'payment',
-      status: overrides.status ?? 'complete',
-      paymentStatus: 'paid',
-      amountTotal: 500,
-      currency: 'usd',
-      fluxCredited: overrides.fluxCredited ?? false,
-      metadata: JSON.stringify({ userId: 'user-legacy-1', fluxAmount: '500', packKey: 'starter' }),
-    }).returning()
-    return row!
   }
 
   function webhookForSession(session: Stripe.Checkout.Session) {
@@ -129,19 +108,7 @@ describe('legacy Stripe Session lookup', () => {
     expect(id).toBe(order.id)
   })
 
-  it('adopts a leftover stripe_checkout_session row into payment_order', async () => {
-    const row = await insertLegacyCheckout()
-    const id = await resolvePaymentOrderId(db, checkoutSession({ metadata: {} }))
-    expect(id).toBe(row.id)
-
-    const [order] = await db.select().from(schema.paymentOrder).where(eq(schema.paymentOrder.id, row.id))
-    expect(order?.providerOrderId).toBe('cs_legacy_1')
-    expect(order?.status).toBe('pending')
-    expect(order?.fluxAmount).toBe(500)
-    expect(order?.packKey).toBe('starter')
-  })
-
-  it('throws when the Session is missing from both tables so Stripe can retry', async () => {
+  it('throws when the Session is missing from payment_order so Stripe can retry', async () => {
     await expect(resolvePaymentOrderId(db, checkoutSession({ metadata: {} }))).rejects.toMatchObject({
       statusCode: 500,
     })
@@ -159,19 +126,6 @@ describe('legacy Stripe Session lookup', () => {
     const ledger = await db.select().from(schema.fluxTransaction).where(eq(schema.fluxTransaction.userId, 'user-legacy-1'))
     expect(ledger).toHaveLength(1)
     expect(ledger[0]?.requestId).toBe(order.id)
-  })
-
-  it('adopts a leftover pending checkout and credits Flux', async () => {
-    const row = await insertLegacyCheckout({ fluxCredited: false })
-    const webhook = webhookForSession(checkoutSession({ metadata: {} }))
-
-    await webhook('test_sig', '{}')
-
-    const [paid] = await db.select().from(schema.paymentOrder).where(eq(schema.paymentOrder.id, row.id))
-    expect(paid?.status).toBe('paid')
-
-    const [flux] = await db.select().from(schema.userFlux).where(eq(schema.userFlux.userId, 'user-legacy-1'))
-    expect(flux?.flux).toBe(500)
   })
 
   it('does not credit Flux again for a backfilled paid order', async () => {
@@ -198,21 +152,7 @@ describe('legacy Stripe Session lookup', () => {
     expect(flux?.flux).toBe(500)
   })
 
-  it('does not credit Flux again when adopting a flux_credited checkout', async () => {
-    await insertLegacyCheckout({ fluxCredited: true })
-    await db.insert(schema.userFlux).values({ userId: 'user-legacy-1', flux: 500 })
-
-    const webhook = webhookForSession(checkoutSession({ metadata: {} }))
-    await webhook('test_sig', '{}')
-
-    const ledger = await db.select().from(schema.fluxTransaction).where(eq(schema.fluxTransaction.userId, 'user-legacy-1'))
-    expect(ledger).toHaveLength(0)
-
-    const [flux] = await db.select().from(schema.userFlux).where(eq(schema.userFlux.userId, 'user-legacy-1'))
-    expect(flux?.flux).toBe(500)
-  })
-
-  it('returns 500 when webhook cannot resolve a legacy Session', async () => {
+  it('returns 500 when webhook cannot resolve a Session', async () => {
     const webhook = webhookForSession(checkoutSession({ metadata: {} }))
     await expect(webhook('test_sig', '{}')).rejects.toMatchObject({
       statusCode: 500,
