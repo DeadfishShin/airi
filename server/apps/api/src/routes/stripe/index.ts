@@ -36,7 +36,7 @@ export function createStripeRoutes(
   productEventService: ProductEventService | null,
 ) {
   const checkout = createCheckoutOperation(db, stripe, configKV, env, metrics, productEventService)
-  const webhook = createWebhookOperation(stripe, env.STRIPE_WEBHOOK_SECRET ?? null, payment, db, metrics, productEventService)
+  const webhook = createWebhookOperation(stripe, env.STRIPE_WEBHOOK_SECRET ?? null, payment, metrics, productEventService)
 
   return new Hono<HonoEnv>()
     .get('/packages', async (c) => {
