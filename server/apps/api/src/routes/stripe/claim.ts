@@ -2,19 +2,17 @@ import type Stripe from 'stripe'
 
 import type { ClaimReceipt } from '../../services/domain/payment'
 
-import { createInternalError } from '../../utils/error'
-
 /**
  * Maps a verified Stripe Checkout Session onto a CORE claim receipt.
+ * The channel supplies `paymentOrderId` after it resolves the Session.
  */
-export function claimReceiptFromCheckoutSession(session: Stripe.Checkout.Session): ClaimReceipt {
+export function claimReceiptFromCheckoutSession(
+  session: Stripe.Checkout.Session,
+  paymentOrderId: string,
+): ClaimReceipt {
   const providerCustomerId = typeof session.customer === 'string'
     ? session.customer
     : session.customer?.id
-
-  const paymentOrderId = session.metadata?.payment_order_id
-  if (!paymentOrderId)
-    throw createInternalError('Payment confirmation is missing payment_order_id')
 
   const status = session.status === 'expired' ? 'expired' : 'paid'
 

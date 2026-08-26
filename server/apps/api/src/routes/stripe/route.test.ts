@@ -1,3 +1,4 @@
+import type { Database } from '../../libs/db'
 import type { ConfigKVService } from '../../services/adapters/config-kv'
 import type { PaymentService } from '../../services/domain/payment'
 import type { HonoEnv } from '../../types/hono'
@@ -9,6 +10,14 @@ import { createStripeRoutes } from '.'
 import { createTestRedis } from '../../libs/tests/redis'
 import { ApiError } from '../../utils/error'
 import { createWebhookOperation } from './operations/webhook'
+
+function unusedWebhookDb(): Database {
+  return {
+    select: () => {
+      throw new Error('db should not be queried for new Sessions')
+    },
+  } as unknown as Database
+}
 
 function createMockPayment(overrides: Partial<PaymentService> = {}): PaymentService {
   return {
@@ -222,6 +231,7 @@ describe('stripeRoutes', () => {
         } as any,
         'whsec_test',
         payment,
+        unusedWebhookDb(),
         null,
         productEventService as any,
       )
@@ -258,6 +268,7 @@ describe('stripeRoutes', () => {
         } as any,
         'whsec_test',
         payment,
+        unusedWebhookDb(),
         null,
         null,
       )

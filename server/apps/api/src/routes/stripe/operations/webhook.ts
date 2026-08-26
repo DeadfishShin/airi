@@ -1,5 +1,6 @@
 import type Stripe from 'stripe'
 
+import type { Database } from '../../../libs/db'
 import type { RevenueMetrics } from '../../../otel'
 import type { PaymentService } from '../../../services/domain/payment'
 import type { ProductEventService } from '../../../services/domain/product-events'
@@ -9,6 +10,7 @@ import { errorMessageFrom } from '@moeru/std'
 
 import { createBadRequestError, createServiceUnavailableError } from '../../../utils/error'
 import { claimReceiptFromCheckoutSession } from '../claim'
+import { resolvePaymentOrderId } from '../legacy-session'
 
 const logger = useLogger('stripe')
 
@@ -20,6 +22,7 @@ export function createWebhookOperation(
   stripe: Stripe | null,
   webhookSecret: string | null,
   payment: PaymentService,
+  db: Database,
   metrics: RevenueMetrics | null,
   productEventService: ProductEventService | null,
 ) {
@@ -49,7 +52,8 @@ export function createWebhookOperation(
           break
         }
 
-        const receipt = claimReceiptFromCheckoutSession(session)
+        const paymentOrderId = await resolvePaymentOrderId(db, session)
+        const receipt = claimReceiptFromCheckoutSession(session, paymentOrderId)
         const result = await payment.settle(receipt)
         metrics?.stripeCheckoutCompleted.add(1)
         if (session.amount_total != null && session.currency) {
@@ -82,7 +86,9 @@ export function createWebhookOperation(
         break
       }
       case 'checkout.session.expired': {
-        const receipt = claimReceiptFromCheckoutSession(event.data.object)
+        const session = event.data.object
+        const paymentOrderId = await resolvePaymentOrderId(db, session)
+        const receipt = claimReceiptFromCheckoutSession(session, paymentOrderId)
         await payment.settle(receipt)
         break
       }

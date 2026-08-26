@@ -29,7 +29,10 @@ stays on `/api/v1/stripe/*`. CORE never sees a raw provider event.
 - `POST /api/v1/stripe/checkout` inserts the pending order, then creates
   the Checkout Session.
 - `POST /api/v1/stripe/webhook` verifies the signature, maps the session
-  to a `ClaimReceipt`, and calls `settle`.
+  to a `ClaimReceipt`, and calls `settle`. New Sessions carry
+  `metadata.payment_order_id`. Sessions created before this migration
+  resolve the order by Stripe session id, then by a leftover
+  `stripe_checkout_session` row.
 
 ## Run locally
 
