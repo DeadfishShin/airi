@@ -24,6 +24,7 @@ import { createVadStreamingSession } from '../../libs/audio/vad-streaming-sessio
 import { OFFICIAL_TRANSCRIPTION_PROVIDER_ID } from '../../libs/providers'
 import { APPLE_SPEECH_TRANSCRIPTION_PROVIDER_ID, executeAppleSpeechStream } from '../../libs/providers/providers/apple-speech'
 import { streamWebSpeechAPITranscription } from '../../libs/providers/providers/browser-web-speech-api'
+import { QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID } from '../../libs/providers/providers/qwen-audio-realtime'
 import { streamTranscription } from '../../libs/providers/stream-transcription'
 import { useVAD } from '../ai/models/vad'
 import { useProviderConfigStore } from '../providers/config'
@@ -239,6 +240,7 @@ const STREAM_TRANSCRIPTION_EXECUTORS: Record<string, StreamTranscription> = {
   'aliyun-nls-transcription': streamTranscription,
   [APPLE_SPEECH_TRANSCRIPTION_PROVIDER_ID]: executeAppleSpeechStream,
   [OFFICIAL_TRANSCRIPTION_PROVIDER_ID]: streamTranscription,
+  [QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID]: streamTranscription,
   // Web Speech API is handled specially in transcribeForMediaStream since it works directly with MediaStream
 }
 
@@ -908,6 +910,14 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
     streamingSession.value = session
     startStreamingAsrSpan(providerId)
 
+    const providerOptions = providerId === QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID
+      ? {
+          ...options.providerOptions,
+          language: options.providerOptions?.language
+            ?? providerStore.getProviderConfig(providerId)?.language,
+        }
+      : options.providerOptions
+
     const result = await hearingStore.transcription(
       providerId,
       provider,
@@ -917,7 +927,7 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
       {
         providerOptions: {
           abortSignal: abortController.signal,
-          ...options.providerOptions,
+          ...providerOptions,
         },
       },
     )

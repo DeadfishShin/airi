@@ -45,6 +45,7 @@ describe('migrated provider definitions', () => {
       'comet-api-speech',
       'comet-api-transcription',
       'mimo-audio-transcription',
+      'qwen-audio-realtime-transcription',
       'player2-speech',
       'kokoro-local',
       'google-gemini-audio-speech',

@@ -1547,6 +1547,22 @@ pages:
       aliyun-nls:
         description: Aliyun NLS
         title: Aliyun NLS
+      qwen-audio-realtime-transcription:
+        title: Qwen Audio realtime ASR
+        description: Alibaba Cloud Model Studio realtime speech recognition canary.
+        environment: >-
+          This canary reads DASHSCOPE_API_KEY, DASHSCOPE_WORKSPACE_ID, and
+          DASHSCOPE_REGION from the Electron main process environment. It does
+          not store credentials in AIRI settings.
+        fields:
+          language:
+            label: ASR language
+            description: Choose a language hint for Qwen Audio recognition, or let the service detect it automatically.
+            placeholder: Select an ASR language
+            options:
+              auto: Auto-detect
+              zh: Chinese
+              en: English
       browser-web-speech-api:
         description: Browser-native STT (requires Chrome/Edge/Safari)
         title: Web Speech API
