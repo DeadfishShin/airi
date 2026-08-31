@@ -525,6 +525,29 @@ describe('qwen realtime speech selection', () => {
     expect(speechStore.activeSpeechVoice).toMatchObject({ id: QWEN3_TTS_REALTIME_VOICE_ID })
   })
 
+  it('restores the canonical selection after a provider switch clears the old voice', async () => {
+    const { speechStore } = await prepareQwenCatalog()
+
+    speechStore.activeSpeechProvider = 'voicevox'
+    speechStore.activeSpeechModel = 'default'
+    speechStore.activeSpeechVoiceId = '3'
+    speechStore.activeSpeechVoice = undefined
+
+    // Mirrors the existing Settings provider-switch reset before the central
+    // store selection authority reloads Qwen's static catalog.
+    speechStore.activeSpeechProvider = QWEN3_TTS_REALTIME_PROVIDER_ID
+    speechStore.activeSpeechModel = ''
+    speechStore.activeSpeechVoiceId = ''
+    speechStore.activeSpeechVoice = undefined
+    await speechStore.loadVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_MODEL)
+    await nextTick()
+
+    expect(speechStore.activeSpeechProvider).toBe(QWEN3_TTS_REALTIME_PROVIDER_ID)
+    expect(speechStore.activeSpeechModel).toBe(QWEN3_TTS_REALTIME_MODEL)
+    expect(speechStore.activeSpeechVoiceId).toBe(QWEN3_TTS_REALTIME_VOICE_ID)
+    expect(speechStore.activeSpeechVoice).toMatchObject({ id: QWEN3_TTS_REALTIME_VOICE_ID })
+  })
+
   it('is idempotent and does not apply Cherry to another provider', async () => {
     const { speechStore } = await prepareQwenCatalog()
     const selectedVoice = speechStore.activeSpeechVoice
