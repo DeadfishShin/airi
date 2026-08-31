@@ -651,6 +651,7 @@ onUnmounted(() => {
         <HearingPlaygroundTranscripts
           :current="currentTranscription"
           :is-monitoring="isMonitoring"
+          :is-speech="isSpeech"
           :segments="playgroundSegments"
         />
 

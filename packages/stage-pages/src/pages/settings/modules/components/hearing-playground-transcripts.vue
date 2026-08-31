@@ -9,6 +9,7 @@ import HearingPlaygroundSegmentItem from './hearing-playground-segment.vue'
 const props = defineProps<{
   current: string
   isMonitoring: boolean
+  isSpeech: boolean
   segments: readonly HearingPlaygroundSegment[]
 }>()
 
@@ -53,6 +54,18 @@ const reversedSegments = computed(() => props.segments.toReversed())
         :segment="segment"
       />
     </ol>
+
+    <div
+      v-else-if="isSpeech"
+      :class="[
+        'min-h-20 flex items-center justify-center gap-2',
+        'text-sm text-primary-500 dark:text-primary-400',
+      ]"
+      data-testid="hearing-playground-speech-detected"
+    >
+      <div class="animate-pulse" i-solar:microphone-3-line-duotone />
+      {{ t('settings.pages.modules.hearing.sections.section.playground.speech-detected') }}
+    </div>
 
     <div
       v-else-if="isMonitoring"

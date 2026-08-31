@@ -755,6 +755,7 @@ pages:
             empty: Start monitoring and speak into the selected microphone.
             error-title: Transcription error
             listening: Listening for speech…
+            speech-detected: Speech detected. Waiting for the first transcript.
             no-transcription: No speech was recognized in this audio.
             segment: 'Speech segment {number}'
             start: Start monitoring

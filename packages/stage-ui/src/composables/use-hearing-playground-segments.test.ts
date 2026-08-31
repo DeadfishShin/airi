@@ -57,6 +57,18 @@ describe('hearing playground segments', () => {
     expect(playground.current.value).toBe('今天天气很好')
   })
 
+  it('moves the final snapshot into one completed segment without duplicating it', () => {
+    const playground = useHearingPlaygroundSegments()
+
+    playground.replaceStreamingText('你好')
+    playground.finishStreaming('你好世界')
+
+    expect(playground.current.value).toBe('')
+    expect(playground.segments.value).toEqual([
+      { id: 1, text: '你好世界', status: 'complete' },
+    ])
+  })
+
   it('clears streaming and completed transcripts when the playground resets', () => {
     const playground = useHearingPlaygroundSegments()
     const metadata = playground.startRecording(new Blob(['speech']))
