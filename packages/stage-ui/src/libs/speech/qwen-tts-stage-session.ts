@@ -28,6 +28,7 @@ import {
   qwen3TtsRealtimeSessionFinish,
   qwen3TtsRealtimeSessionFinished,
   qwen3TtsRealtimeSessionStart,
+  qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '../providers/qwen-tts-realtime-ipc'
 import { createQwen3TtsPcmPlaybackBridge } from './qwen-tts-pcm-playback'
@@ -147,6 +148,7 @@ export function createQwen3TtsStageSession(options: Qwen3TtsStageSessionOptions)
   const append = defineInvoke(eventa.context, qwen3TtsRealtimeTextAppend)
   const finish = defineInvoke(eventa.context, qwen3TtsRealtimeSessionFinish)
   const cancelRemote = defineInvoke(eventa.context, qwen3TtsRealtimeSessionCancel)
+  const reportStageTelemetry = defineInvoke(eventa.context, qwen3TtsRealtimeStageTelemetry)
 
   let terminal: 'active' | 'cancelled' | 'failed' | 'finished' = 'active'
   let finishRequested = false
@@ -226,6 +228,12 @@ export function createQwen3TtsStageSession(options: Qwen3TtsStageSessionOptions)
     await bridge.finish()
     if (terminal !== 'active')
       return
+    const summary = summarizeQwen3TtsStageTelemetry(intentId, telemetryState)
+    if (summary) {
+      // Diagnostics must never turn a completed speech session into a failure
+      // or delay local completion when the main-process log sink is unavailable.
+      void reportStageTelemetry(summary).catch(() => {})
+    }
     terminal = 'finished'
     options.onSpeakingChange?.(false)
     cleanup()

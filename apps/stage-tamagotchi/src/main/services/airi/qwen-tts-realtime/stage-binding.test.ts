@@ -274,6 +274,7 @@ async function prepareReadySession(harness: ReturnType<typeof createHarness>) {
 describe('qwen3 Stage binding fake end-to-end', () => {
   it('forwards incremental text through main, isolates audio, and drains after remote finish', async () => {
     const harness = createHarness()
+    const stageLog = vi.spyOn(console, 'info').mockImplementation(() => {})
     const otherAudio: number[] = []
     const removeOtherListener = harness.otherRendererEventa.context.on(qwen3TtsRealtimeAudioDelta, (event) => {
       if (event.body)
@@ -338,8 +339,14 @@ describe('qwen3 Stage binding fake end-to-end', () => {
         firstLlmTextToPlaybackScheduleMs: expect.any(Number),
         remoteFinishToLocalDrainMs: expect.any(Number),
       }))
+      expect(stageLog).toHaveBeenCalledTimes(1)
+      expect(stageLog).toHaveBeenCalledWith('[Qwen3 TTS stage] session finished', expect.objectContaining({
+        sessionId: harness.session.intentId.slice(-24),
+        remoteFinishToLocalDrainMs: expect.any(Number),
+      }))
     }
     finally {
+      stageLog.mockRestore()
       removeOtherListener()
       await harness.dispose()
     }

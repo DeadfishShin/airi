@@ -12,6 +12,7 @@ import {
   qwen3TtsRealtimeSessionFinish,
   qwen3TtsRealtimeSessionFinished,
   qwen3TtsRealtimeSessionStart,
+  qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '../providers/qwen-tts-realtime-ipc'
 import { summarizeQwen3TtsStageTelemetry } from './qwen-tts-stage-session'
@@ -266,6 +267,10 @@ describe('qwen3 Stage TTS adapter', () => {
     defineInvokeHandler(context, qwen3TtsRealtimeSessionStart, () => {})
     defineInvokeHandler(context, qwen3TtsRealtimeSessionFinish, () => {})
     defineInvokeHandler(context, qwen3TtsRealtimeTextAppend, () => {})
+    const stageSummaries: unknown[] = []
+    defineInvokeHandler(context, qwen3TtsRealtimeStageTelemetry, payload => {
+      stageSummaries.push(payload)
+    })
     const audioContext = new FakeAudioContext()
     const onDone = vi.fn()
     const onError = vi.fn()
@@ -297,6 +302,12 @@ describe('qwen3 Stage TTS adapter', () => {
 
     expect(onDone).toHaveBeenCalledTimes(1)
     expect(onError).not.toHaveBeenCalled()
+    await flush()
+    expect(stageSummaries).toHaveLength(1)
+    expect(stageSummaries[0]).toMatchObject({
+      sessionId: session.intentId,
+      remoteFinishToLocalDrainMs: expect.any(Number),
+    })
   })
 
   it('cancels local audio before the remote cancellation invoke and ignores later events', async () => {

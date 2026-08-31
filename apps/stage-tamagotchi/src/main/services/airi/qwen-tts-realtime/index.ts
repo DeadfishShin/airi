@@ -17,6 +17,7 @@ import {
   qwen3TtsRealtimeSessionFinished,
   qwen3TtsRealtimeSessionReady,
   qwen3TtsRealtimeSessionStart,
+  qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
 import { ipcMain } from 'electron'
@@ -43,6 +44,8 @@ interface TerminalErrorTombstone {
   error: Error
   expiresAt: number
 }
+
+export const MAX_STAGE_TELEMETRY_LOGS = 64
 
 export interface Qwen3TtsRealtimeServiceOptions {
   context: QwenTtsMainEventContext
@@ -73,6 +76,7 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
   const sessions = new Map<string, Qwen3TtsRealtimeSession>()
   const eventTargets = new Map<string, QwenRendererEventTarget>()
   const terminalErrors = new Map<string, TerminalErrorTombstone>()
+  const loggedStageTelemetry = new Set<string>()
   const now = options.now ?? (() => performance.now())
   const socketFactory = options.socketFactory
   let disposed = false
@@ -102,6 +106,18 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
     return terminalErrors.get(sessionId)?.error
   }
 
+  const rememberStageTelemetry = (sessionId: string) => {
+    if (loggedStageTelemetry.has(sessionId))
+      return false
+    loggedStageTelemetry.add(sessionId)
+    while (loggedStageTelemetry.size > MAX_STAGE_TELEMETRY_LOGS)
+      loggedStageTelemetry.delete(loggedStageTelemetry.values().next().value as string)
+    return true
+  }
+
+  const finiteMetric = (value: number | undefined) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
   const emit = <Payload>(event: Eventa<Payload>, payload: Payload, sessionId: string) =>
     options.context.emit(event, payload, eventTargets.get(sessionId))
 
@@ -113,6 +129,7 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
 
       const config = resolveQwenTtsRealtimeRuntimeConfig(options.environment)
       terminalErrors.delete(sessionId)
+      loggedStageTelemetry.delete(sessionId)
       const target = targetFromInvoke(invokeOptions)
       const session = new Qwen3TtsRealtimeSession(
         sessionId,
@@ -178,6 +195,21 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
       eventTargets.delete(sessionId)
       session.cancel()
     }),
+    defineInvokeHandler(options.context, qwen3TtsRealtimeStageTelemetry, (payload) => {
+      const sessionId = sessionIdFromPayload(payload)
+      if (!rememberStageTelemetry(sessionId))
+        return
+
+      console.info('[Qwen3 TTS stage] session finished', {
+        sessionId: sessionId.slice(-24),
+        firstLlmTextToTextAppendMs: finiteMetric(payload.firstLlmTextToTextAppendMs),
+        firstLlmTextToAudioEventMs: finiteMetric(payload.firstLlmTextToAudioEventMs),
+        firstLlmTextToPlaybackScheduleMs: finiteMetric(payload.firstLlmTextToPlaybackScheduleMs),
+        firstAudioEventRelativeToInputFinishMs: finiteMetric(payload.firstAudioEventRelativeToInputFinishMs),
+        firstAudioScheduledRelativeToInputFinishMs: finiteMetric(payload.firstAudioScheduledRelativeToInputFinishMs),
+        remoteFinishToLocalDrainMs: finiteMetric(payload.remoteFinishToLocalDrainMs),
+      })
+    }),
   ]
 
   const dispose = async () => {
@@ -187,6 +219,7 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
     sessions.clear()
     eventTargets.clear()
     terminalErrors.clear()
+    loggedStageTelemetry.clear()
     for (const disposeHandler of handlers)
       disposeHandler()
   }
@@ -199,6 +232,7 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
       pruneTerminalErrors()
       return terminalErrors.size
     },
+    getStageTelemetryLogCount: () => loggedStageTelemetry.size,
     sessions,
   }
 }

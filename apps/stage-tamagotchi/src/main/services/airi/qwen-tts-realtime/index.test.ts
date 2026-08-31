@@ -12,12 +12,14 @@ import {
   qwen3TtsRealtimeSessionFinished,
   qwen3TtsRealtimeSessionReady,
   qwen3TtsRealtimeSessionStart,
+  qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
   createQwen3TtsRealtimeService,
+  MAX_STAGE_TELEMETRY_LOGS,
   MAX_TERMINAL_ERROR_TOMBSTONES,
   TERMINAL_ERROR_TOMBSTONE_TTL_MS,
 } from './index'
@@ -294,6 +296,75 @@ describe('qwen3 realtime TTS main service', () => {
     expect(service.getTerminalErrorTombstoneCount()).toBe(MAX_TERMINAL_ERROR_TOMBSTONES)
     currentTime = TERMINAL_ERROR_TOMBSTONE_TTL_MS + 1
     expect(service.getTerminalErrorTombstoneCount()).toBe(0)
+    await service.dispose()
+  })
+
+  it('logs one bounded renderer Stage telemetry summary and preserves signed metrics', async () => {
+    const context = createContext()
+    const service = createQwen3TtsRealtimeService({ context: context as never, environment: runtimeEnvironment })
+    const report = defineInvoke(context, qwen3TtsRealtimeStageTelemetry)
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const sessionId = `stream-${'x'.repeat(100)}`
+    const payload = {
+      sessionId,
+      firstLlmTextToTextAppendMs: 4,
+      firstLlmTextToAudioEventMs: 335,
+      firstLlmTextToPlaybackScheduleMs: 336,
+      firstAudioEventRelativeToInputFinishMs: -120,
+      firstAudioScheduledRelativeToInputFinishMs: -119,
+      remoteFinishToLocalDrainMs: 908,
+    }
+
+    await report(payload)
+    await report(payload)
+
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log.mock.calls[0]).toEqual([
+      '[Qwen3 TTS stage] session finished',
+      {
+        sessionId: sessionId.slice(-24),
+        firstLlmTextToTextAppendMs: 4,
+        firstLlmTextToAudioEventMs: 335,
+        firstLlmTextToPlaybackScheduleMs: 336,
+        firstAudioEventRelativeToInputFinishMs: -120,
+        firstAudioScheduledRelativeToInputFinishMs: -119,
+        remoteFinishToLocalDrainMs: 908,
+      },
+    ])
+    const logged = log.mock.calls[0][1] as Record<string, unknown>
+    expect(Object.keys(logged)).toEqual([
+      'sessionId',
+      'firstLlmTextToTextAppendMs',
+      'firstLlmTextToAudioEventMs',
+      'firstLlmTextToPlaybackScheduleMs',
+      'firstAudioEventRelativeToInputFinishMs',
+      'firstAudioScheduledRelativeToInputFinishMs',
+      'remoteFinishToLocalDrainMs',
+    ])
+    expect(logged.sessionId).toHaveLength(24)
+    expect(JSON.stringify(logged)).not.toContain(sessionId)
+    expect(JSON.stringify(logged)).not.toContain('unit-test-placeholder')
+    expect(JSON.stringify(logged)).not.toContain('base64')
+    expect(JSON.stringify(logged)).not.toContain('user token')
+    expect(service.getStageTelemetryLogCount()).toBe(1)
+
+    log.mockRestore()
+    await service.dispose()
+  })
+
+  it('bounds remembered Stage telemetry session IDs', async () => {
+    const context = createContext()
+    const service = createQwen3TtsRealtimeService({ context: context as never, environment: runtimeEnvironment })
+    const report = defineInvoke(context, qwen3TtsRealtimeStageTelemetry)
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    for (let index = 0; index < MAX_STAGE_TELEMETRY_LOGS + 1; index++)
+      await report({ sessionId: `stage-${index}`, firstAudioScheduledRelativeToInputFinishMs: index - 1 })
+
+    expect(service.getStageTelemetryLogCount()).toBe(MAX_STAGE_TELEMETRY_LOGS)
+    expect(log).toHaveBeenCalledTimes(MAX_STAGE_TELEMETRY_LOGS + 1)
+
+    log.mockRestore()
     await service.dispose()
   })
 })

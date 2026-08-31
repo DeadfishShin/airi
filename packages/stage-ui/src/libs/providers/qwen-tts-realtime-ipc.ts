@@ -43,10 +43,22 @@ export interface Qwen3TtsRealtimeErrorPayload extends Qwen3TtsRealtimeSessionPay
   message: string
 }
 
+/** Renderer-derived, content-free completion diagnostics for one Stage session. */
+export interface Qwen3TtsRealtimeStageTelemetryPayload {
+  sessionId: string
+  firstLlmTextToTextAppendMs?: number
+  firstLlmTextToAudioEventMs?: number
+  firstLlmTextToPlaybackScheduleMs?: number
+  firstAudioEventRelativeToInputFinishMs?: number
+  firstAudioScheduledRelativeToInputFinishMs?: number
+  remoteFinishToLocalDrainMs?: number
+}
+
 export const qwen3TtsRealtimeSessionStart = defineInvokeEventa<void, Qwen3TtsRealtimeSessionStartPayload>('eventa:invoke:electron:qwen3-tts-realtime:session-start')
 export const qwen3TtsRealtimeTextAppend = defineInvokeEventa<void, Qwen3TtsRealtimeTextAppendPayload>('eventa:invoke:electron:qwen3-tts-realtime:text-append')
 export const qwen3TtsRealtimeSessionFinish = defineInvokeEventa<void, Qwen3TtsRealtimeSessionPayload>('eventa:invoke:electron:qwen3-tts-realtime:session-finish')
 export const qwen3TtsRealtimeSessionCancel = defineInvokeEventa<void, Qwen3TtsRealtimeSessionPayload>('eventa:invoke:electron:qwen3-tts-realtime:session-cancel')
+export const qwen3TtsRealtimeStageTelemetry = defineInvokeEventa<void, Qwen3TtsRealtimeStageTelemetryPayload>('eventa:invoke:electron:qwen3-tts-realtime:stage-telemetry')
 
 export const qwen3TtsRealtimeSessionReady = defineEventa<Qwen3TtsRealtimeSessionPayload>('eventa:event:electron:qwen3-tts-realtime:session-ready')
 export const qwen3TtsRealtimeAudioDelta = defineEventa<Qwen3TtsRealtimeAudioDeltaPayload>('eventa:event:electron:qwen3-tts-realtime:audio-delta')
