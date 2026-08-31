@@ -1,6 +1,7 @@
 import type { EventContext } from '@moeru/eventa'
 
 import type { Qwen3TtsPcmAudioBuffer, Qwen3TtsPcmAudioContext, Qwen3TtsPcmAudioSource } from './qwen-tts-pcm-playback'
+import type { Qwen3TtsStageSessionTelemetry } from './qwen-tts-stage-session'
 
 import { createContext, defineInvokeHandler } from '@moeru/eventa'
 import { describe, expect, it, vi } from 'vitest'
@@ -13,6 +14,7 @@ import {
   qwen3TtsRealtimeSessionStart,
   qwen3TtsRealtimeTextAppend,
 } from '../providers/qwen-tts-realtime-ipc'
+import { summarizeQwen3TtsStageTelemetry } from './qwen-tts-stage-session'
 import { createStageTtsSession } from './tts-session'
 
 class FakeAudioBuffer implements Qwen3TtsPcmAudioBuffer {
@@ -139,6 +141,124 @@ describe('qwen3 Stage TTS adapter', () => {
     expect(texts).toEqual(['你', '好', '，', '世界'])
     expect(finishCount).toBe(1)
     expect(pipelineFactory).not.toHaveBeenCalled()
+  })
+
+  it('records a negative first-audio overlap when audio arrives before input finish', async () => {
+    const context = eventContext()
+    let finishCount = 0
+    let clock = 0
+    let latestTelemetry: Qwen3TtsStageSessionTelemetry = {}
+    defineInvokeHandler(context, qwen3TtsRealtimeSessionStart, () => {})
+    defineInvokeHandler(context, qwen3TtsRealtimeTextAppend, () => {})
+    defineInvokeHandler(context, qwen3TtsRealtimeSessionFinish, () => {
+      finishCount++
+    })
+    const session = createStageTtsSession({
+      providerId: 'qwen3-tts-realtime',
+      transport: 'bidirectional-ws',
+      streaming: snapshot,
+      audioContext: new FakeAudioContext() as unknown as BaseAudioContext,
+      playbackManager: { schedule: vi.fn(), stopByIntent: vi.fn() },
+      openIntent: () => { throw new Error('segmenter path used') },
+      intentOptions: () => ({}) as never,
+      qwenRealtime: {
+        eventContext: context,
+        now: () => clock,
+        onTelemetry: (telemetry) => {
+          latestTelemetry = telemetry
+        },
+      },
+    })
+
+    await flush()
+    clock = 100
+    session.appendText('first')
+    await flush()
+    clock = 200
+    await context.emit(qwen3TtsRealtimeAudioDelta, {
+      sessionId: session.intentId,
+      sequence: 0,
+      audio: pcm16Samples(2),
+    })
+    clock = 300
+    session.finishInput()
+    session.finishInput()
+    await flush()
+
+    expect(latestTelemetry.inputFinishRequestedAt).toBe(300)
+    expect(latestTelemetry.firstAudioEventRelativeToInputFinishMs).toBe(-100)
+    expect(latestTelemetry.firstAudioScheduledRelativeToInputFinishMs).toBeLessThan(0)
+    expect(finishCount).toBe(1)
+    session.cancel('test-cleanup')
+  })
+
+  it('records a positive first-audio overlap when input finish precedes audio', async () => {
+    const context = eventContext()
+    let clock = 0
+    let latestTelemetry: Qwen3TtsStageSessionTelemetry = {}
+    defineInvokeHandler(context, qwen3TtsRealtimeSessionStart, () => {})
+    defineInvokeHandler(context, qwen3TtsRealtimeTextAppend, () => {})
+    defineInvokeHandler(context, qwen3TtsRealtimeSessionFinish, () => {})
+    const session = createStageTtsSession({
+      providerId: 'qwen3-tts-realtime',
+      transport: 'bidirectional-ws',
+      streaming: snapshot,
+      audioContext: new FakeAudioContext() as unknown as BaseAudioContext,
+      playbackManager: { schedule: vi.fn(), stopByIntent: vi.fn() },
+      openIntent: () => { throw new Error('segmenter path used') },
+      intentOptions: () => ({}) as never,
+      qwenRealtime: {
+        eventContext: context,
+        now: () => clock,
+        onTelemetry: (telemetry) => {
+          latestTelemetry = telemetry
+        },
+      },
+    })
+
+    await flush()
+    clock = 100
+    session.appendText('first')
+    await flush()
+    clock = 300
+    session.finishInput()
+    await flush()
+    clock = 400
+    await context.emit(qwen3TtsRealtimeAudioDelta, {
+      sessionId: session.intentId,
+      sequence: 0,
+      audio: pcm16Samples(2),
+    })
+
+    expect(latestTelemetry.inputFinishRequestedAt).toBe(300)
+    expect(latestTelemetry.firstAudioEventRelativeToInputFinishMs).toBe(100)
+    expect(latestTelemetry.firstAudioScheduledRelativeToInputFinishMs).toBeGreaterThan(0)
+    session.cancel('test-cleanup')
+  })
+
+  it('provides one bounded success summary only after remote finish and local drain', () => {
+    const telemetry = {
+      s4RemoteFinished: 400,
+      s5LocalPlaybackDrain: 500,
+      firstLlmTextToTextAppendMs: 2,
+      firstLlmTextToAudioEventMs: 20,
+      firstLlmTextToPlaybackScheduleMs: 21,
+      firstAudioEventRelativeToInputFinishMs: -100,
+      firstAudioScheduledRelativeToInputFinishMs: -99,
+      remoteFinishToLocalDrainMs: 100,
+    }
+
+    expect(summarizeQwen3TtsStageTelemetry('stream-long-session-id', telemetry)).toEqual({
+      sessionId: 'stream-long-session-id',
+      firstLlmTextToTextAppendMs: 2,
+      firstLlmTextToAudioEventMs: 20,
+      firstLlmTextToPlaybackScheduleMs: 21,
+      firstAudioEventRelativeToInputFinishMs: -100,
+      firstAudioScheduledRelativeToInputFinishMs: -99,
+      remoteFinishToLocalDrainMs: 100,
+    })
+    expect(summarizeQwen3TtsStageTelemetry('failed-session', { s4RemoteFinished: 400 })).toBeUndefined()
+    expect(JSON.stringify(telemetry)).not.toContain('user token')
   })
 
   it('keeps remote finish separate from local PCM drain and completes once', async () => {

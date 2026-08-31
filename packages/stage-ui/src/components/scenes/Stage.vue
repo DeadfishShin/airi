@@ -7,6 +7,7 @@ import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 import type { UnElevenLabsOptions } from 'unspeech'
 
 import type { EmotionPayload } from '../../constants/emotions'
+import type { Qwen3TtsStageSessionTelemetry } from '../../libs/speech/qwen-tts-stage-session'
 import type { SpeechTransport, StageTtsSession, StreamingSessionSnapshot } from '../../libs/speech/tts-session'
 
 import { defineInvokeHandler } from '@moeru/eventa'
@@ -39,6 +40,7 @@ import { live2dMotionMagicProfiles, useLive2DMotionMagic, useLive2DMotionMagicSe
 import { getDefaultStreamingModel, getDefinedProvider } from '../../libs/providers/providers'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '../../libs/providers/providers/official'
 import { bindSpeakingStateToPlaybackManager } from '../../libs/speech/playback-speaking-state'
+import { summarizeQwen3TtsStageTelemetry } from '../../libs/speech/qwen-tts-stage-session'
 import { createStageTtsSession } from '../../libs/speech/tts-session'
 import { getSpeechBusContext, speechOutputGetPlaybackState } from '../../services/speech/bus'
 import { useLlmStreamingControlStore } from '../../stores/ai/chat-llm/streaming-control'
@@ -795,6 +797,7 @@ function openTtsSession(turnId: string): StageTtsSession {
   // would null a still-active chat session and drop the rest of the reply. Capture the session and
   // compare identity; the `stream-` guard is preserved so segmenter sessions still don't self-clear.
   let session: StageTtsSession | null = null
+  let latestQwenTelemetry: Qwen3TtsStageSessionTelemetry | undefined
   const clearIfActive = () => {
     if (session && currentSession === session && session.intentId.startsWith('stream-'))
       currentSession = null
@@ -819,6 +822,9 @@ function openTtsSession(turnId: string): StageTtsSession {
         else
           resetSpeakingState()
       },
+      onTelemetry: (telemetry) => {
+        latestQwenTelemetry = telemetry
+      },
     },
     openIntent: opts => speechRuntimeStore.openIntent(opts),
     intentOptions: () => ({
@@ -841,6 +847,11 @@ function openTtsSession(turnId: string): StageTtsSession {
         clearIfActive()
       },
       onDone: () => {
+        if (session && latestQwenTelemetry) {
+          const summary = summarizeQwen3TtsStageTelemetry(session.intentId, latestQwenTelemetry)
+          if (summary)
+            console.info('[Qwen3 TTS stage] session finished', summary)
+        }
         clearIfActive()
       },
     },

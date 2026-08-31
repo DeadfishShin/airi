@@ -47,9 +47,50 @@ export interface Qwen3TtsStageSessionTelemetry {
   s4RemoteFinished?: number
   /** All locally owned scheduled sources have ended. */
   s5LocalPlaybackDrain?: number
+  /** Renderer-clock moment when Stage requested finishInput(). */
+  inputFinishRequestedAt?: number
+  /** Time from the first LLM text to the first renderer IPC append request. */
+  firstLlmTextToTextAppendMs?: number
   firstLlmTextToAudioEventMs?: number
   firstLlmTextToPlaybackScheduleMs?: number
+  /** Signed: first bound audio event minus inputFinishRequestedAt. */
+  firstAudioEventRelativeToInputFinishMs?: number
+  /** Signed: first scheduled audio minus inputFinishRequestedAt. */
+  firstAudioScheduledRelativeToInputFinishMs?: number
   remoteFinishToLocalDrainMs?: number
+}
+
+export interface Qwen3TtsStageTelemetrySummary {
+  sessionId: string
+  firstLlmTextToTextAppendMs?: number
+  firstLlmTextToAudioEventMs?: number
+  firstLlmTextToPlaybackScheduleMs?: number
+  firstAudioEventRelativeToInputFinishMs?: number
+  firstAudioScheduledRelativeToInputFinishMs?: number
+  remoteFinishToLocalDrainMs?: number
+}
+
+/**
+ * Returns the bounded success-only diagnostics for one completed Qwen Stage
+ * session. Remote finish and local playback drain are both required so a
+ * cancelled or failed session cannot be reported as a successful completion.
+ */
+export function summarizeQwen3TtsStageTelemetry(
+  sessionId: string,
+  telemetry: Qwen3TtsStageSessionTelemetry,
+): Qwen3TtsStageTelemetrySummary | undefined {
+  if (telemetry.s4RemoteFinished === undefined || telemetry.s5LocalPlaybackDrain === undefined)
+    return undefined
+
+  return {
+    sessionId: sessionId.slice(-24),
+    firstLlmTextToTextAppendMs: telemetry.firstLlmTextToTextAppendMs,
+    firstLlmTextToAudioEventMs: telemetry.firstLlmTextToAudioEventMs,
+    firstLlmTextToPlaybackScheduleMs: telemetry.firstLlmTextToPlaybackScheduleMs,
+    firstAudioEventRelativeToInputFinishMs: telemetry.firstAudioEventRelativeToInputFinishMs,
+    firstAudioScheduledRelativeToInputFinishMs: telemetry.firstAudioScheduledRelativeToInputFinishMs,
+    remoteFinishToLocalDrainMs: telemetry.remoteFinishToLocalDrainMs,
+  }
 }
 
 export interface Qwen3TtsStageSessionOptions {
@@ -133,15 +174,25 @@ export function createQwen3TtsStageSession(options: Qwen3TtsStageSessionOptions)
     emitTelemetry()
   }
 
-  const syncBridgeTelemetry = (telemetry: { r0AudioEventReceived?: number, r3SourceScheduled?: number }) => {
-    if (telemetry.r0AudioEventReceived !== undefined)
-      telemetryState.s2FirstAudioEventReceived ??= telemetry.r0AudioEventReceived
-    if (telemetry.r3SourceScheduled !== undefined)
-      telemetryState.s3FirstAudioScheduled ??= telemetry.r3SourceScheduled
+  const updateDerivedTelemetry = (bridgeTelemetry?: { r0AudioEventReceived?: number, r3SourceScheduled?: number }) => {
+    if (telemetryState.s0FirstLlmText !== undefined && telemetryState.s1FirstTextAppendRequested !== undefined)
+      telemetryState.firstLlmTextToTextAppendMs = telemetryState.s1FirstTextAppendRequested - telemetryState.s0FirstLlmText
+    if (bridgeTelemetry?.r0AudioEventReceived !== undefined)
+      telemetryState.s2FirstAudioEventReceived ??= bridgeTelemetry.r0AudioEventReceived
+    if (bridgeTelemetry?.r3SourceScheduled !== undefined)
+      telemetryState.s3FirstAudioScheduled ??= bridgeTelemetry.r3SourceScheduled
     if (telemetryState.s0FirstLlmText !== undefined && telemetryState.s2FirstAudioEventReceived !== undefined)
       telemetryState.firstLlmTextToAudioEventMs = telemetryState.s2FirstAudioEventReceived - telemetryState.s0FirstLlmText
     if (telemetryState.s0FirstLlmText !== undefined && telemetryState.s3FirstAudioScheduled !== undefined)
       telemetryState.firstLlmTextToPlaybackScheduleMs = telemetryState.s3FirstAudioScheduled - telemetryState.s0FirstLlmText
+    if (telemetryState.inputFinishRequestedAt !== undefined && telemetryState.s2FirstAudioEventReceived !== undefined)
+      telemetryState.firstAudioEventRelativeToInputFinishMs = telemetryState.s2FirstAudioEventReceived - telemetryState.inputFinishRequestedAt
+    if (telemetryState.inputFinishRequestedAt !== undefined && telemetryState.s3FirstAudioScheduled !== undefined)
+      telemetryState.firstAudioScheduledRelativeToInputFinishMs = telemetryState.s3FirstAudioScheduled - telemetryState.inputFinishRequestedAt
+  }
+
+  const syncBridgeTelemetry = (telemetry: { r0AudioEventReceived?: number, r3SourceScheduled?: number }) => {
+    updateDerivedTelemetry(telemetry)
     emitTelemetry()
   }
 
@@ -265,6 +316,9 @@ export function createQwen3TtsStageSession(options: Qwen3TtsStageSessionOptions)
     if (terminal !== 'active' || finishRequested)
       return
     finishRequested = true
+    telemetryState.inputFinishRequestedAt ??= now()
+    updateDerivedTelemetry()
+    emitTelemetry()
     queueOperation(async () => {
       await finish({ sessionId: intentId })
     })
