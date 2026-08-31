@@ -1,4 +1,5 @@
-import type { createContext } from '@moeru/eventa/adapters/electron/main'
+import type { Eventa } from '@moeru/eventa'
+import type { createContext, ElectronMainEmitOptions } from '@moeru/eventa/adapters/electron/main'
 import type { Lifecycle } from 'injeca'
 
 import type { QwenAsrTelemetry, QwenAudioRealtimeSocketFactory } from './protocol'
@@ -27,6 +28,12 @@ import {
 } from './protocol'
 
 type QwenMainEventContext = ReturnType<typeof createContext>['context']
+interface QwenRendererEventTarget {
+  raw: {
+    ipcMainEvent: ElectronMainEmitOptions['raw']['ipcMainEvent']
+    event: undefined
+  }
+}
 
 export const QWEN_TERMINAL_ERROR_TOMBSTONE_TTL_MS = 30_000
 export const QWEN_MAX_TERMINAL_ERROR_TOMBSTONES = 32
@@ -56,9 +63,20 @@ function errorCodeFrom(error: Error) {
   return /^([a-z0-9_]+): /.exec(error.message)?.[1] ?? 'provider_error'
 }
 
+function qwenRendererEventTargetFromInvoke(
+  invokeOptions?: { raw?: ElectronMainEmitOptions['raw'] },
+): QwenRendererEventTarget | undefined {
+  const ipcMainEvent = invokeOptions?.raw?.ipcMainEvent
+  if (!ipcMainEvent)
+    return undefined
+
+  return { raw: { ipcMainEvent, event: undefined } }
+}
+
 /** Registers the main-process owner for Qwen realtime ASR sessions. */
 export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServiceOptions) {
   const sessions = new Map<string, QwenAudioRealtimeAsrSession>()
+  const sessionEventTargets = new Map<string, QwenRendererEventTarget>()
   const terminalErrors = new Map<string, QwenTerminalErrorTombstone>()
   const now = options.now ?? (() => Date.now())
   const runtimeConfig = () => resolveQwenAudioRealtimeRuntimeConfig(options.environment)
@@ -94,57 +112,73 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
     return terminalErrors.get(sessionId)?.error
   }
 
-  const emitError = async (sessionId: string, error: Error, code = 'provider_error') => {
+  const emitError = async (
+    sessionId: string,
+    error: Error,
+    code = 'provider_error',
+    eventTarget?: QwenRendererEventTarget,
+  ) => {
     await options.context.emit(qwenAudioRealtimeSessionError, {
       sessionId,
       code,
       message: error.message,
-    })
+    }, eventTarget)
+  }
+
+  const emitSessionEvent = <Payload>(event: Eventa<Payload>, payload: Payload, sessionId: string) => {
+    return options.context.emit(event, payload, sessionEventTargets.get(sessionId))
   }
 
   const handlers = [
-    defineInvokeHandler(options.context, qwenAudioRealtimeSessionStart, (payload) => {
+    defineInvokeHandler(options.context, qwenAudioRealtimeSessionStart, (payload, invokeOptions) => {
       const sessionId = sessionIdFromPayload(payload)
       if (sessions.has(sessionId))
         throw new Error('Qwen Audio realtime ASR session already exists.')
+
+      sessionEventTargets.delete(sessionId)
+      const eventTarget = qwenRendererEventTargetFromInvoke(invokeOptions)
 
       const session = new QwenAudioRealtimeAsrSession(
         sessionId,
         runtimeConfig(),
         payload.language,
         {
-          onStarted: () => options.context.emit(qwenAudioRealtimeSessionStarted, { sessionId }),
-          onPartial: sentence => options.context.emit(qwenAudioRealtimeTranscriptionPartial, {
+          onStarted: () => emitSessionEvent(qwenAudioRealtimeSessionStarted, { sessionId }, sessionId),
+          onPartial: sentence => emitSessionEvent(qwenAudioRealtimeTranscriptionPartial, {
             sessionId,
             text: sentence.text,
             sentenceId: sentence.sentenceId,
             startMilliseconds: sentence.startMilliseconds,
             durationMilliseconds: sentence.durationMilliseconds,
-          }),
-          onFinal: sentence => options.context.emit(qwenAudioRealtimeTranscriptionFinal, {
+          }, sessionId),
+          onFinal: sentence => emitSessionEvent(qwenAudioRealtimeTranscriptionFinal, {
             sessionId,
             text: sentence.text,
             sentenceId: sentence.sentenceId,
             startMilliseconds: sentence.startMilliseconds,
             durationMilliseconds: sentence.durationMilliseconds,
-          }),
+          }, sessionId),
           onFinished: async () => {
             sessions.delete(sessionId)
             terminalErrors.delete(sessionId)
-            await options.context.emit(qwenAudioRealtimeSessionFinished, { sessionId })
+            await emitSessionEvent(qwenAudioRealtimeSessionFinished, { sessionId }, sessionId)
+            sessionEventTargets.delete(sessionId)
           },
           onError: async (error) => {
             if (disposed)
               return
             const authoritativeError = rememberTerminalError(sessionId, error)
             sessions.delete(sessionId)
-            await emitError(sessionId, authoritativeError, errorCodeFrom(authoritativeError))
+            await emitError(sessionId, authoritativeError, errorCodeFrom(authoritativeError), sessionEventTargets.get(sessionId))
+            sessionEventTargets.delete(sessionId)
           },
           onTelemetry: options.onTelemetry,
         },
         socketFactory,
         options.now,
       )
+      if (eventTarget)
+        sessionEventTargets.set(sessionId, eventTarget)
       sessions.set(sessionId, session)
       terminalErrors.delete(sessionId)
       session.start()
@@ -179,6 +213,7 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
         return
       }
       sessions.delete(sessionId)
+      sessionEventTargets.delete(sessionId)
       session.cancel()
     }),
   ]
@@ -188,6 +223,7 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
     for (const session of sessions.values())
       session.cancel()
     sessions.clear()
+    sessionEventTargets.clear()
     terminalErrors.clear()
     for (const disposeHandler of handlers)
       disposeHandler()

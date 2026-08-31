@@ -1,12 +1,16 @@
 import type { QwenAudioRealtimeSocket } from './protocol'
 
 import { createContext, defineInvoke } from '@moeru/eventa'
+import { createContext as createElectronMainContext } from '@moeru/eventa/adapters/electron/main'
+import { createContext as createElectronRendererContext } from '@moeru/eventa/adapters/electron/renderer'
 import {
   qwenAudioRealtimeAudioAppend,
   qwenAudioRealtimeSessionCancel,
   qwenAudioRealtimeSessionError,
   qwenAudioRealtimeSessionFinish,
   qwenAudioRealtimeSessionStart,
+  qwenAudioRealtimeTranscriptionFinal,
+  qwenAudioRealtimeTranscriptionPartial,
 } from '@proj-airi/stage-ui/libs/providers/qwen-audio-realtime-ipc'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -42,6 +46,68 @@ class FakeSocket implements QwenAudioRealtimeSocket {
   }
 }
 
+type IpcListener = (...args: unknown[]) => void
+
+class FakeIpcMain {
+  private readonly listeners = new Map<string, Set<IpcListener>>()
+
+  on(channel: string, listener: IpcListener) {
+    const listeners = this.listeners.get(channel) ?? new Set<IpcListener>()
+    listeners.add(listener)
+    this.listeners.set(channel, listeners)
+  }
+
+  off(channel: string, listener: IpcListener) {
+    this.listeners.get(channel)?.delete(listener)
+  }
+
+  dispatch(channel: string, ...args: unknown[]) {
+    for (const listener of this.listeners.get(channel) ?? [])
+      listener(...args)
+  }
+}
+
+class FakeIpcRenderer {
+  private readonly listeners = new Map<string, Set<IpcListener>>()
+
+  constructor(
+    private readonly main: FakeIpcMain,
+    readonly sender: { id: number, isDestroyed: () => boolean, send: (channel: string, ...args: unknown[]) => void },
+  ) {}
+
+  send(channel: string, ...args: unknown[]) {
+    this.main.dispatch(channel, { sender: this.sender }, ...args)
+  }
+
+  on(channel: string, listener: IpcListener) {
+    const listeners = this.listeners.get(channel) ?? new Set<IpcListener>()
+    listeners.add(listener)
+    this.listeners.set(channel, listeners)
+  }
+
+  removeListener(channel: string, listener: IpcListener) {
+    this.listeners.get(channel)?.delete(listener)
+  }
+
+  dispatch(channel: string, ...args: unknown[]) {
+    for (const listener of this.listeners.get(channel) ?? [])
+      listener(...args)
+  }
+}
+
+let nextFakeSenderId = 1
+
+function createFakeElectronIpc(main = new FakeIpcMain()) {
+  const sender = {
+    id: nextFakeSenderId++,
+    isDestroyed: () => false,
+    send: (_channel: string, ..._args: unknown[]) => {},
+  }
+  const renderer = new FakeIpcRenderer(main, sender)
+  sender.send = (channel, ...args) => renderer.dispatch(channel, { sender }, ...args)
+  return { main, renderer }
+}
+
 const runtimeEnvironment = {
   DASHSCOPE_API_KEY: 'unit-test-placeholder',
   DASHSCOPE_REGION: 'singapore',
@@ -53,6 +119,86 @@ async function settleEvents() {
 }
 
 describe('qwen Audio realtime ASR main service lifecycle', () => {
+  it('delivers session results to the renderer that started the session', async () => {
+    const ipc = createFakeElectronIpc()
+    const otherIpc = createFakeElectronIpc(ipc.main)
+    const mainEventa = createElectronMainContext(ipc.main as never)
+    const rendererEventa = createElectronRendererContext(ipc.renderer as never)
+    const otherRendererEventa = createElectronRendererContext(otherIpc.renderer as never)
+    const socket = new FakeSocket()
+    const service = createQwenAudioRealtimeAsrService({
+      context: mainEventa.context,
+      environment: runtimeEnvironment,
+      socketFactory: () => socket,
+    })
+    const start = defineInvoke(rendererEventa.context, qwenAudioRealtimeSessionStart)
+    const received: string[] = []
+    const otherReceived: string[] = []
+    const disposePartial = rendererEventa.context.on(qwenAudioRealtimeTranscriptionPartial, (event) => {
+      if (event.body)
+        received.push(`partial:${event.body.text}`)
+    })
+    const disposeFinal = rendererEventa.context.on(qwenAudioRealtimeTranscriptionFinal, (event) => {
+      if (event.body)
+        received.push(`final:${event.body.text}`)
+    })
+    const disposeOther = otherRendererEventa.context.on(qwenAudioRealtimeTranscriptionPartial, (event) => {
+      if (event.body)
+        otherReceived.push(event.body.text)
+    })
+
+    await start({ language: 'auto', sessionId: 'renderer-session' })
+    socket.emit('open')
+    socket.emit('message', JSON.stringify({
+      header: { event: 'task-started', task_id: 'renderer-session' },
+      payload: {},
+    }))
+    socket.emit('message', JSON.stringify({
+      header: { event: 'result-generated', task_id: 'renderer-session' },
+      payload: {
+        output: {
+          sentence: {
+            begin_time: 0,
+            end_time: 100,
+            sentence_end: false,
+            sentence_id: 1,
+            text: '你好',
+          },
+        },
+      },
+    }))
+    socket.emit('message', JSON.stringify({
+      header: { event: 'result-generated', task_id: 'renderer-session' },
+      payload: {
+        output: {
+          sentence: {
+            begin_time: 0,
+            end_time: 200,
+            sentence_end: true,
+            sentence_id: 1,
+            text: '你好世界',
+          },
+        },
+      },
+    }))
+    socket.emit('message', JSON.stringify({
+      header: { event: 'task-finished', task_id: 'renderer-session' },
+      payload: {},
+    }))
+    await settleEvents()
+
+    expect(received).toEqual(['partial:你好', 'partial:你好世界', 'final:你好世界'])
+    expect(otherReceived).toEqual([])
+
+    disposePartial()
+    disposeFinal()
+    disposeOther()
+    await service.dispose()
+    rendererEventa.dispose()
+    otherRendererEventa.dispose()
+    mainEventa.dispose()
+  })
+
   it('keeps the first websocket error authoritative when audio append races teardown', async () => {
     const context = createContext()
     const socket = new FakeSocket()

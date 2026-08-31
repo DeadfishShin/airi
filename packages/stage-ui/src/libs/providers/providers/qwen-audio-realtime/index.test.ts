@@ -6,14 +6,20 @@ import { z } from 'zod'
 
 import {
   createQwenAudioRealtimeProviderForContext,
+  executeQwenAudioRealtimeStream,
   normalizeQwenAudioRealtimeLanguage,
   providerQwenAudioRealtimeTranscription,
   QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID,
 } from '.'
+import { useHearingPlaygroundSegments } from '../../../../composables/use-hearing-playground-segments'
+import { StreamingTranscriptionConsumers } from '../../../../stores/modules/streaming-transcription-consumers'
 import {
   qwenAudioRealtimeAudioAppend,
   qwenAudioRealtimeSessionFinish,
+  qwenAudioRealtimeSessionFinished,
   qwenAudioRealtimeSessionStart,
+  qwenAudioRealtimeTranscriptionFinal,
+  qwenAudioRealtimeTranscriptionPartial,
 } from '../../qwen-audio-realtime-ipc'
 
 const model = 'qwen-audio-3.0-asr-flash-streaming'
@@ -79,5 +85,76 @@ describe('qwen Audio realtime ASR provider', () => {
   it('keeps the configured language when no request override is supplied', () => {
     expect(normalizeQwenAudioRealtimeLanguage('en')).toBe('en')
     expect(normalizeQwenAudioRealtimeLanguage('unsupported')).toBe('auto')
+  })
+
+  it('delivers Qwen snapshots to the Hearing Playground consumer without duplication', async () => {
+    const context = createContext()
+    const disposeStart = defineInvokeHandler(context, qwenAudioRealtimeSessionStart, async ({ sessionId: startedSessionId }) => {
+      await context.emit(qwenAudioRealtimeTranscriptionPartial, {
+        durationMilliseconds: 100,
+        sentenceId: 1,
+        sessionId: startedSessionId,
+        startMilliseconds: 0,
+        text: '你好',
+      })
+      await context.emit(qwenAudioRealtimeTranscriptionPartial, {
+        durationMilliseconds: 200,
+        sentenceId: 1,
+        sessionId: startedSessionId,
+        startMilliseconds: 0,
+        text: '你好世界',
+      })
+      await context.emit(qwenAudioRealtimeTranscriptionFinal, {
+        durationMilliseconds: 200,
+        sentenceId: 1,
+        sessionId: startedSessionId,
+        startMilliseconds: 0,
+        text: '你好世界',
+      })
+      await context.emit(qwenAudioRealtimeSessionFinished, { sessionId: startedSessionId })
+    })
+    const disposeAudio = defineInvokeHandler(context, qwenAudioRealtimeAudioAppend, () => {})
+    const disposeFinish = defineInvokeHandler(context, qwenAudioRealtimeSessionFinish, () => {})
+    const result = executeQwenAudioRealtimeStream({
+      baseURL: new URL('qwen-audio-realtime://session'),
+      eventContext: context,
+      inputAudioStream: new ReadableStream<ArrayBuffer>({
+        start(controller) {
+          controller.close()
+        },
+      }),
+      language: 'auto',
+    })
+    const playground = useHearingPlaygroundSegments()
+    const consumers = new StreamingTranscriptionConsumers()
+    consumers.register({
+      consumerId: 'hearing-playground',
+      onSpeechEnd: text => playground.finishStreaming(text),
+      onTranscriptionUpdate: text => playground.replaceStreamingText(text),
+    })
+    const snapshots: string[] = []
+    let firstPartialWasVisible = false
+    for await (const update of result.fullStream) {
+      if (update.type === 'transcript.text.snapshot') {
+        snapshots.push(update.text)
+        consumers.emitTranscriptionUpdate(update.text)
+        if (snapshots.length === 1)
+          firstPartialWasVisible = playground.current.value === '你好'
+      }
+    }
+
+    consumers.emitSpeechEnd(await result.text)
+
+    expect(snapshots).toEqual(['你好', '你好世界', '你好世界'])
+    expect(firstPartialWasVisible).toBe(true)
+    expect(playground.current.value).toBe('')
+    expect(playground.segments.value).toEqual([
+      { id: 1, text: '你好世界', status: 'complete' },
+    ])
+
+    disposeStart()
+    disposeAudio()
+    disposeFinish()
+    context.abort()
   })
 })
