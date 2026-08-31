@@ -1567,6 +1567,15 @@ pages:
       qwen3-tts-realtime:
         title: Qwen3 realtime TTS
         description: Alibaba Cloud Model Studio realtime text-to-speech canary.
+        environment: >-
+          This canary reads its credentials from the Electron main process
+          environment and does not store them in AIRI settings.
+        catalogUnavailable: The static canary catalog could not be refreshed; the supported defaults remain available.
+        fields:
+          model:
+            label: Model
+          voice:
+            label: Voice
         preview:
           title: Realtime preview unavailable here
           description: Qwen3 realtime TTS is streaming-only in the Electron canary and is not available from this REST preview.
