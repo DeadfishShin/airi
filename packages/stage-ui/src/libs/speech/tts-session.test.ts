@@ -4,6 +4,7 @@ import type { PlaybackManagerSubset, StreamingSessionSnapshot } from './tts-sess
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '../providers/providers/official'
 import { createStageTtsSession, createStreamingTtsSession } from './tts-session'
 
 // Lightweight IntentHandle stub. We do not import the real one from
@@ -175,6 +176,41 @@ describe('createStageTtsSession (factory)', () => {
     })
 
     expect(session.intentId).toBe('segmenter-no-voice')
+  })
+
+  it('keeps the Official bidirectional-ws provider on the existing streaming adapter', () => {
+    const pipe = makePipelineStub()
+    const session = createStageTtsSession({
+      providerId: OFFICIAL_SPEECH_STREAMING_PROVIDER_ID,
+      transport: 'bidirectional-ws',
+      streaming: () => makeStreamingSnapshot(),
+      audioContext: dummyAudioContext,
+      playbackManager: makePlaybackManagerStub(),
+      openIntent: () => { throw new Error('Official streaming must not use the segmenter.') },
+      intentOptions: () => ({}) as never,
+      streamingPipelineFactory: pipe.factory as any,
+    })
+
+    session.appendText('raw token')
+    session.finishInput()
+
+    expect(pipe.factory).toHaveBeenCalledTimes(1)
+    expect(pipe.calls.appendText).toEqual(['raw token'])
+    expect(pipe.calls.finish).toBe(1)
+  })
+
+  it('fails closed when Qwen is accidentally routed through the REST transport', () => {
+    const openIntent = vi.fn()
+
+    expect(() => createStageTtsSession({
+      providerId: 'qwen3-tts-realtime',
+      transport: 'rest',
+      audioContext: dummyAudioContext,
+      playbackManager: makePlaybackManagerStub(),
+      openIntent,
+      intentOptions: () => ({}) as never,
+    })).toThrow('Qwen3 realtime TTS requires the bidirectional WebSocket transport.')
+    expect(openIntent).not.toHaveBeenCalled()
   })
 })
 

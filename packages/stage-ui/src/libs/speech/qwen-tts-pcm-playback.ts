@@ -48,7 +48,8 @@ export interface Qwen3TtsPcmPlaybackTelemetry {
   r2AudioBufferCreated?: number
   r3SourceScheduled?: number
   r4SourceStartTime?: number
-  r5FirstSourceEnded?: number
+  /** Monotonic timestamp when the final owned source has drained. */
+  r5LocalDrainCompleted?: number
   firstAudioEventToScheduleMs?: number
   scheduledAudioDurationMs: number
   responseDone: boolean
@@ -57,9 +58,15 @@ export interface Qwen3TtsPcmPlaybackTelemetry {
 export interface Qwen3TtsPcmPlaybackBridgeOptions {
   audioContext: Qwen3TtsPcmAudioContext
   eventContext: Qwen3TtsRealtimeRendererEventContext
+  /** Existing AIRI output/gain destination. Defaults to audioContext.destination. */
+  destination?: AudioNode
   now?: () => number
   onError?: (error: Error) => void
   onTelemetry?: (telemetry: Qwen3TtsPcmPlaybackTelemetry) => void
+  onPlaybackActive?: () => void
+  onPlaybackDrained?: () => void
+  /** Attach the source to existing AIRI analyser/lip-sync nodes as needed. */
+  onSourceCreated?: (source: Qwen3TtsPcmAudioSource) => void
 }
 
 export interface Qwen3TtsPcmPlaybackBridge {
@@ -129,6 +136,8 @@ export function createQwen3TtsPcmPlaybackBridge(
   let acceptingAudio = true
   let errorReported = false
   let resumeRequested = false
+  let playbackActiveReported = false
+  let playbackDrainReported = false
   const sourceNodes = new Set<Qwen3TtsPcmAudioSource>()
   const now = options.now ?? (() => performance.now())
   const telemetryState: Qwen3TtsPcmPlaybackTelemetry = {
@@ -154,9 +163,15 @@ export function createQwen3TtsPcmPlaybackBridge(
       return
     const resolve = resolveDrain
     resolveDrain = undefined
-    resolve()
     if (currentState === 'finishing')
       currentState = 'finished'
+    if (!playbackDrainReported) {
+      playbackDrainReported = true
+      telemetryState.r5LocalDrainCompleted = now()
+      options.onPlaybackDrained?.()
+      emitTelemetry()
+    }
+    resolve()
   }
 
   function ensureDrainPromise() {
@@ -296,7 +311,8 @@ export function createQwen3TtsPcmPlaybackBridge(
 
     const source = options.audioContext.createBufferSource()
     source.buffer = audioBuffer
-    source.connect(options.audioContext.destination)
+    source.connect(options.destination ?? options.audioContext.destination)
+    options.onSourceCreated?.(source)
     sourceNodes.add(source)
     source.onended = () => {
       sourceNodes.delete(source)
@@ -304,7 +320,6 @@ export function createQwen3TtsPcmPlaybackBridge(
         source.disconnect()
       }
       catch {}
-      telemetryState.r5FirstSourceEnded ??= now()
       emitTelemetry()
       resolveDrainIfReady()
     }
@@ -325,6 +340,10 @@ export function createQwen3TtsPcmPlaybackBridge(
     telemetryState.r4SourceStartTime ??= startAt
     telemetryState.firstAudioEventToScheduleMs ??= telemetryState.r3SourceScheduled - telemetryState.r0AudioEventReceived!
     telemetryState.scheduledAudioDurationMs += audioBuffer.duration * 1000
+    if (!playbackActiveReported) {
+      playbackActiveReported = true
+      options.onPlaybackActive?.()
+    }
     emitTelemetry()
     return true
   }

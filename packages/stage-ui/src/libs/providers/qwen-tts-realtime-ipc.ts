@@ -1,5 +1,6 @@
 import { defineEventa, defineInvokeEventa } from '@moeru/eventa'
 
+export const QWEN3_TTS_REALTIME_PROVIDER_ID = 'qwen3-tts-realtime'
 export const QWEN3_TTS_REALTIME_MODEL = 'qwen3-tts-flash-realtime'
 
 export type Qwen3TtsRealtimeMode = 'server_commit' | 'commit'

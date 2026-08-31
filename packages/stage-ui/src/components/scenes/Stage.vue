@@ -709,11 +709,9 @@ function setupAnalyser() {
 }
 
 // One TTS session per LLM intent. The active provider determines which
-// adapter `createStageTtsSession` returns: the segmenter-based adapter for
-// every non-streaming provider, or the bidirectional WebSocket adapter
-// for the official streaming provider. Stage.vue intentionally does NOT
-// branch on provider id anywhere below — the factory is the single
-// decision point. See `packages/stage-ui/src/libs/speech/tts-session.ts`.
+// provider-aware adapter `createStageTtsSession` returns. Stage.vue keeps
+// chat hooks provider-neutral; the factory is the single adapter decision
+// point. See `packages/stage-ui/src/libs/speech/tts-session.ts`.
 let currentSession: StageTtsSession | null = null
 
 function stopSpeechOutput(reason: string) {
@@ -724,13 +722,16 @@ function stopSpeechOutput(reason: string) {
   resetAssistantSpeechSurface(reason)
 }
 
-/**
- * Resolves the official streaming TTS model for the current Stage session.
- */
+/** Resolves the active streaming provider's model for the current Stage session. */
 function resolveStreamingSessionModel(): string | null {
   const activeModel = activeSpeechModel.value as string | undefined
-  const sessionModel = activeModel?.includes('/') ? activeModel : getDefaultStreamingModel()
-  if (!sessionModel?.includes('/'))
+  // AIRI Official uses `<backend>/<resource>` ids, while native Electron
+  // streaming providers such as Qwen own their model id directly. Keep the
+  // legacy `auto` alias from being sent to the Official socket.
+  const sessionModel = activeModel && activeModel !== 'auto'
+    ? activeModel
+    : getDefaultStreamingModel()
+  if (!sessionModel)
     return null
   return sessionModel
 }
@@ -748,29 +749,30 @@ function buildStreamingSnapshot(turnId: string): StreamingSessionSnapshot | null
   const voiceId = activeSpeechVoice.value?.id
   if (!voiceId)
     return null
-  // Resolve the concrete streaming model id. The active speech model is only
-  // valid here when it carries the `<backend>/<api_resource_id>` shape the ws
-  // upstream expects — the HTTP TTS `auto` alias (and an empty selection after
-  // a provider switch) must NOT reach the bridge, so fall back to the
-  // server-curated default instead of a hardcoded id. Returns null (segmenter
-  // fallback) when neither resolves, rather than guessing a resource id.
+  // Resolve the concrete streaming model id. Official models carry the
+  // `<backend>/<api_resource_id>` shape; native providers may own a direct
+  // model id. The HTTP `auto` alias is not a streaming model.
   const sessionModel = resolveStreamingSessionModel()
   if (!sessionModel)
     return null
-  const apiResourceId = sessionModel.split('/', 2)[1]
+  const apiResourceId = sessionModel.includes('/') ? sessionModel.split('/', 2)[1] : undefined
   // TTS 2.0 / ICL 2.0 ship subtitles asynchronously relative to audio
   // (per the wire spec), so chunk-on-sentence-end would drop frames.
   // Buffer the entire session and decode at session.finished instead.
-  const bufferEntireSession = apiResourceId.startsWith('seed-tts-2.0') || apiResourceId.startsWith('seed-icl-2.0')
+  const bufferEntireSession = apiResourceId
+    ? apiResourceId.startsWith('seed-tts-2.0') || apiResourceId.startsWith('seed-icl-2.0')
+    : false
   return {
     model: sessionModel,
     voice: voiceId,
     voiceType: resolveStageVoiceType(),
     bufferEntireSession,
-    extraBody: {
-      api_resource_id: apiResourceId,
-      audio: { sample_rate: 24000, bit_rate: 64000 },
-    },
+    extraBody: apiResourceId
+      ? {
+          api_resource_id: apiResourceId,
+          audio: { sample_rate: 24000, bit_rate: 64000 },
+        }
+      : {},
     ownerId: activeCardId.value,
     onImmediateSpecial: special => playSpecialToken(special, { turnId }),
   }
@@ -798,10 +800,26 @@ function openTtsSession(turnId: string): StageTtsSession {
       currentSession = null
   }
   session = createStageTtsSession<AudioBuffer>({
+    providerId: activeSpeechProvider.value,
     transport: resolveSpeechTransport(activeSpeechProvider.value),
     streaming: () => buildStreamingSnapshot(turnId),
     audioContext,
     playbackManager,
+    qwenRealtime: {
+      destination: audioContext.destination,
+      onSourceCreated: (source) => {
+        if (audioAnalyser.value)
+          source.connect(audioAnalyser.value)
+        if (lipSyncNode.value)
+          source.connect(lipSyncNode.value)
+      },
+      onSpeakingChange: (speaking) => {
+        if (speaking)
+          nowSpeaking.value = true
+        else
+          resetSpeakingState()
+      },
+    },
     openIntent: opts => speechRuntimeStore.openIntent(opts),
     intentOptions: () => ({
       turnId,

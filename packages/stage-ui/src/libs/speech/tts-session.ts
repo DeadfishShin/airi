@@ -1,7 +1,10 @@
 import type { IntentHandle, IntentOptions, PlaybackItem } from '@proj-airi/pipelines-audio'
 
+import type { Qwen3TtsStageSessionOptions } from './qwen-tts-stage-session'
 import type { StreamingTtsPipelineOptions } from './streaming-pipeline'
 
+import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '../providers/qwen-tts-realtime-ipc'
+import { createQwen3TtsStageSession } from './qwen-tts-stage-session'
 import { createStreamingTtsPipeline } from './streaming-pipeline'
 
 /**
@@ -233,6 +236,8 @@ export type SpeechTransport = 'rest' | 'bidirectional-ws'
  * threading a dozen positional args.
  */
 export interface StageTtsSessionContext<TAudio = AudioBuffer> {
+  /** Explicit ProviderDefinition identity used by the central resolver. */
+  providerId?: string
   /**
    * Transport flavour of the active provider, read by the host from
    * `ProviderDefinition.capabilities.speech.transport`. `'rest'` (or any
@@ -264,6 +269,35 @@ export interface StageTtsSessionContext<TAudio = AudioBuffer> {
   intentOptions: () => IntentOptions
   /** Lifecycle hooks shared by both paths. */
   hooks?: StreamingSessionHooks
+  /** Test seam for the existing Official streaming adapter. */
+  streamingPipelineFactory?: CreateStreamingSessionOptions<TAudio>['pipelineFactory']
+  /** Provider-specific runtime seams; credentials never belong here. */
+  qwenRealtime?: Pick<Qwen3TtsStageSessionOptions, 'eventContext' | 'destination' | 'onSourceCreated' | 'onSpeakingChange' | 'onTelemetry' | 'now'>
+}
+
+function createProviderAwareStreamingSession<TAudio>(
+  ctx: StageTtsSessionContext<TAudio>,
+  intentId: string,
+  snapshot: StreamingSessionSnapshot,
+): StageTtsSession {
+  if (ctx.providerId === QWEN3_TTS_REALTIME_PROVIDER_ID) {
+    return createQwen3TtsStageSession({
+      intentId,
+      snapshot,
+      audioContext: ctx.audioContext as unknown as Qwen3TtsStageSessionOptions['audioContext'],
+      hooks: ctx.hooks,
+      ...ctx.qwenRealtime,
+    })
+  }
+
+  return createStreamingTtsSession<TAudio>({
+    intentId,
+    snapshot,
+    audioContext: ctx.audioContext!,
+    playbackManager: ctx.playbackManager,
+    hooks: ctx.hooks,
+    pipelineFactory: ctx.streamingPipelineFactory,
+  })
 }
 
 /**
@@ -278,12 +312,9 @@ export interface StageTtsSessionContext<TAudio = AudioBuffer> {
  * Expects:
  * - Caller has already cancelled / cleared any previous session ref.
  * - When `transport === 'bidirectional-ws'`, the snapshot's `voice` is
- *   a real voice id and `audioContext` is set; otherwise the factory
- *   silently falls back to the segmenter path (codex review MEDIUM #3
- *   noted this fallback should not silently re-enter the legacy
- *   per-segment path inside `tts()` — the segmenter adapter routes
- *   through the normal segmenter+tts callback, which is the intended
- *   behaviour for every REST provider).
+ *   a real voice id and `audioContext` is set; otherwise legacy providers
+ *   gracefully fall back to the segmenter path. The Qwen adapter fails
+ *   closed instead of falling through to REST.
  *
  * Returns:
  * - A `StageTtsSession`. Stage.vue stores it in a single `currentSession`
@@ -294,6 +325,8 @@ export function createStageTtsSession<TAudio = AudioBuffer>(
   ctx: StageTtsSessionContext<TAudio>,
 ): StageTtsSession {
   const wantsStreaming = ctx.transport === 'bidirectional-ws'
+  if (ctx.providerId === QWEN3_TTS_REALTIME_PROVIDER_ID && !wantsStreaming)
+    throw new Error('Qwen3 realtime TTS requires the bidirectional WebSocket transport.')
   const snapshot = wantsStreaming ? ctx.streaming?.() ?? null : null
   const canStream = wantsStreaming
     && snapshot != null
@@ -301,18 +334,14 @@ export function createStageTtsSession<TAudio = AudioBuffer>(
     && ctx.audioContext != null
 
   if (!canStream) {
+    if (ctx.providerId === QWEN3_TTS_REALTIME_PROVIDER_ID && wantsStreaming)
+      throw new Error('Qwen3 realtime TTS requires an Electron audio context and selected voice.')
     // Segmenter path: open the existing IntentHandle and adapt 1:1.
     return fromIntent(ctx.openIntent(ctx.intentOptions()))
   }
 
   const intentId = createStreamingIntentId()
-  return createStreamingTtsSession<TAudio>({
-    intentId,
-    snapshot: snapshot!,
-    audioContext: ctx.audioContext!,
-    playbackManager: ctx.playbackManager,
-    hooks: ctx.hooks,
-  })
+  return createProviderAwareStreamingSession(ctx, intentId, snapshot!)
 }
 
 function createStreamingIntentId(): string {

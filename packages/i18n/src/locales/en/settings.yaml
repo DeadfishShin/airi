@@ -1564,6 +1564,12 @@ pages:
               auto: Auto-detect
               zh: Chinese
               en: English
+      qwen3-tts-realtime:
+        title: Qwen3 realtime TTS
+        description: Alibaba Cloud Model Studio realtime text-to-speech canary.
+        preview:
+          title: Realtime preview unavailable here
+          description: Qwen3 realtime TTS is streaming-only in the Electron canary and is not available from this REST preview.
       browser-web-speech-api:
         description: Browser-native STT (requires Chrome/Edge/Safari)
         title: Web Speech API

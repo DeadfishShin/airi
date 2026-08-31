@@ -13,6 +13,7 @@ import {
 } from '@proj-airi/stage-ui/components'
 import { useAnalytics } from '@proj-airi/stage-ui/composables'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/providers/official'
+import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores'
 import { useSpeechStore } from '@proj-airi/stage-ui/stores/modules/speech'
 import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
@@ -74,6 +75,13 @@ const errorMessage = ref('')
 let lastOfficialTtsExposureKey = ''
 
 const STREAMING_MODEL_OPTION_PREFIX = 'streaming:'
+const isQwenRealtimeProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)
+
+async function ensureQwenRealtimeModelCatalog(providerId = activeSpeechProvider.value) {
+  if (providerId !== QWEN3_TTS_REALTIME_PROVIDER_ID || providersStore.getModelsForProvider(providerId).length > 0)
+    return
+  await providersStore.fetchModelsForProvider(providerId)
+}
 
 const selectableSpeechSources = computed(() => {
   const configuredSources = moduleSpeechProvidersMetadata.value
@@ -360,6 +368,7 @@ function syncOpenAICompatibleSettings() {
 
 onMounted(async () => {
   await providersStore.loadModelsForConfiguredProviders()
+  await ensureQwenRealtimeModelCatalog()
   speechStore.ensureActiveSpeechModel()
   await speechStore.loadVoicesForProvider(activeSpeechProvider.value, activeSpeechModel.value || undefined)
   syncOpenAICompatibleSettings()
@@ -368,6 +377,7 @@ onMounted(async () => {
 
 watch(activeSpeechProvider, async (newProvider, oldProvider) => {
   await providersStore.loadModelsForConfiguredProviders()
+  await ensureQwenRealtimeModelCatalog(newProvider)
 
   // Reset model and voice when switching providers (but not on initial load)
   const isMergedOfficialSwitch = (
@@ -927,54 +937,64 @@ function handleDeleteProvider(providerId: string) {
           </div>
         </h2>
         <div flex="~ col gap-4">
-          <FieldCheckbox
-            v-model="useSSML"
-            label="Use Custom SSML"
-            description="Enable to input raw SSML instead of plain text"
-          />
-
-          <template v-if="!useSSML">
-            <Textarea
-              v-model="testText" h-24
-              w-full
-              :placeholder="t('settings.pages.providers.provider.elevenlabs.playground.fields.field.input.placeholder')"
-            />
-          </template>
+          <Alert v-if="isQwenRealtimeProvider" type="info">
+            <template #title>
+              {{ t('settings.pages.providers.provider.qwen3-tts-realtime.preview.title') }}
+            </template>
+            <template #content>
+              {{ t('settings.pages.providers.provider.qwen3-tts-realtime.preview.description') }}
+            </template>
+          </Alert>
           <template v-else>
-            <textarea
-              v-model="ssmlText"
-              placeholder="Enter SSML text..."
-              border="neutral-100 dark:neutral-800 solid 2 focus:neutral-200 dark:focus:neutral-700"
-              transition="all duration-250 ease-in-out"
-              bg="neutral-100 dark:neutral-800 focus:neutral-50 dark:focus:neutral-900"
-              h-48 w-full rounded-lg px-3 py-2 text-sm font-mono outline-none
+            <FieldCheckbox
+              v-model="useSSML"
+              label="Use Custom SSML"
+              description="Enable to input raw SSML instead of plain text"
             />
-          </template>
 
-          <div flex="~ row" gap-4>
-            <button
-              border="neutral-800 dark:neutral-200 solid 2" transition="border duration-250 ease-in-out"
-              rounded-lg px-4 text="neutral-100 dark:neutral-900" py-2 text-sm
-              :disabled="isGenerating || (!testText.trim() && !useSSML) || (useSSML && !ssmlText.trim()) || !activeSpeechVoice"
-              :class="{ 'opacity-50 cursor-not-allowed': isGenerating || (!testText.trim() && !useSSML) || (useSSML && !ssmlText.trim()) || !activeSpeechVoice }"
-              bg="neutral-700 dark:neutral-300" @click="generateTestSpeech"
-            >
-              <div flex="~ row" items-center gap-2>
-                <div i-solar:play-circle-bold-duotone />
-                <span>{{ isGenerating ? t('settings.pages.providers.provider.elevenlabs.playground.buttons.button.test-voice.generating') : t('settings.pages.providers.provider.elevenlabs.playground.buttons.button.test-voice.label') }}</span>
-              </div>
-            </button>
-            <button
-              v-if="audioUrl" border="primary-300 dark:primary-800 solid 2"
-              transition="border duration-250 ease-in-out" rounded-lg px-4 py-2 text-sm @click="stopTestAudio"
-            >
-              <div flex="~ row" items-center gap-2>
-                <div i-solar:stop-circle-bold-duotone />
-                <span>Stop</span>
-              </div>
-            </button>
-          </div>
-          <audio v-if="audioUrl" ref="audioPlayer" :src="audioUrl" controls class="mt-2 w-full" />
+            <template v-if="!useSSML">
+              <Textarea
+                v-model="testText" h-24
+                w-full
+                :placeholder="t('settings.pages.providers.provider.elevenlabs.playground.fields.field.input.placeholder')"
+              />
+            </template>
+            <template v-else>
+              <textarea
+                v-model="ssmlText"
+                placeholder="Enter SSML text..."
+                border="neutral-100 dark:neutral-800 solid 2 focus:neutral-200 dark:focus:neutral-700"
+                transition="all duration-250 ease-in-out"
+                bg="neutral-100 dark:neutral-800 focus:neutral-50 dark:focus:neutral-900"
+                h-48 w-full rounded-lg px-3 py-2 text-sm font-mono outline-none
+              />
+            </template>
+
+            <div flex="~ row" gap-4>
+              <button
+                border="neutral-800 dark:neutral-200 solid 2" transition="border duration-250 ease-in-out"
+                rounded-lg px-4 text="neutral-100 dark:neutral-900" py-2 text-sm
+                :disabled="isGenerating || (!testText.trim() && !useSSML) || (useSSML && !ssmlText.trim()) || !activeSpeechVoice"
+                :class="{ 'opacity-50 cursor-not-allowed': isGenerating || (!testText.trim() && !useSSML) || (useSSML && !ssmlText.trim()) || !activeSpeechVoice }"
+                bg="neutral-700 dark:neutral-300" @click="generateTestSpeech"
+              >
+                <div flex="~ row" items-center gap-2>
+                  <div i-solar:play-circle-bold-duotone />
+                  <span>{{ isGenerating ? t('settings.pages.providers.provider.elevenlabs.playground.buttons.button.test-voice.generating') : t('settings.pages.providers.provider.elevenlabs.playground.buttons.button.test-voice.label') }}</span>
+                </div>
+              </button>
+              <button
+                v-if="audioUrl" border="primary-300 dark:primary-800 solid 2"
+                transition="border duration-250 ease-in-out" rounded-lg px-4 py-2 text-sm @click="stopTestAudio"
+              >
+                <div flex="~ row" items-center gap-2>
+                  <div i-solar:stop-circle-bold-duotone />
+                  <span>Stop</span>
+                </div>
+              </button>
+            </div>
+            <audio v-if="audioUrl" ref="audioPlayer" :src="audioUrl" controls class="mt-2 w-full" />
+          </template>
         </div>
       </div>
     </div>

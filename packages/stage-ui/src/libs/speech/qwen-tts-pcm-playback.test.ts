@@ -42,12 +42,14 @@ class FakeAudioSource implements Qwen3TtsPcmAudioSource {
   buffer: Qwen3TtsPcmAudioBuffer | null = null
   onended: ((event: Event) => void) | null = null
   connected = false
+  connectedDestination?: AudioNode
   disconnected = false
   starts: number[] = []
   stopCount = 0
 
   connect(destination: AudioNode) {
     this.connected = true
+    this.connectedDestination = destination
     return destination
   }
 
@@ -166,6 +168,18 @@ describe('qwen3 realtime TTS PCM playback bridge', () => {
     expect(telemetry).toHaveBeenCalled()
   })
 
+  it('routes PCM through an injected AIRI output destination', async () => {
+    const context = createContext()
+    const audioContext = new FakeAudioContext()
+    const output = {} as AudioNode
+    const bridge = createQwen3TtsPcmPlaybackBridge({ eventContext: context, audioContext, destination: output })
+    bridge.bind('session-a')
+
+    await emitAudio(context, 'session-a', 0, pcm16(0, 1))
+
+    expect(audioContext.sources[0]?.connectedDestination).toBe(output)
+  })
+
   it('schedules contiguous 100 ms chunks and recovers a late arrival without scheduling in the past', async () => {
     const context = createContext()
     const audioContext = new FakeAudioContext()
@@ -268,24 +282,29 @@ describe('qwen3 realtime TTS PCM playback bridge', () => {
     const bridge = createQwen3TtsPcmPlaybackBridge({ eventContext: context, audioContext })
     bridge.bind('session-a')
     await emitAudio(context, 'session-a', 0, pcm16(1, 2))
+    await emitAudio(context, 'session-a', 1, pcm16(3, 4))
 
     let drained = false
     await context.emit(qwen3TtsRealtimeResponseDone, { sessionId: 'session-a' })
-    expect(audioContext.sources[0].stopCount).toBe(0)
+    expect(audioContext.sources.map(source => source.stopCount)).toEqual([0, 0])
     expect(bridge.telemetry().responseDone).toBe(true)
     await context.emit(qwen3TtsRealtimeSessionFinished, { sessionId: 'session-a' })
     const drain = bridge.finish().then(() => {
       drained = true
     })
 
-    expect(audioContext.sources[0].stopCount).toBe(0)
+    expect(audioContext.sources.map(source => source.stopCount)).toEqual([0, 0])
     expect(bridge.state()).toBe('finishing')
     expect(drained).toBe(false)
 
     audioContext.sources[0].end()
+    expect(bridge.telemetry().r5LocalDrainCompleted).toBeUndefined()
+    expect(drained).toBe(false)
+    audioContext.sources[1].end()
     await drain
     expect(drained).toBe(true)
     expect(bridge.state()).toBe('finished')
+    expect(bridge.telemetry().r5LocalDrainCompleted).toBeTypeOf('number')
     expect(bridge.scheduledSourceCount()).toBe(0)
   })
 })
