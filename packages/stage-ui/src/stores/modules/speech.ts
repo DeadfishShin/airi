@@ -15,6 +15,7 @@ import { toXml } from 'xast-util-to-xml'
 import { x } from 'xastscript'
 
 import { getDefaultSpeechModel, getDefaultStreamingModel, OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, setupOfficialSpeechAutoPick } from '../../libs/providers/providers/official'
+import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
 
@@ -133,6 +134,7 @@ export const useSpeechStore = defineStore('speech', () => {
         ...availableVoices.value,
         [provider]: voices,
       }
+      ensureQwenRealtimeSelection(provider)
       return voices
     }
     catch (error) {
@@ -153,6 +155,29 @@ export const useSpeechStore = defineStore('speech', () => {
   function clearVoiceSelection() {
     activeSpeechVoiceId.value = ''
     activeSpeechVoice.value = undefined
+  }
+
+  /**
+   * Applies the fixed, renderer-visible canary selection for Qwen realtime
+   * TTS after its static catalogue is available. This is deliberately scoped
+   * to Qwen: other providers may expose multiple models or user-selectable
+   * voices and must retain their existing selection policy.
+   */
+  function ensureQwenRealtimeSelection(provider = activeSpeechProvider.value) {
+    if (provider !== QWEN3_TTS_REALTIME_PROVIDER_ID || activeSpeechProvider.value !== provider)
+      return
+
+    if (activeSpeechModel.value !== QWEN3_TTS_REALTIME_MODEL)
+      activeSpeechModel.value = QWEN3_TTS_REALTIME_MODEL
+
+    const voice = availableVoices.value[provider]?.find(candidate => candidate.id === QWEN3_TTS_REALTIME_VOICE_ID)
+    if (!voice)
+      return
+
+    if (activeSpeechVoiceId.value !== QWEN3_TTS_REALTIME_VOICE_ID)
+      activeSpeechVoiceId.value = QWEN3_TTS_REALTIME_VOICE_ID
+    if (!isEqual(activeSpeechVoice.value, voice))
+      activeSpeechVoice.value = voice
   }
 
   // Streaming TTS voices are model-scoped: the server only returns recommended
@@ -203,6 +228,11 @@ export const useSpeechStore = defineStore('speech', () => {
   }
 
   function ensureActiveSpeechModel() {
+    if (activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID) {
+      ensureQwenRealtimeSelection()
+      return
+    }
+
     ensureStreamingDefaultModel()
 
     if (activeSpeechProvider.value !== OFFICIAL_SPEECH_PROVIDER_ID) {
@@ -451,6 +481,7 @@ export const useSpeechStore = defineStore('speech', () => {
     getVoicesForProvider,
     ensureStreamingDefaultModel,
     ensureActiveSpeechModel,
+    ensureQwenRealtimeSelection,
     generateSSML,
     resolveSpeechInput,
     resetState,

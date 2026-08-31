@@ -5,7 +5,7 @@ import {
   ProviderSettingsLayout,
 } from '@proj-airi/stage-ui/components'
 import { selectProviderMetadata } from '@proj-airi/stage-ui/libs'
-import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
 import { useSpeechStore } from '@proj-airi/stage-ui/stores/modules/speech'
 import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { computedAsync } from '@vueuse/core'
@@ -14,7 +14,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 const providerId = QWEN3_TTS_REALTIME_PROVIDER_ID
-const canaryVoiceId = 'Cherry'
+const canaryVoiceId = QWEN3_TTS_REALTIME_VOICE_ID
 const { t } = useI18n()
 const router = useRouter()
 const providersStore = useProviderStore()

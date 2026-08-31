@@ -8,6 +8,7 @@ import { z } from 'zod'
 import {
   QWEN3_TTS_REALTIME_MODEL,
   QWEN3_TTS_REALTIME_PROVIDER_ID,
+  QWEN3_TTS_REALTIME_VOICE_ID,
 } from '../../qwen-tts-realtime-ipc'
 import { defineProvider } from '../registry'
 
@@ -32,8 +33,8 @@ const qwen3TtsRealtimeModels: ModelInfo[] = [{
 }]
 
 const qwen3TtsRealtimeVoices: VoiceInfo[] = [{
-  id: 'Cherry',
-  name: 'Cherry',
+  id: QWEN3_TTS_REALTIME_VOICE_ID,
+  name: QWEN3_TTS_REALTIME_VOICE_ID,
   provider: QWEN3_TTS_REALTIME_PROVIDER_ID,
   compatibleModels: [QWEN3_TTS_REALTIME_MODEL],
   description: 'Official Mandarin-capable Qwen3 realtime preset voice.',
@@ -73,4 +74,4 @@ export const providerQwen3TtsRealtime = defineProvider<Qwen3TtsRealtimeConfig>({
   },
 })
 
-export { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID }
+export { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID }

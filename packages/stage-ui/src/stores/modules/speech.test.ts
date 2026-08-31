@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, providerOfficialSpeech } from '../../libs/providers/providers/official'
+import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
 import { toSignedPercent, useSpeechStore } from './speech'
@@ -481,6 +482,66 @@ describe('single model speech providers', () => {
     speechStore.ensureActiveSpeechModel()
 
     expect(speechStore.activeSpeechModel).toBe('')
+  })
+})
+
+describe('qwen realtime speech selection', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  async function prepareQwenCatalog() {
+    const providersStore = useProviderStore()
+    const speechStore = useSpeechStore()
+
+    await providersStore.initializeProvider(QWEN3_TTS_REALTIME_PROVIDER_ID)
+    await providersStore.fetchModelsForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID)
+    speechStore.activeSpeechProvider = QWEN3_TTS_REALTIME_PROVIDER_ID
+    await speechStore.loadVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_MODEL)
+    await nextTick()
+
+    return { providersStore, speechStore }
+  }
+
+  it('selects the canonical model and Cherry voice after the Qwen catalog loads', async () => {
+    const { speechStore } = await prepareQwenCatalog()
+
+    expect(speechStore.activeSpeechModel).toBe(QWEN3_TTS_REALTIME_MODEL)
+    expect(speechStore.activeSpeechVoiceId).toBe(QWEN3_TTS_REALTIME_VOICE_ID)
+    expect(speechStore.activeSpeechVoice?.id).toBe(QWEN3_TTS_REALTIME_VOICE_ID)
+  })
+
+  it('repairs empty persisted voice state after the model watcher reset', async () => {
+    const { speechStore } = await prepareQwenCatalog()
+
+    speechStore.activeSpeechVoiceId = ''
+    speechStore.activeSpeechVoice = undefined
+    speechStore.ensureActiveSpeechModel()
+    await speechStore.loadVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_MODEL)
+    await nextTick()
+
+    expect(speechStore.activeSpeechModel).toBe(QWEN3_TTS_REALTIME_MODEL)
+    expect(speechStore.activeSpeechVoiceId).toBe(QWEN3_TTS_REALTIME_VOICE_ID)
+    expect(speechStore.activeSpeechVoice).toMatchObject({ id: QWEN3_TTS_REALTIME_VOICE_ID })
+  })
+
+  it('is idempotent and does not apply Cherry to another provider', async () => {
+    const { speechStore } = await prepareQwenCatalog()
+    const selectedVoice = speechStore.activeSpeechVoice
+
+    speechStore.ensureQwenRealtimeSelection()
+    speechStore.ensureQwenRealtimeSelection()
+    expect(speechStore.activeSpeechVoice).toBe(selectedVoice)
+
+    speechStore.activeSpeechProvider = 'voicevox'
+    speechStore.activeSpeechModel = 'default'
+    speechStore.activeSpeechVoiceId = '3'
+    speechStore.activeSpeechVoice = undefined
+    speechStore.ensureQwenRealtimeSelection()
+
+    expect(speechStore.activeSpeechModel).toBe('default')
+    expect(speechStore.activeSpeechVoiceId).toBe('3')
+    expect(speechStore.activeSpeechVoice).toBeUndefined()
   })
 })
 
