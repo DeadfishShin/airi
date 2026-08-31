@@ -2,9 +2,12 @@ import process from 'node:process'
 
 import QwenWebSocket from 'crossws/websocket'
 
+import { errorMessageFrom } from '@moeru/std'
+
 export const QWEN_AUDIO_REALTIME_ASR_MODEL = 'qwen-audio-3.0-asr-flash-streaming'
 export const QWEN_ASR_SAMPLE_RATE = 16_000
 export const MAX_PRESTART_BUFFER_BYTES = 256 * 1024
+const MAX_ERROR_DETAIL_LENGTH = 240
 
 export type QwenAudioRealtimeRegion = 'singapore' | 'beijing'
 export type QwenAudioRealtimeAsrLanguage = 'auto' | 'zh' | 'en'
@@ -48,7 +51,7 @@ export interface QwenAudioRealtimeSocket {
   send: (data: string | Uint8Array) => void
   close: (code?: number, reason?: string) => void
   terminate?: () => void
-  on: (event: 'open' | 'message' | 'error' | 'close', listener: (message?: unknown) => void) => void
+  on: (event: 'open' | 'message' | 'error' | 'close', listener: (message?: unknown, detail?: unknown) => void) => void
 }
 
 export type QwenAudioRealtimeSocketFactory = (
@@ -141,11 +144,86 @@ export type QwenServerMessage
   = | { action: 'task-started', taskId: string }
     | { action: 'result-generated', sentence: QwenAsrSentence, taskId: string }
     | { action: 'task-finished', taskId: string }
-    | { action: 'task-failed', taskId: string }
+    | { action: 'task-failed', errorCode?: string, errorMessage?: string, taskId: string }
     | { action: 'ignored', originalAction: string, taskId: string }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' ? value as Record<string, unknown> : undefined
+}
+
+/** Keeps provider diagnostics useful without allowing secrets into renderer-visible errors. */
+export function sanitizeQwenDiagnosticText(value: unknown): string | undefined {
+  if (typeof value !== 'string')
+    return undefined
+
+  const sanitized = value
+    .replace(/bearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/(authorization|api[-_ ]?key|token|cookie)\s*[:=]\s*\S+/gi, '$1=[redacted]')
+    .replace(/\bsk-\S+/gi, '[redacted]')
+    .replace(/https?:\/\/\S+/gi, '[url redacted]')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return sanitized ? sanitized.slice(0, MAX_ERROR_DETAIL_LENGTH) : undefined
+}
+
+function numericDiagnosticValue(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isInteger(value))
+      return value
+    if (typeof value === 'string') {
+      const match = /\b([1-5]\d{2})\b/.exec(value)
+      if (match)
+        return Number(match[1])
+    }
+  }
+  return undefined
+}
+
+function qwenSocketErrorMessage(error: unknown): string {
+  const details = recordValue(error)
+  const rawMessage = details?.message ?? errorMessageFrom(error) ?? String(error)
+  const message = sanitizeQwenDiagnosticText(rawMessage)
+  const type = sanitizeQwenDiagnosticText(
+    details?.name
+    ?? details?.type
+    ?? (error instanceof Error ? error.constructor.name : undefined),
+  )
+  const code = sanitizeQwenDiagnosticText(details?.code)
+  const status = numericDiagnosticValue(details?.statusCode, details?.status, details?.code, rawMessage)
+  const parts = [
+    type ? `type=${type}` : undefined,
+    status ? `status=${status}` : undefined,
+    code && !/^\d+$/.test(code) ? `code=${code}` : undefined,
+    message ? `message=${message}` : undefined,
+  ].filter((part): part is string => Boolean(part))
+
+  return parts.length ? parts.join('; ') : 'details unavailable'
+}
+
+function qwenCloseMessage(code: unknown, reason: unknown): string {
+  const closeCode = typeof code === 'number' && Number.isInteger(code) ? `close_code=${code}` : undefined
+  const closeReason = sanitizeQwenDiagnosticText(
+    typeof reason === 'string'
+      ? reason
+      : reason instanceof Uint8Array
+        ? new TextDecoder().decode(reason)
+        : reason instanceof ArrayBuffer
+          ? new TextDecoder().decode(reason)
+          : undefined,
+  )
+  return [closeCode, closeReason ? `close_reason=${closeReason}` : undefined]
+    .filter((part): part is string => Boolean(part))
+    .join('; ') || 'details unavailable'
+}
+
+function qwenTaskFailureMessage(errorCode?: string, errorMessage?: string): string {
+  const code = sanitizeQwenDiagnosticText(errorCode)
+  const message = sanitizeQwenDiagnosticText(errorMessage)
+  return [code ? `error_code=${code}` : undefined, message ? `error_message=${message}` : undefined]
+    .filter((part): part is string => Boolean(part))
+    .join('; ') || 'details unavailable'
 }
 
 function textFromSocketMessage(message: unknown): string {
@@ -164,14 +242,23 @@ export function parseQwenServerMessage(message: unknown, expectedTaskId: string)
   const root = recordValue(parsed)
   const header = recordValue(root?.header)
   const taskId = header?.task_id
-  const action = header?.action
+  // Client commands use `action`; current Qwen server events use `event`.
+  const action = header?.event ?? header?.action
 
   if (typeof taskId !== 'string' || taskId !== expectedTaskId || typeof action !== 'string')
     throw new Error('Qwen Audio realtime ASR returned an invalid task event.')
 
   if (action !== 'result-generated') {
-    if (action === 'task-started' || action === 'task-finished' || action === 'task-failed')
+    if (action === 'task-started' || action === 'task-finished')
       return { action, taskId }
+    if (action === 'task-failed') {
+      return {
+        action,
+        errorCode: sanitizeQwenDiagnosticText(header?.error_code),
+        errorMessage: sanitizeQwenDiagnosticText(header?.error_message),
+        taskId,
+      }
+    }
     return { action: 'ignored', originalAction: action, taskId }
   }
 
@@ -192,9 +279,9 @@ export function parseQwenServerMessage(message: unknown, expectedTaskId: string)
     || !Number.isInteger(sentenceId)
     || typeof text !== 'string'
     || typeof beginTime !== 'number'
-    || typeof endTime !== 'number'
+    || (typeof endTime !== 'number' && endTime !== null)
     || typeof sentenceEnd !== 'boolean'
-    || endTime < beginTime
+    || (typeof endTime === 'number' && endTime < beginTime)
   ) {
     throw new Error('Qwen Audio realtime ASR returned an invalid sentence event.')
   }
@@ -203,7 +290,7 @@ export function parseQwenServerMessage(message: unknown, expectedTaskId: string)
     action,
     taskId,
     sentence: {
-      durationMilliseconds: endTime - beginTime,
+      durationMilliseconds: typeof endTime === 'number' ? endTime - beginTime : 0,
       isFinal: sentenceEnd,
       sentenceId,
       startMilliseconds: beginTime,
@@ -307,15 +394,21 @@ export class QwenAudioRealtimeAsrSession {
           .then(() => this.handleMessage(message))
           .catch(() => {})
       })
-      this.socket.on('error', () => {
-        void this.fail('websocket_error', 'Qwen Audio realtime ASR WebSocket failed.')
+      this.socket.on('error', (error) => {
+        void this.fail(
+          'websocket_error',
+          `Qwen Audio realtime ASR WebSocket failed (${qwenSocketErrorMessage(error)}).`,
+        )
       })
-      this.socket.on('close', () => {
-        void this.handleClose()
+      this.socket.on('close', (code, reason) => {
+        void this.handleClose(code, reason)
       })
     }
-    catch {
-      void this.fail('connect_error', 'Qwen Audio realtime ASR could not connect.')
+    catch (error) {
+      void this.fail(
+        'connect_error',
+        `Qwen Audio realtime ASR could not connect (${qwenSocketErrorMessage(error)}).`,
+      )
     }
   }
 
@@ -408,7 +501,10 @@ export class QwenAudioRealtimeAsrSession {
     }
 
     if (event.action === 'task-failed') {
-      await this.fail('task_failed', 'Qwen Audio realtime ASR task failed.')
+      await this.fail(
+        'task_failed',
+        `Qwen Audio realtime ASR task failed (${qwenTaskFailureMessage(event.errorCode, event.errorMessage)}).`,
+      )
       return
     }
 
@@ -445,10 +541,13 @@ export class QwenAudioRealtimeAsrSession {
     this.socket?.close(1000, 'task-finished')
   }
 
-  private async handleClose() {
+  private async handleClose(code?: unknown, reason?: unknown) {
     if (this.state === 'finished' || this.state === 'failed' || this.state === 'cancelled')
       return
-    await this.fail('unexpected_close', 'Qwen Audio realtime ASR WebSocket closed unexpectedly.')
+    await this.fail(
+      'unexpected_close',
+      `Qwen Audio realtime ASR WebSocket closed unexpectedly (${qwenCloseMessage(code, reason)}).`,
+    )
   }
 
   private orderedSentenceSnapshot(): QwenAsrSentence {

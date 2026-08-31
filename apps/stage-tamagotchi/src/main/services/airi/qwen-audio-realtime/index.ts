@@ -28,6 +28,14 @@ import {
 
 type QwenMainEventContext = ReturnType<typeof createContext>['context']
 
+export const QWEN_TERMINAL_ERROR_TOMBSTONE_TTL_MS = 30_000
+export const QWEN_MAX_TERMINAL_ERROR_TOMBSTONES = 32
+
+interface QwenTerminalErrorTombstone {
+  error: Error
+  expiresAt: number
+}
+
 export interface QwenAudioRealtimeServiceOptions {
   context: QwenMainEventContext
   environment?: NodeJS.ProcessEnv
@@ -51,8 +59,40 @@ function errorCodeFrom(error: Error) {
 /** Registers the main-process owner for Qwen realtime ASR sessions. */
 export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServiceOptions) {
   const sessions = new Map<string, QwenAudioRealtimeAsrSession>()
+  const terminalErrors = new Map<string, QwenTerminalErrorTombstone>()
+  const now = options.now ?? (() => Date.now())
   const runtimeConfig = () => resolveQwenAudioRealtimeRuntimeConfig(options.environment)
   const socketFactory = options.socketFactory ?? createQwenAudioRealtimeSocket
+  let disposed = false
+
+  const pruneTerminalErrors = () => {
+    const currentTime = now()
+    for (const [sessionId, tombstone] of terminalErrors) {
+      if (tombstone.expiresAt <= currentTime)
+        terminalErrors.delete(sessionId)
+    }
+    while (terminalErrors.size > QWEN_MAX_TERMINAL_ERROR_TOMBSTONES)
+      terminalErrors.delete(terminalErrors.keys().next().value as string)
+  }
+
+  const rememberTerminalError = (sessionId: string, error: Error) => {
+    pruneTerminalErrors()
+    const existing = terminalErrors.get(sessionId)
+    if (existing)
+      return existing.error
+
+    terminalErrors.set(sessionId, {
+      error,
+      expiresAt: now() + QWEN_TERMINAL_ERROR_TOMBSTONE_TTL_MS,
+    })
+    pruneTerminalErrors()
+    return error
+  }
+
+  const terminalErrorFor = (sessionId: string) => {
+    pruneTerminalErrors()
+    return terminalErrors.get(sessionId)?.error
+  }
 
   const emitError = async (sessionId: string, error: Error, code = 'provider_error') => {
     await options.context.emit(qwenAudioRealtimeSessionError, {
@@ -90,11 +130,15 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
           }),
           onFinished: async () => {
             sessions.delete(sessionId)
+            terminalErrors.delete(sessionId)
             await options.context.emit(qwenAudioRealtimeSessionFinished, { sessionId })
           },
           onError: async (error) => {
+            if (disposed)
+              return
+            const authoritativeError = rememberTerminalError(sessionId, error)
             sessions.delete(sessionId)
-            await emitError(sessionId, error, errorCodeFrom(error))
+            await emitError(sessionId, authoritativeError, errorCodeFrom(authoritativeError))
           },
           onTelemetry: options.onTelemetry,
         },
@@ -102,41 +146,63 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
         options.now,
       )
       sessions.set(sessionId, session)
+      terminalErrors.delete(sessionId)
       session.start()
     }),
     defineInvokeHandler(options.context, qwenAudioRealtimeAudioAppend, (payload) => {
-      const session = sessions.get(sessionIdFromPayload(payload))
-      if (!session)
+      const sessionId = sessionIdFromPayload(payload)
+      const session = sessions.get(sessionId)
+      if (!session) {
+        const terminalError = terminalErrorFor(sessionId)
+        if (terminalError)
+          throw terminalError
         throw new Error('Qwen Audio realtime ASR session is not active.')
+      }
       session.appendAudio(payload.audio)
     }),
     defineInvokeHandler(options.context, qwenAudioRealtimeSessionFinish, async (payload) => {
-      const session = sessions.get(sessionIdFromPayload(payload))
-      if (!session)
+      const sessionId = sessionIdFromPayload(payload)
+      const session = sessions.get(sessionId)
+      if (!session) {
+        const terminalError = terminalErrorFor(sessionId)
+        if (terminalError)
+          throw terminalError
         throw new Error('Qwen Audio realtime ASR session is not active.')
+      }
       await session.finish()
     }),
     defineInvokeHandler(options.context, qwenAudioRealtimeSessionCancel, (payload) => {
       const sessionId = sessionIdFromPayload(payload)
       const session = sessions.get(sessionId)
-      if (!session)
+      if (!session) {
+        terminalErrors.delete(sessionId)
         return
+      }
       sessions.delete(sessionId)
       session.cancel()
     }),
   ]
 
   const dispose = async () => {
+    disposed = true
     for (const session of sessions.values())
       session.cancel()
     sessions.clear()
+    terminalErrors.clear()
     for (const disposeHandler of handlers)
       disposeHandler()
   }
 
   options.lifecycle?.appHooks.onStop(dispose)
 
-  return { dispose, sessions }
+  return {
+    dispose,
+    getTerminalErrorTombstoneCount: () => {
+      pruneTerminalErrors()
+      return terminalErrors.size
+    },
+    sessions,
+  }
 }
 
 /** Creates the Electron main Eventa context and registers the ASR service. */

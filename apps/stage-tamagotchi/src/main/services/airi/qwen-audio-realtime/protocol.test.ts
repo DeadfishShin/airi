@@ -10,6 +10,7 @@ import {
   buildQwenAudioRealtimeEndpoint,
   buildQwenRunTaskFrame,
   MAX_PRESTART_BUFFER_BYTES,
+  parseQwenServerMessage,
   QWEN_ASR_SAMPLE_RATE,
   QWEN_AUDIO_REALTIME_ASR_MODEL,
   QwenAudioRealtimeAsrSession,
@@ -19,9 +20,9 @@ import {
 class FakeSocket implements QwenAudioRealtimeSocket {
   readonly sent: Array<string | Uint8Array> = []
   readyState = 1
-  private readonly listeners = new Map<string, Array<(message?: unknown) => void>>()
+  private readonly listeners = new Map<string, Array<(message?: unknown, detail?: unknown) => void>>()
 
-  on(event: 'open' | 'message' | 'error' | 'close', listener: (message?: unknown) => void) {
+  on(event: 'open' | 'message' | 'error' | 'close', listener: (message?: unknown, detail?: unknown) => void) {
     const callbacks = this.listeners.get(event) ?? []
     callbacks.push(listener)
     this.listeners.set(event, callbacks)
@@ -33,9 +34,9 @@ class FakeSocket implements QwenAudioRealtimeSocket {
 
   close() {}
 
-  emit(event: 'open' | 'message' | 'error' | 'close', message?: unknown) {
+  emit(event: 'open' | 'message' | 'error' | 'close', message?: unknown, detail?: unknown) {
     for (const listener of this.listeners.get(event) ?? [])
-      listener(message)
+      listener(message, detail)
   }
 }
 
@@ -217,9 +218,87 @@ describe('qwen Audio realtime ASR protocol', () => {
     }, () => failedSocket)
     failedSession.start()
     failedSocket.emit('open')
-    failedSocket.emit('message', serverEvent('task-failed'))
+    failedSocket.emit('message', JSON.stringify({
+      header: {
+        error_code: 'AUTHORIZATION_ERROR',
+        error_message: 'request rejected with status 403',
+        event: 'task-failed',
+        task_id: 'session-1',
+      },
+      payload: {},
+    }))
     await settleEvents()
     expect(failed[0]?.message).toContain('task_failed')
+    expect(failed[0]?.message).toContain('error_code=AUTHORIZATION_ERROR')
+    expect(failed[0]?.message).toContain('status 403')
+  })
+
+  it('accepts the official server event field and preserves nullable intermediate end time', () => {
+    expect(parseQwenServerMessage(JSON.stringify({
+      header: { event: 'result-generated', task_id: 'session-1' },
+      payload: {
+        output: {
+          sentence: {
+            begin_time: 0,
+            end_time: null,
+            sentence_begin: true,
+            sentence_end: false,
+            sentence_id: 1,
+            text: 'hello',
+          },
+        },
+      },
+    }), 'session-1')).toMatchObject({
+      action: 'result-generated',
+      sentence: { durationMilliseconds: 0, text: 'hello' },
+    })
+  })
+
+  it.each([
+    [401, 'Unauthorized'],
+    [403, 'Forbidden'],
+  ])('preserves an HTTP %s WebSocket handshake failure without exposing bearer data', async (status, label) => {
+    const socket = new FakeSocket()
+    const errors: Error[] = []
+    const session = new QwenAudioRealtimeAsrSession('session-1', runtimeConfig, 'auto', {
+      onStarted: () => {},
+      onPartial: () => {},
+      onFinal: () => {},
+      onFinished: () => {},
+      onError: (error) => { errors.push(error) },
+    }, () => socket)
+
+    session.start()
+    socket.emit('error', {
+      code: `HTTP_${status}`,
+      message: `${label}: Unexpected server response: ${status}; Bearer secret-must-not-appear`,
+      statusCode: status,
+    })
+    await settleEvents()
+
+    expect(errors[0]?.message).toContain(`status=${status}`)
+    expect(errors[0]?.message).toContain(`code=HTTP_${status}`)
+    expect(errors[0]?.message).toContain('Bearer [redacted]')
+    expect(errors[0]?.message).not.toContain('secret-must-not-appear')
+  })
+
+  it('preserves an unexpected close code and sanitized reason', async () => {
+    const socket = new FakeSocket()
+    const errors: Error[] = []
+    const session = new QwenAudioRealtimeAsrSession('session-1', runtimeConfig, 'auto', {
+      onStarted: () => {},
+      onPartial: () => {},
+      onFinal: () => {},
+      onFinished: () => {},
+      onError: (error) => { errors.push(error) },
+    }, () => socket)
+
+    session.start()
+    socket.emit('close', 1006, 'peer closed unexpectedly')
+    await settleEvents()
+
+    expect(errors[0]?.message).toContain('close_code=1006')
+    expect(errors[0]?.message).toContain('close_reason=peer closed unexpectedly')
   })
 
   it('finishes an empty ASR response without emitting a transcript', async () => {
