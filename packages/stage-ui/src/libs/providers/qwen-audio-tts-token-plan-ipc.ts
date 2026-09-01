@@ -29,10 +29,22 @@ export interface QwenAudioTtsTokenPlanErrorPayload extends QwenAudioTtsTokenPlan
   message: string
 }
 
+/** Renderer-derived, content-free completion diagnostics for one Token Plan Stage session. */
+export interface QwenAudioTtsTokenPlanStageTelemetryPayload {
+  sessionId: string
+  firstLlmTextToTextAppendMs?: number
+  firstLlmTextToAudioEventMs?: number
+  firstLlmTextToPlaybackScheduleMs?: number
+  firstAudioEventRelativeToInputFinishMs?: number
+  firstAudioScheduledRelativeToInputFinishMs?: number
+  remoteFinishToLocalDrainMs?: number
+}
+
 export const qwenAudioTtsTokenPlanSessionStart = defineInvokeEventa<void, QwenAudioTtsTokenPlanSessionStartPayload>('eventa:invoke:electron:qwen-audio-tts-token-plan:session-start')
 export const qwenAudioTtsTokenPlanTextAppend = defineInvokeEventa<void, QwenAudioTtsTokenPlanTextAppendPayload>('eventa:invoke:electron:qwen-audio-tts-token-plan:text-append')
 export const qwenAudioTtsTokenPlanSessionFinish = defineInvokeEventa<void, QwenAudioTtsTokenPlanSessionPayload>('eventa:invoke:electron:qwen-audio-tts-token-plan:session-finish')
 export const qwenAudioTtsTokenPlanSessionCancel = defineInvokeEventa<void, QwenAudioTtsTokenPlanSessionPayload>('eventa:invoke:electron:qwen-audio-tts-token-plan:session-cancel')
+export const qwenAudioTtsTokenPlanStageTelemetry = defineInvokeEventa<void, QwenAudioTtsTokenPlanStageTelemetryPayload>('eventa:invoke:electron:qwen-audio-tts-token-plan:stage-telemetry')
 
 export const qwenAudioTtsTokenPlanSessionReady = defineEventa<QwenAudioTtsTokenPlanSessionPayload>('eventa:event:electron:qwen-audio-tts-token-plan:session-ready')
 export const qwenAudioTtsTokenPlanAudioDelta = defineEventa<QwenAudioTtsTokenPlanAudioDeltaPayload>('eventa:event:electron:qwen-audio-tts-token-plan:audio-delta')

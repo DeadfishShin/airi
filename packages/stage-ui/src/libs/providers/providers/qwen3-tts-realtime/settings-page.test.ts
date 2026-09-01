@@ -19,7 +19,7 @@ describe('qwen3 realtime TTS settings route', () => {
     expect(source).toContain('fetchModelsForProvider(providerId)')
     expect(source).toContain('loadVoicesForProvider(providerId, QWEN3_TTS_REALTIME_MODEL)')
     expect(source).toContain('QWEN3_TTS_REALTIME_MODEL')
-    expect(source).toContain('Cherry')
+    expect(source).toContain('QWEN3_TTS_REALTIME_VOICE_ID')
     expect(source).toContain('qwen3-tts-realtime-environment')
     expect(source).not.toContain('SpeechProviderSettings')
     expect(source).not.toContain('SpeechPlayground')

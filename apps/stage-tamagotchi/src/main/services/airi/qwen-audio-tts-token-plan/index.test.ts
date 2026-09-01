@@ -13,6 +13,7 @@ import {
   qwenAudioTtsTokenPlanSessionFinished,
   qwenAudioTtsTokenPlanSessionReady,
   qwenAudioTtsTokenPlanSessionStart,
+  qwenAudioTtsTokenPlanStageTelemetry,
   qwenAudioTtsTokenPlanTextAppend,
 } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-ipc'
 import { createStageTtsSession } from '@proj-airi/stage-ui/libs/speech/tts-session'
@@ -455,5 +456,71 @@ describe('qwen Audio Token Plan main service', () => {
     expect(socket.closed || socket.terminated).toBe(true)
     expect(finished).not.toHaveBeenCalled()
     await service.dispose()
+  })
+
+  it('logs one bounded Token Plan Stage summary and preserves signed metrics', async () => {
+    const context = createContext()
+    const service = createQwenAudioTtsTokenPlanService({ context: context as never })
+    const report = defineInvoke(context, qwenAudioTtsTokenPlanStageTelemetry)
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const payload = {
+      sessionId: `stream-${'x'.repeat(100)}`,
+      firstLlmTextToTextAppendMs: 4,
+      firstLlmTextToAudioEventMs: 335,
+      firstLlmTextToPlaybackScheduleMs: 336,
+      firstAudioEventRelativeToInputFinishMs: -500,
+      firstAudioScheduledRelativeToInputFinishMs: -499,
+      remoteFinishToLocalDrainMs: 908,
+      text: 'must-not-be-logged',
+      audio: 'base64-must-not-be-logged',
+      TOKEN_PLAN_API_KEY: 'secret-must-not-be-logged',
+    }
+
+    try {
+      await report(payload)
+      await report(payload)
+
+      expect(log).toHaveBeenCalledTimes(1)
+      expect(log.mock.calls[0]).toEqual([
+        '[Qwen Audio Token Plan TTS stage] session finished',
+        {
+          sessionId: payload.sessionId.slice(-24),
+          firstLlmTextToTextAppendMs: 4,
+          firstLlmTextToAudioEventMs: 335,
+          firstLlmTextToPlaybackScheduleMs: 336,
+          firstAudioEventRelativeToInputFinishMs: -500,
+          firstAudioScheduledRelativeToInputFinishMs: -499,
+          remoteFinishToLocalDrainMs: 908,
+        },
+      ])
+      const serializedLog = JSON.stringify(log.mock.calls)
+      expect(serializedLog).not.toContain('must-not-be-logged')
+      expect(serializedLog).not.toContain('base64')
+      expect(serializedLog).not.toContain('TOKEN_PLAN_API_KEY')
+      expect(service.getStageTelemetryLogCount()).toBe(1)
+    }
+    finally {
+      log.mockRestore()
+      await service.dispose()
+    }
+  })
+
+  it('bounds remembered Token Plan Stage telemetry session IDs', async () => {
+    const context = createContext()
+    const service = createQwenAudioTtsTokenPlanService({ context: context as never })
+    const report = defineInvoke(context, qwenAudioTtsTokenPlanStageTelemetry)
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    try {
+      for (let index = 0; index < 65; index++)
+        await report({ sessionId: `stage-${index}`, firstAudioScheduledRelativeToInputFinishMs: index - 1 })
+
+      expect(service.getStageTelemetryLogCount()).toBe(64)
+      expect(log).toHaveBeenCalledTimes(65)
+    }
+    finally {
+      log.mockRestore()
+      await service.dispose()
+    }
   })
 })

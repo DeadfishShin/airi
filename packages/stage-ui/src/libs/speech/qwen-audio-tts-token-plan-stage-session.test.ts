@@ -13,6 +13,7 @@ import {
   qwenAudioTtsTokenPlanSessionFinish,
   qwenAudioTtsTokenPlanSessionFinished,
   qwenAudioTtsTokenPlanSessionStart,
+  qwenAudioTtsTokenPlanStageTelemetry,
   qwenAudioTtsTokenPlanTextAppend,
 } from '../providers/qwen-audio-tts-token-plan-ipc'
 import { createStageTtsSession } from './tts-session'
@@ -98,10 +99,11 @@ async function settle() {
   }
 }
 
-function createSessionHarness() {
+function createSessionHarness(options: { now?: () => number } = {}) {
   const context = createContext()
   const audioContext = new FakeAudioContext()
   const calls: { start: number, text: string[], finish: number, cancel: number } = { start: 0, text: [], finish: 0, cancel: 0 }
+  const stageSummaries: unknown[] = []
   const onDone = vi.fn()
   const onError = vi.fn()
   const onSpeakingChange = vi.fn()
@@ -120,6 +122,9 @@ function createSessionHarness() {
   defineInvokeHandler(context, qwenAudioTtsTokenPlanSessionCancel, () => {
     calls.cancel++
   })
+  defineInvokeHandler(context, qwenAudioTtsTokenPlanStageTelemetry, (payload) => {
+    stageSummaries.push(payload)
+  })
 
   const session = createStageTtsSession({
     providerId: 'qwen-audio-tts-token-plan',
@@ -134,10 +139,11 @@ function createSessionHarness() {
       eventContext: context as unknown as EventContext<any, any>,
       onSpeakingChange,
       onDiagnostic: milestone => diagnostics.push(milestone),
+      now: options.now,
     },
   })
 
-  return { context, audioContext, calls, diagnostics, onDone, onError, onSpeakingChange, session }
+  return { context, audioContext, calls, diagnostics, onDone, onError, onSpeakingChange, session, stageSummaries }
 }
 
 describe('token Plan Qwen Audio TTS Stage adapter', () => {
@@ -181,6 +187,40 @@ describe('token Plan Qwen Audio TTS Stage adapter', () => {
     expect(harness.onError).not.toHaveBeenCalled()
   })
 
+  it('reports Token Plan overlap telemetry only after remote finish and local drain', async () => {
+    let clock = 0
+    const harness = createSessionHarness({ now: () => clock })
+
+    await settle()
+    clock = 100
+    harness.session.appendText('first')
+    await settle()
+    clock = 200
+    await harness.context.emit(qwenAudioTtsTokenPlanAudioDelta, {
+      sessionId: harness.session.intentId,
+      sequence: 0,
+      audio: pcm16(),
+    })
+    clock = 300
+    harness.session.finishInput()
+    await harness.context.emit(qwenAudioTtsTokenPlanSessionFinished, { sessionId: harness.session.intentId })
+    await settle()
+
+    expect(harness.stageSummaries).toEqual([])
+    expect(harness.onDone).not.toHaveBeenCalled()
+    harness.audioContext.sources[0]?.end()
+    await settle()
+
+    expect(harness.stageSummaries).toHaveLength(1)
+    expect(harness.stageSummaries[0]).toMatchObject({
+      sessionId: harness.session.intentId,
+      firstAudioEventRelativeToInputFinishMs: -100,
+      firstAudioScheduledRelativeToInputFinishMs: -100,
+      remoteFinishToLocalDrainMs: expect.any(Number),
+    })
+    expect(harness.onDone).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the shared speaking state active until the local Token Plan tail drains', async () => {
     const harness = createSessionHarness()
     await settle()
@@ -222,6 +262,7 @@ describe('token Plan Qwen Audio TTS Stage adapter', () => {
     expect(harness.calls.cancel).toBe(1)
     expect(harness.onDone).not.toHaveBeenCalled()
     expect(harness.onError).not.toHaveBeenCalled()
+    expect(harness.stageSummaries).toEqual([])
   })
 
   it('keeps the first Token Plan server error authoritative', async () => {
@@ -240,5 +281,6 @@ describe('token Plan Qwen Audio TTS Stage adapter', () => {
     expect(harness.onError).toHaveBeenCalledTimes(1)
     expect(harness.onError.mock.calls[0]?.[0].message).toContain('invalid_model')
     expect(harness.onDone).not.toHaveBeenCalled()
+    expect(harness.stageSummaries).toEqual([])
   })
 })

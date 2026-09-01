@@ -854,9 +854,6 @@ function openTtsSession(
         else
           resetSpeakingState()
       },
-      onTelemetry: (telemetry) => {
-        latestQwenTelemetry = telemetry
-      },
       onDiagnostic: milestone => diagnostics?.emit(milestone),
     },
     openIntent: opts => speechRuntimeStore.openIntent(opts),

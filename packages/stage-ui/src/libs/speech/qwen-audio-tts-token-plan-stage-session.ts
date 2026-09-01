@@ -33,9 +33,11 @@ import {
   qwenAudioTtsTokenPlanSessionFinish,
   qwenAudioTtsTokenPlanSessionFinished,
   qwenAudioTtsTokenPlanSessionStart,
+  qwenAudioTtsTokenPlanStageTelemetry,
   qwenAudioTtsTokenPlanTextAppend,
 } from '../providers/qwen-audio-tts-token-plan-ipc'
 import { createQwen3TtsPcmPlaybackBridge } from './qwen-tts-pcm-playback'
+import { summarizeQwen3TtsStageTelemetry } from './qwen-tts-stage-session'
 
 export const MAX_QWEN_AUDIO_TTS_TOKEN_PLAN_PENDING_TEXT_CHARS = 64 * 1024
 
@@ -88,6 +90,7 @@ export function createQwenAudioTtsTokenPlanStageSession(options: QwenAudioTtsTok
   const append = defineInvoke(eventa.context, qwenAudioTtsTokenPlanTextAppend)
   const finish = defineInvoke(eventa.context, qwenAudioTtsTokenPlanSessionFinish)
   const cancelRemote = defineInvoke(eventa.context, qwenAudioTtsTokenPlanSessionCancel)
+  const reportStageTelemetry = defineInvoke(eventa.context, qwenAudioTtsTokenPlanStageTelemetry)
   const diagnostic = options.onDiagnostic
   const emittedDiagnostics = new Set<QwenAudioTtsTokenPlanStageMilestone>()
   const emitDiagnostic = (milestone: QwenAudioTtsTokenPlanStageMilestone) => {
@@ -163,6 +166,12 @@ export function createQwenAudioTtsTokenPlanStageSession(options: QwenAudioTtsTok
     await bridge.finish()
     if (terminal !== 'active')
       return
+    const summary = summarizeQwen3TtsStageTelemetry(intentId, telemetryState)
+    if (summary) {
+      // Telemetry is diagnostic-only: an unavailable main-process sink must
+      // never fail or delay a completed local playback session.
+      void reportStageTelemetry(summary).catch(() => {})
+    }
     terminal = 'finished'
     cleanup()
     if (!doneReported) {
