@@ -1,6 +1,6 @@
 import type { EventContext } from '@moeru/eventa'
 
-import type { RealtimeVoiceE2eTurnTelemetryPayload, RealtimeVoiceTranscriptIngressMode } from '../providers/realtime-voice-e2e-ipc'
+import type { RealtimeVoiceE2eTurnTelemetryPayload, RealtimeVoiceEndpointReason, RealtimeVoiceTranscriptIngressMode } from '../providers/realtime-voice-e2e-ipc'
 
 import { defineInvoke } from '@moeru/eventa'
 import { createContext as createElectronRendererContext } from '@moeru/eventa/adapters/electron/renderer'
@@ -25,7 +25,11 @@ export interface RealtimeVoiceTurnState {
   transcriptIngressMode: RealtimeVoiceTranscriptIngressMode
   status: 'active' | 'completed' | 'cancelled' | 'failed'
   asrFinalReceivedAt?: number
+  lastAsrFinalReceivedAt?: number
   transcriptFlushRequestedAt?: number
+  endpointDecisionAt?: number
+  endpointReason?: RealtimeVoiceEndpointReason
+  lastSpeechActivityEndAt?: number
   chatSubmissionAt?: number
   firstLlmTextAt?: number
   firstTtsAppendAt?: number
@@ -68,10 +72,44 @@ export function createRealtimeVoiceTurn(options: { transcriptIngressMode: Realti
     turnId,
     transcriptIngressMode: options.transcriptIngressMode,
     status: 'active',
-    ...(finiteTimestamp(options.at) === undefined ? {} : { asrFinalReceivedAt: options.at }),
+    ...(finiteTimestamp(options.at) === undefined ? {} : { asrFinalReceivedAt: options.at, lastAsrFinalReceivedAt: options.at }),
   })
   pruneTurns()
   return turnId
+}
+
+/** Records first and latest final timestamps without changing the first-final authority. */
+export function recordRealtimeVoiceTurnFinal(turnId: string | undefined, at = now()): void {
+  if (!turnId)
+    return
+
+  const state = turns.get(turnId)
+  const timestamp = finiteTimestamp(at)
+  if (!state || state.status !== 'active' || timestamp === undefined)
+    return
+
+  state.asrFinalReceivedAt ??= timestamp
+  state.lastAsrFinalReceivedAt = timestamp
+}
+
+/** Records the endpoint decision and the local VAD activity-end anchor. */
+export function recordRealtimeVoiceTurnEndpointDecision(
+  turnId: string | undefined,
+  options: { at: number, reason: RealtimeVoiceEndpointReason, lastSpeechActivityEndAt?: number },
+): void {
+  if (!turnId)
+    return
+
+  const state = turns.get(turnId)
+  const timestamp = finiteTimestamp(options.at)
+  if (!state || state.status !== 'active' || timestamp === undefined)
+    return
+
+  state.endpointDecisionAt ??= timestamp
+  state.endpointReason ??= options.reason
+  const speechEnd = finiteTimestamp(options.lastSpeechActivityEndAt)
+  if (speechEnd !== undefined)
+    state.lastSpeechActivityEndAt = speechEnd
 }
 
 /** Records a first-only renderer-clock milestone for an active voice turn. */
@@ -126,7 +164,7 @@ export function completeRealtimeVoiceTurn(turnId: string | undefined): RealtimeV
 
   state.status = 'completed'
 
-  return {
+  const payload: RealtimeVoiceE2eTurnTelemetryPayload = {
     turnId: boundedTurnId(state.turnId),
     transcriptIngressMode: state.transcriptIngressMode,
     asrFinalToTranscriptFlushMs: elapsed(state.asrFinalReceivedAt, state.transcriptFlushRequestedAt),
@@ -138,6 +176,26 @@ export function completeRealtimeVoiceTurn(turnId: string | undefined): RealtimeV
     firstLlmTextToFirstTtsPlaybackScheduleMs: elapsed(state.firstLlmTextAt, state.firstTtsPlaybackScheduleAt),
     asrFinalToFirstTtsPlaybackScheduleMs: elapsed(state.asrFinalReceivedAt, state.firstTtsPlaybackScheduleAt),
   }
+
+  if (state.endpointReason !== undefined)
+    payload.endpointReason = state.endpointReason
+  const firstAsrFinalToEndpointDecisionMs = elapsed(state.asrFinalReceivedAt, state.endpointDecisionAt)
+  if (firstAsrFinalToEndpointDecisionMs !== undefined)
+    payload.firstAsrFinalToEndpointDecisionMs = firstAsrFinalToEndpointDecisionMs
+  const lastAsrFinalToEndpointDecisionMs = elapsed(state.lastAsrFinalReceivedAt, state.endpointDecisionAt)
+  if (lastAsrFinalToEndpointDecisionMs !== undefined)
+    payload.lastAsrFinalToEndpointDecisionMs = lastAsrFinalToEndpointDecisionMs
+  const endpointDecisionToChatSubmissionMs = elapsed(state.endpointDecisionAt, state.chatSubmissionAt)
+  if (endpointDecisionToChatSubmissionMs !== undefined)
+    payload.endpointDecisionToChatSubmissionMs = endpointDecisionToChatSubmissionMs
+  const endpointDecisionToFirstTtsPlaybackScheduleMs = elapsed(state.endpointDecisionAt, state.firstTtsPlaybackScheduleAt)
+  if (endpointDecisionToFirstTtsPlaybackScheduleMs !== undefined)
+    payload.endpointDecisionToFirstTtsPlaybackScheduleMs = endpointDecisionToFirstTtsPlaybackScheduleMs
+  const lastSpeechActivityEndToEndpointDecisionMs = elapsed(state.lastSpeechActivityEndAt, state.endpointDecisionAt)
+  if (lastSpeechActivityEndToEndpointDecisionMs !== undefined)
+    payload.lastSpeechActivityEndToEndpointDecisionMs = lastSpeechActivityEndToEndpointDecisionMs
+
+  return payload
 }
 
 /** Test/teardown seam; bounded state is renderer-local and never persisted. */

@@ -2,6 +2,12 @@
 export interface StreamingTranscriptionCallbacks {
   onSentenceEnd?: (delta: string) => void
   onSpeechEnd?: (text: string) => void
+  /** Content-free local VAD activity boundary; distinct from transcript text. */
+  onSpeechActivityStart?: () => void
+  /** Content-free local VAD activity boundary; distinct from transcript text. */
+  onSpeechActivityEnd?: () => void
+  /** Content-free local VAD cancellation boundary; distinct from transcript text. */
+  onSpeechActivityCancel?: () => void
   /** Receives the complete current transcript after each provider update. */
   onTranscriptionUpdate?: (text: string) => void
 }
@@ -26,6 +32,9 @@ export class StreamingTranscriptionConsumers {
     this.consumers.set(consumer.consumerId, {
       onSentenceEnd: consumer.onSentenceEnd,
       onSpeechEnd: consumer.onSpeechEnd,
+      onSpeechActivityStart: consumer.onSpeechActivityStart,
+      onSpeechActivityEnd: consumer.onSpeechActivityEnd,
+      onSpeechActivityCancel: consumer.onSpeechActivityCancel,
       onTranscriptionUpdate: consumer.onTranscriptionUpdate,
     })
   }
@@ -45,6 +54,21 @@ export class StreamingTranscriptionConsumers {
     this.emit('onSpeechEnd', text)
   }
 
+  /** Sends a content-free local speech-activity start to all consumers. */
+  emitSpeechActivityStart() {
+    this.emitActivity('onSpeechActivityStart')
+  }
+
+  /** Sends a content-free local speech-activity end to all consumers. */
+  emitSpeechActivityEnd() {
+    this.emitActivity('onSpeechActivityEnd')
+  }
+
+  /** Sends a content-free local speech-activity cancellation to all consumers. */
+  emitSpeechActivityCancel() {
+    this.emitActivity('onSpeechActivityCancel')
+  }
+
   /** Sends the complete current transcript to all current consumers. */
   emitTranscriptionUpdate(text: string) {
     this.emit('onTranscriptionUpdate', text)
@@ -54,6 +78,17 @@ export class StreamingTranscriptionConsumers {
     for (const [consumerId, callbacks] of this.consumers) {
       try {
         callbacks[callbackName]?.(text)
+      }
+      catch (cause) {
+        console.error(`[Hearing Pipeline] Streaming consumer ${consumerId} ${callbackName} failed:`, cause)
+      }
+    }
+  }
+
+  private emitActivity(callbackName: 'onSpeechActivityStart' | 'onSpeechActivityEnd' | 'onSpeechActivityCancel') {
+    for (const [consumerId, callbacks] of this.consumers) {
+      try {
+        callbacks[callbackName]?.()
       }
       catch (cause) {
         console.error(`[Hearing Pipeline] Streaming consumer ${consumerId} ${callbackName} failed:`, cause)

@@ -1,5 +1,5 @@
 import type { createContext } from '@moeru/eventa/adapters/electron/main'
-import type { RealtimeVoiceE2eTurnTelemetryPayload, RealtimeVoiceTranscriptIngressMode } from '@proj-airi/stage-ui/libs/providers/realtime-voice-e2e-ipc'
+import type { RealtimeVoiceE2eTurnTelemetryPayload, RealtimeVoiceEndpointReason, RealtimeVoiceTranscriptIngressMode } from '@proj-airi/stage-ui/libs/providers/realtime-voice-e2e-ipc'
 import type { Lifecycle } from 'injeca'
 
 import { defineInvokeHandler } from '@moeru/eventa'
@@ -11,6 +11,7 @@ type RealtimeVoiceE2eMainEventContext = ReturnType<typeof createContext>['contex
 
 export const MAX_REALTIME_VOICE_E2E_TURN_LOGS = 64
 const REALTIME_VOICE_TRANSCRIPT_INGRESS_MODES: RealtimeVoiceTranscriptIngressMode[] = ['streaming-sentence-end', 'buffered-recorder']
+const REALTIME_VOICE_ENDPOINT_REASONS: RealtimeVoiceEndpointReason[] = ['vad-grace-expired', 'explicit-flush']
 
 export interface RealtimeVoiceE2eTelemetryServiceOptions {
   context: RealtimeVoiceE2eMainEventContext
@@ -30,6 +31,7 @@ function isBoundedPayload(payload: RealtimeVoiceE2eTurnTelemetryPayload): boolea
     && payload.turnId.trim().length > 0
     && payload.turnId.trim().length <= 128
     && REALTIME_VOICE_TRANSCRIPT_INGRESS_MODES.includes(payload.transcriptIngressMode)
+    && (payload.endpointReason === undefined || REALTIME_VOICE_ENDPOINT_REASONS.includes(payload.endpointReason))
 }
 
 /** Main-process sink for one content-free, renderer-clock voice-turn summary. */
@@ -57,9 +59,15 @@ export function createRealtimeVoiceE2eTelemetryService(options: RealtimeVoiceE2e
     console.info('[Realtime Voice E2E] turn finished', {
       turnId,
       transcriptIngressMode: payload.transcriptIngressMode,
+      endpointReason: payload.endpointReason,
       asrFinalToTranscriptFlushMs: finiteMetric(payload.asrFinalToTranscriptFlushMs),
       transcriptFlushToChatSubmissionMs: finiteMetric(payload.transcriptFlushToChatSubmissionMs),
       asrFinalToChatSubmissionMs: finiteMetric(payload.asrFinalToChatSubmissionMs),
+      firstAsrFinalToEndpointDecisionMs: finiteMetric(payload.firstAsrFinalToEndpointDecisionMs),
+      lastAsrFinalToEndpointDecisionMs: finiteMetric(payload.lastAsrFinalToEndpointDecisionMs),
+      endpointDecisionToChatSubmissionMs: finiteMetric(payload.endpointDecisionToChatSubmissionMs),
+      endpointDecisionToFirstTtsPlaybackScheduleMs: finiteMetric(payload.endpointDecisionToFirstTtsPlaybackScheduleMs),
+      lastSpeechActivityEndToEndpointDecisionMs: finiteMetric(payload.lastSpeechActivityEndToEndpointDecisionMs),
       chatSubmissionToFirstLlmTextMs: finiteMetric(payload.chatSubmissionToFirstLlmTextMs),
       firstLlmTextToFirstTtsAppendMs: finiteMetric(payload.firstLlmTextToFirstTtsAppendMs),
       firstLlmTextToFirstTtsAudioEventMs: finiteMetric(payload.firstLlmTextToFirstTtsAudioEventMs),

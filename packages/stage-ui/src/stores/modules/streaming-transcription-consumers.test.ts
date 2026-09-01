@@ -73,4 +73,28 @@ describe('streaming transcription consumers', () => {
     expect(onTranscriptionUpdate).toHaveBeenCalledWith('provider correction')
     expect(onSentenceEnd).not.toHaveBeenCalled()
   })
+
+  it('routes content-free speech activity boundaries separately from transcript callbacks', () => {
+    const consumers = new StreamingTranscriptionConsumers()
+    const onActivityStart = vi.fn()
+    const onActivityEnd = vi.fn()
+    const onActivityCancel = vi.fn()
+    const onSentenceEnd = vi.fn()
+    consumers.register({
+      consumerId: 'voice-input',
+      onSpeechActivityStart: onActivityStart,
+      onSpeechActivityEnd: onActivityEnd,
+      onSpeechActivityCancel: onActivityCancel,
+      onSentenceEnd,
+    })
+
+    consumers.emitSpeechActivityStart()
+    consumers.emitSpeechActivityEnd()
+    consumers.emitSpeechActivityCancel()
+
+    expect(onActivityStart).toHaveBeenCalledOnce()
+    expect(onActivityEnd).toHaveBeenCalledOnce()
+    expect(onActivityCancel).toHaveBeenCalledOnce()
+    expect(onSentenceEnd).not.toHaveBeenCalled()
+  })
 })

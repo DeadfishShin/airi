@@ -6,6 +6,8 @@ import {
   createRealtimeVoiceTurn,
   failRealtimeVoiceTurn,
   getRealtimeVoiceTurnTelemetry,
+  recordRealtimeVoiceTurnEndpointDecision,
+  recordRealtimeVoiceTurnFinal,
   recordRealtimeVoiceTurnMilestone,
   resetRealtimeVoiceE2eTelemetry,
 } from './realtime-voice-e2e-telemetry'
@@ -52,6 +54,30 @@ describe('realtime voice E2E telemetry', () => {
       firstLlmTextToFirstTtsAudioEventMs: -0.5,
       firstLlmTextToFirstTtsPlaybackScheduleMs: -0.75,
       asrFinalToFirstTtsPlaybackScheduleMs: -0.75,
+    })
+  })
+
+  it('records first/latest ASR finals and VAD-anchored endpoint metrics', () => {
+    const turnId = createRealtimeVoiceTurn({ transcriptIngressMode: 'streaming-sentence-end', turnId: 'endpoint-turn', at: 100 })
+    recordRealtimeVoiceTurnFinal(turnId, 200)
+    recordRealtimeVoiceTurnFinal(turnId, 300)
+    recordRealtimeVoiceTurnEndpointDecision(turnId, {
+      at: 800,
+      reason: 'vad-grace-expired',
+      lastSpeechActivityEndAt: 400,
+    })
+    recordRealtimeVoiceTurnMilestone(turnId, 'transcriptFlushRequestedAt', 800)
+    recordRealtimeVoiceTurnMilestone(turnId, 'chatSubmissionAt', 810)
+    recordRealtimeVoiceTurnMilestone(turnId, 'firstLlmTextAt', 820)
+    recordRealtimeVoiceTurnMilestone(turnId, 'firstTtsPlaybackScheduleAt', 900)
+
+    expect(completeRealtimeVoiceTurn(turnId)).toMatchObject({
+      endpointReason: 'vad-grace-expired',
+      firstAsrFinalToEndpointDecisionMs: 700,
+      lastAsrFinalToEndpointDecisionMs: 500,
+      endpointDecisionToChatSubmissionMs: 10,
+      endpointDecisionToFirstTtsPlaybackScheduleMs: 100,
+      lastSpeechActivityEndToEndpointDecisionMs: 400,
     })
   })
 

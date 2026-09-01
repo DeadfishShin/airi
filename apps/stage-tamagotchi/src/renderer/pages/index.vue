@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CaptionChannelEvent, HearingInputChannelEvent } from '@proj-airi/stage-shared'
 import type { ModelSettingsRuntimeSnapshot } from '@proj-airi/stage-ui/components/scenarios/settings/model-settings/runtime'
-import type { RealtimeVoiceTranscriptIngressMode } from '@proj-airi/stage-ui/libs/providers/realtime-voice-e2e-ipc'
+import type { RealtimeVoiceEndpointReason, RealtimeVoiceTranscriptIngressMode } from '@proj-airi/stage-ui/libs/providers/realtime-voice-e2e-ipc'
 
 import type { ModelSettingsRuntimeChannelEvent } from '../../shared/model-settings-runtime'
 
@@ -25,7 +25,15 @@ import {
 import { WidgetStage } from '@proj-airi/stage-ui/components/scenes'
 import { useVoiceInputSession } from '@proj-airi/stage-ui/composables'
 import { useCanvasPixelIsTransparentAtPoint } from '@proj-airi/stage-ui/composables/canvas-alpha'
-import { cancelRealtimeVoiceTurn, createRealtimeVoiceTurn, failRealtimeVoiceTurn, recordRealtimeVoiceTurnMilestone } from '@proj-airi/stage-ui/libs/speech/realtime-voice-e2e-telemetry'
+import { createStreamingVoiceTurnEndpoint } from '@proj-airi/stage-ui/libs/audio/streaming-voice-turn-endpoint'
+import {
+  cancelRealtimeVoiceTurn,
+  createRealtimeVoiceTurn,
+  failRealtimeVoiceTurn,
+  recordRealtimeVoiceTurnEndpointDecision,
+  recordRealtimeVoiceTurnFinal,
+  recordRealtimeVoiceTurnMilestone,
+} from '@proj-airi/stage-ui/libs/speech/realtime-voice-e2e-telemetry'
 import { useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { useChatStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
@@ -335,6 +343,7 @@ const chatSession = useChatSessionStore()
 const streamingTranscriptionUnavailable = ref(false)
 const shouldUseStreamInput = computed(() => supportsStreamInput.value && !!stream.value && !streamingTranscriptionUnavailable.value)
 let pendingRealtimeVoiceTurnId: string | undefined
+let streamingVoiceEndpointingEnabled = false
 const voiceTranscriptBuffer = createTranscriptBuffer({
   flushDelayMs: 1200,
   maxBufferedTextLength: 90,
@@ -565,36 +574,87 @@ async function sendVoiceInputTextToChat(text: string, telemetryTurnId?: string) 
   }
 }
 
+const streamingVoiceTurnEndpoint = createStreamingVoiceTurnEndpoint({
+  createTelemetryTurnId: at => createRealtimeVoiceTurn({ transcriptIngressMode: 'streaming-sentence-end', at }),
+  onFinalTranscript: ({ text, at, telemetryTurnId }) => {
+    recordRealtimeVoiceTurnFinal(telemetryTurnId, at)
+    const sourceId = currentHearingInputSourceId()
+    replaceHearingInput(text)
+    scheduleHearingInputClear(sourceId)
+    activeHearingInputSourceId = undefined
+    postSpeakerCaption(text, 'replace')
+  },
+  onEndpointDecision: (decision) => {
+    const endpointReason = decision.reason satisfies RealtimeVoiceEndpointReason
+    recordRealtimeVoiceTurnEndpointDecision(decision.telemetryTurnId, {
+      at: decision.at,
+      reason: endpointReason,
+      lastSpeechActivityEndAt: decision.lastSpeechActivityEndAt,
+    })
+    recordRealtimeVoiceTurnMilestone(decision.telemetryTurnId, 'transcriptFlushRequestedAt', decision.at)
+    void sendVoiceInputTextToChat(decision.aggregatedText, decision.telemetryTurnId)
+  },
+  onOverflow: (telemetryTurnId) => {
+    failRealtimeVoiceTurn(telemetryTurnId)
+    reportVoiceInputFailure('assemble streaming voice turn', new Error('Streaming voice turn buffer is full.'))
+  },
+})
+
 function markRealtimeVoiceAsrFinal(transcriptIngressMode: RealtimeVoiceTranscriptIngressMode): string {
   if (transcriptIngressMode === 'streaming-sentence-end')
-    pendingRealtimeVoiceTurnId = createRealtimeVoiceTurn({ transcriptIngressMode })
-  else
-    pendingRealtimeVoiceTurnId ??= createRealtimeVoiceTurn({ transcriptIngressMode })
+    throw new Error('Streaming sentence finals must pass through the endpoint controller.')
 
-  recordRealtimeVoiceTurnMilestone(pendingRealtimeVoiceTurnId, 'asrFinalReceivedAt')
+  pendingRealtimeVoiceTurnId ??= createRealtimeVoiceTurn({ transcriptIngressMode })
+
+  recordRealtimeVoiceTurnFinal(pendingRealtimeVoiceTurnId)
   return pendingRealtimeVoiceTurnId
 }
 
-/** Sends completed streaming-ASR sentences to captions and chat. */
+/** Sends completed streaming-ASR finals to the bounded endpoint controller. */
 function handleStreamingSentenceEnd(delta: string) {
+  if (!streamingVoiceEndpointingEnabled) {
+    handleNonVadStreamingSentenceEnd(delta)
+    return
+  }
+
   if (isVoiceInputSuppressed())
     return
 
-  const finalText = delta
-  if (!finalText || !finalText.trim())
+  streamingVoiceTurnEndpoint.finalTranscript(delta)
+}
+
+/** Preserves the direct boundary for stream providers without local VAD activity events. */
+function handleNonVadStreamingSentenceEnd(delta: string) {
+  if (isVoiceInputSuppressed())
+    return
+
+  if (!delta || !delta.trim())
     return
 
   const sourceId = currentHearingInputSourceId()
-  replaceHearingInput(finalText)
+  replaceHearingInput(delta)
   scheduleHearingInputClear(sourceId)
   activeHearingInputSourceId = undefined
-  postSpeakerCaption(finalText, 'replace')
-  const turnId = markRealtimeVoiceAsrFinal('streaming-sentence-end')
-  // Realtime ASR sentence-end is already the chat boundary; unlike the
-  // recorder fallback below it does not pass through the 1200 ms buffer.
+  postSpeakerCaption(delta, 'replace')
+  const turnId = createRealtimeVoiceTurn({ transcriptIngressMode: 'streaming-sentence-end' })
+  recordRealtimeVoiceTurnFinal(turnId)
   recordRealtimeVoiceTurnMilestone(turnId, 'transcriptFlushRequestedAt')
-  pendingRealtimeVoiceTurnId = undefined
-  void sendVoiceInputTextToChat(finalText, turnId)
+  void sendVoiceInputTextToChat(delta, turnId)
+}
+
+function handleStreamingSpeechActivityStart() {
+  if (streamingVoiceEndpointingEnabled)
+    streamingVoiceTurnEndpoint.speechActivityStart()
+}
+
+function handleStreamingSpeechActivityEnd() {
+  if (streamingVoiceEndpointingEnabled)
+    streamingVoiceTurnEndpoint.speechActivityEnd()
+}
+
+function handleStreamingSpeechActivityCancel() {
+  if (streamingVoiceEndpointingEnabled)
+    streamingVoiceTurnEndpoint.speechActivityCancel()
 }
 
 /** Replaces the caption with the provider's current volatile transcript. */
@@ -676,10 +736,14 @@ async function startAudioInteractionConsumers() {
     if (requestGate.skip)
       return
 
+    streamingVoiceEndpointingEnabled = activeTranscriptionProvider.value !== 'browser-web-speech-api'
     await transcribeForMediaStream(currentStream, {
       consumerId: transcriptionConsumerId,
       onSentenceEnd: handleStreamingSentenceEnd,
       onSpeechEnd: handleStreamingSpeechEnd,
+      onSpeechActivityStart: handleStreamingSpeechActivityStart,
+      onSpeechActivityEnd: handleStreamingSpeechActivityEnd,
+      onSpeechActivityCancel: handleStreamingSpeechActivityCancel,
       onTranscriptionUpdate: handleStreamingTranscriptionUpdate,
     })
 
@@ -709,6 +773,14 @@ async function stopAudioInteractionConsumers(options: StopAudioInteractionOption
   clearHearingInput()
   voiceInputGeneration += 1
 
+  if (flushTranscript) {
+    streamingVoiceTurnEndpoint.forceFlush('explicit-flush')
+  }
+  else {
+    const cancelledTurnId = streamingVoiceTurnEndpoint.cancel()
+    cancelRealtimeVoiceTurn(cancelledTurnId)
+  }
+
   await Promise.all([
     stopStreamingTranscription(true),
     voiceInputSession.stop({ flushActiveRecording: false }),
@@ -722,6 +794,8 @@ async function stopAudioInteractionConsumers(options: StopAudioInteractionOption
     cancelRealtimeVoiceTurn(pendingRealtimeVoiceTurnId)
     pendingRealtimeVoiceTurnId = undefined
   }
+
+  streamingVoiceEndpointingEnabled = false
 }
 
 watch(enabled, async (val) => {
@@ -793,7 +867,9 @@ onUnmounted(() => {
     ownerInstanceId: modelSettingsRuntimeOwnerInstanceId,
   })
   clearAssistantSpeechResumeTimer()
-  void voiceInputInteractionLifecycle.stop().catch(error => reportVoiceInputFailure('stop listening', error))
+  void voiceInputInteractionLifecycle.stop()
+    .then(() => streamingVoiceTurnEndpoint.dispose())
+    .catch(error => reportVoiceInputFailure('stop listening', error))
 })
 
 watch(stream, async (currentStream) => {

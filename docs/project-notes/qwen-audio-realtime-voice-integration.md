@@ -310,12 +310,14 @@ Owner 观察到：speech detected、realtime partial visible、没有 duplicate 
 
 ### Streaming ASR sentence-end
 
-`handleStreamingSentenceEnd()` 在 `apps/stage-tamagotchi/src/renderer/pages/index.vue`
-中直接调用 `sendVoiceInputTextToChat(finalText)`。它不经过
-`voiceTranscriptBuffer`；`asrFinalToTranscriptFlushMs` 记录的是 final sentence
-到直接 chat boundary 的 renderer-clock 开销，通常应接近 direct-boundary overhead，
-不是预设的 1200 ms。`SOURCE_PROVEN`；该 direct path 在 E2E telemetry commit
-之前已经存在，当前实现没有改变它的提交时序。
+`handleStreamingSentenceEnd()` 在
+`apps/stage-tamagotchi/src/renderer/pages/index.vue` 中先把 provider final
+交给 `streamingVoiceTurnEndpoint`。它不经过 `voiceTranscriptBuffer`，但也不再把
+每个 final 立即当成 chat boundary：本地 VAD activity end 启动一个
+`STREAMING_VOICE_ENDPOINT_GRACE_MS = 500` 的 bounded endpoint decision，期间可把
+后续 provider session 的 final 聚合到同一个逻辑 user turn。endpoint decision 才会
+调用 `sendVoiceInputTextToChat(aggregatedText)`。`SOURCE_PROVEN`；这只改变
+streaming ASR → chat 的 endpoint handoff，不改变 ASR wire 或 provider task 语义。
 
 ### Recorder-backed transcription
 
@@ -335,9 +337,11 @@ createTranscriptBuffer({
 `OPEN / NOT_YET_OPTIMIZED`，但仅针对 recorder-backed buffer policy/latency。
 
 因此，早先把 1200 ms 泛化为 Qwen streaming ASR final → chat 延迟的假设已撤回。
-后续完整 E2E 必须先记录 `transcriptIngressMode`，再分别测量 ASR model/network、
-direct sentence-end boundary、recorder buffer、LLM first token、TTS first audio
-和 local playback。
+streaming path 的 `asrFinalToTranscriptFlushMs` 现在是 first final 到 endpoint
+decision 的时间；它可能包含 VAD-anchored 500 ms grace，但不是 recorder 的 1200 ms。
+后续完整 E2E 必须记录 `transcriptIngressMode` 与 endpoint reason，再分别测量 ASR
+model/network、streaming endpoint decision、recorder buffer、LLM first token、TTS
+first audio 和 local playback。
 
 ## 9. PAYG Qwen3 Realtime TTS Architecture
 
@@ -911,7 +915,7 @@ local playback state
 
 1. Full real microphone `Streaming ASR → LLM → Token Plan Streaming TTS` 同一轮完整 E2E。
 2. recorder-backed transcript buffer policy/latency 优化；这不是 Qwen streaming ASR sentence-end 的 blocker。
-3. Streaming ASR sentence-final 与 user-turn endpoint decision policy；当前 direct handoff 可能因独立 VAD/provider segment 而拆分用户轮次，见 Section 33。
+3. Streaming ASR bounded user-turn endpoint policy 的自然停顿调参与真实验证；当前已实现 V1：以最新 local VAD activity end 为锚的 500 ms grace，并跨 provider session 聚合 final，见 Section 34。
 4. Barge-in。
 5. VAD 与更完整的 speaking/echo coordination。
 6. AEC / self-voice rejection。
@@ -996,9 +1000,9 @@ local playback state
 
 ## 32. Full voice E2E telemetry contract
 
-这一节定义后续完整 voice turn 的观测契约；本次只加入 telemetry，不改变
-ASR、`createTranscriptBuffer`、LLM、`StageTtsSession`、TTS、PCM 播放或本地
-drain 语义。当前只有 synthetic/focused tests，尚未执行一轮完整真实
+这一节定义后续完整 voice turn 的观测契约；本阶段只改变 streaming ASR → chat 的
+endpoint handoff，不改变 ASR wire、`createTranscriptBuffer`、LLM、`StageTtsSession`、
+TTS、PCM 播放或本地 drain 语义。当前只有 synthetic/focused tests，尚未执行一轮完整真实
 `ASR → LLM → TTS` runtime，因此不能把本节测试结果写成 real runtime PASS。
 
 ### Turn identity
@@ -1013,21 +1017,26 @@ chat boundary 一起传入 `ChatSendPayload`，再经过 `ChatOrchestratorSendOp
 `onTokenLiteral`、`onStreamEnd` 和 Stage TTS 生命周期复用。这个 ID 只用于
 correlation，不进入 prompt、消息正文或 provider request。
 
-实时 ASR sentence-end 是 direct chat boundary，会在同一 ingress turn 中记录
-ASR final 与 flush-requested；recorder fallback 则继续使用现有
+streaming ASR 的 final 先进入 bounded endpoint controller；一个逻辑 turn 可跨越
+多个 local VAD/provider session。controller 以最新的 VAD activity end 为 grace 锚，
+而不是以 provider final 到达时间重新追加固定等待。只有 endpoint decision 才记录
+`transcriptFlushRequestedAt` 并向 chat 释放聚合文本；`endpointReason` 使用闭集合
+`vad-grace-expired | explicit-flush`。recorder fallback 则继续使用现有
 `createTranscriptBuffer({ flushDelayMs: 1200, maxBufferedTextLength: 90 })`，在
 buffer flush callback 记录释放时刻。`asrFinalToTranscriptFlushMs` 的准确含义是：
-当前 ingress path 观察到 final transcription 到产品 boundary release 的时间；
-streaming path 通常接近零，buffered-recorder path 可以包含 1200 ms。没有稳定的
+当前 ingress path 的 first final 到产品 boundary release 的时间；streaming path
+可能包含 VAD-anchored 500 ms grace，buffered-recorder path 可以包含 1200 ms。没有稳定的
 `speechEnd` timestamp 时，
 `speechEndToFirstTtsPlaybackScheduleMs` 保持 unavailable，不作估算。
 
 ### Renderer-clock milestones and metrics
 
-每个 turn 只记录 first-only milestones：
+每个 turn 记录 first-final、latest-final 和 first-only milestones：
 
 ```text
 t_asr_final_received
+t_last_asr_final_received
+t_endpoint_decision
 t_transcript_flush_requested
 t_chat_submission
 t_first_llm_text
@@ -1040,6 +1049,11 @@ t_first_tts_playback_schedule
 
 ```text
 asrFinalToTranscriptFlushMs
+firstAsrFinalToEndpointDecisionMs
+lastAsrFinalToEndpointDecisionMs
+endpointDecisionToChatSubmissionMs
+endpointDecisionToFirstTtsPlaybackScheduleMs
+lastSpeechActivityEndToEndpointDecisionMs
 transcriptFlushToChatSubmissionMs
 asrFinalToChatSubmissionMs
 chatSubmissionToFirstLlmTextMs
@@ -1077,20 +1091,22 @@ payload。diagnostic sink 不可用时不得影响语音完成。
 ### Evidence status
 
 `SOURCE_PROVEN`：turn ID 贯通 chat hooks；两个 ingress mode 在各自 source path
-显式赋值；1200/90 buffer 未修改；E2E state machine 的
+显式赋值；streaming endpoint controller 的跨 segment 聚合、VAD-anchored 500 ms
+grace、explicit flush/cancel 与 endpoint reason 已由 focused tests 守护；1200/90 buffer 未修改；E2E state machine 的
 success/failure/cancel/duplicate/finite-number 规则和 main sink
 的 bounded exactly-once 行为由 focused tests 覆盖。
 
 `OPEN / NOT_YET_PROVEN`：完整真实麦克风到扬声器的一轮仍未执行；因此目前没有
 可发布的 real `asrFinalToFirstTtsPlaybackScheduleMs` 基线。下一次真实 streaming
-ASR 验证应预期 `asrFinalToTranscriptFlushMs` 是 direct-boundary overhead，不能
-预先写成 1200 ms；recorder 验证则单独保留 1200 ms buffer attribution。两者都要
+ASR 验证应分别观察 VAD-anchored endpoint grace 与 `asrFinalToTranscriptFlushMs`，
+不能预先写成 1200 ms；recorder 验证则单独保留 1200 ms buffer attribution。两者都要
 与 chat 首 token、TTS 首 audio event 和首 playback schedule 分开记录，不能用 ASR
 模型指标替代产品层 buffer 指标。
 
 ## 33. ASR sentence final vs user-turn endpoint authority
 
-本节只描述当前源码和官方协议已经证明的边界，不代表已实现 endpointing 修复。
+本节记录为什么 sentence final 不能直接等同 user-turn end，以及 V1 endpoint layer
+如何修复跨 VAD segment 的 handoff 风险。它不改变 Qwen ASR wire protocol。
 
 ### 已证明的两层边界
 
@@ -1106,8 +1122,10 @@ Alibaba ASR 文档把 `result-generated` 中的 `sentence_end=true` 定义为当
 `sentence_end=true` 结果在同一个 provider task 内会在 `task-finished` 时聚合为一次
 ordered final，再交给 renderer。因此 raw provider 的多个 sentence final 不会直接各自
 触发 chat。可是 `createVadStreamingSession` 的 authority 是“一段 detected speech 一个
-provider session”；当一个物理发言被当前 VAD 分成两个 session 时，每个 session 的 final
-都会进入 Stage 的 direct handoff。该结论由源码与 deterministic tests (`SOURCE_PROVEN`) 支持。
+provider session”；在 V1 之前，当一个物理发言被当前 VAD 分成两个 session 时，每个
+session 的 final 都进入 Stage 的 direct handoff。该结论由源码与 deterministic tests
+(`SOURCE_PROVEN`) 支持。V1 在这两个 authority 之间加入 endpoint controller：provider
+final 只作为稳定文本输入，最终 chat release 由 VAD-anchored endpoint decision 决定。
 
 ### 当前 AIRI chat 触发链
 
@@ -1118,17 +1136,18 @@ Qwen result-generated(sentence_end)
   → renderer final snapshot / stream completion
   → StreamingTranscriptionConsumers.onSentenceEnd
   → handleStreamingSentenceEnd(finalText)
-  → sendVoiceInputTextToChat(finalText)
+  → streamingVoiceTurnEndpoint.finalTranscript(finalText)
+  → VAD activity end + 500ms grace / explicit flush
+  → sendVoiceInputTextToChat(aggregatedText)
   → chatStore.send() / runtime.ingest()
 ```
 
-`handleStreamingSentenceEnd()` 本身不经过 `voiceTranscriptBuffer`，也没有额外的
-debounce、endpoint decision 或跨 session aggregation。非空回调一次就调用一次
-`sendVoiceInputTextToChat()`；在当前 chat contract 中，每次 `chatStore.send()` 都是
-独立的 chat ingest/turn。单 final 的 deterministic control 为 `CHAT_SEND_COUNT=1`。
-两个独立 VAD/provider segment 的 final 为 `CHAT_SEND_COUNT=2`、
-`CHAT_TURN_COUNT=2`，所以当前产品风险裁决为：
-`CURRENT_DIRECT_SENTENCE_FINAL_TO_CHAT_CAN_FRAGMENT_ONE_USER_TURN`。
+`handleStreamingSentenceEnd()` 仍不经过 `voiceTranscriptBuffer`，但 VAD-backed path
+不再直接调用 chat。一个 bounded controller 在同一个 pending logical turn 中按到达顺序
+保存非空 final；新 speech 在 grace 内开始会取消旧 timer 并继续聚合。单 final 的
+deterministic control 为 `CHAT_SEND_COUNT=1`；两个相邻 VAD/provider segment 的 final
+现在为 `CHAT_SEND_COUNT=1`、`CHAT_TURN_COUNT=1`。真实自然停顿的产品效果仍未做
+runtime validation。
 
 重复行为也必须分层理解：Qwen main 的相同 `sentence_id` 更新会被 Map 替换，
 在 renderer final callback 前只保留一次（`SOURCE_PROVEN`）；但 Stage direct callback
@@ -1140,19 +1159,34 @@ debounce、endpoint decision 或跨 session aggregation。非空回调一次就�
 | Event / signal | ASR stability authority | Acoustic-end authority | User-turn-end authority | Current chat trigger |
 | --- | --- | --- | --- | --- |
 | partial transcript | intermediate/stable recognition update | 无 | 无 | 不触发 |
-| `result-generated`, `sentence_end=true` | 当前句段 final | 可能反映 provider segmentation/pause，但未证明是完整声学结束 | 无官方保证 | 在当前 Qwen task 中不直接触发；进入 aggregate |
+| `result-generated`, `sentence_end=true` | 当前句段 final | 可能反映 provider segmentation/pause，但未证明是完整声学结束 | 无官方保证 | 在当前 Qwen task 中进入 endpoint aggregate |
 | `task-finished` | task 内 aggregate final 可交付 | provider task lifecycle 结束 | 仍不等于用户 conversational intent | 触发 main `onFinal`，随后 renderer final stream handoff |
-| VAD speech end | 当前本地 speech segment boundary | VAD silence/segment signal | 不自动等于用户交棒 | 停止当前 provider session，可能导致一个 direct chat boundary |
+| VAD speech end | 当前本地 speech segment boundary | VAD silence/segment signal | 不自动等于用户交棒 | 更新 endpoint grace anchor，不直接 chat |
 | recorder flush boundary | recorder result 已进入 app buffer | 无 | 无 | `voiceTranscriptBuffer` flush callback 触发 chat |
 
 当前 recorder 路径仍是 `createTranscriptBuffer({ flushDelayMs: 1200,
 maxBufferedTextLength: 90 })`；它不能被借作 streaming ASR endpointing authority，也不能把
 streaming path 的 direct boundary 改写成 1200 ms。
 
-### Future endpointing contract（未实现）
+### Endpoint controller V1
 
-需要在 provider final 与 `chatStore.send()` 之间增加明确的 endpoint decision layer，
-把 sentence final 当作识别稳定性输入，而不是直接当作用户 turn end。候选方案的边界如下：
+当前实现位于 `packages/stage-ui/src/libs/audio/streaming-voice-turn-endpoint.ts`，
+把 sentence final 当作识别稳定性输入，而不是直接当作用户 turn end。`speechActivityStart`
+和 `speechActivityEnd` 由 Hearing VAD 经 `StreamingTranscriptionConsumers` 以无文本
+activity callback 传给 Stage；不注册这些 callback 的旧 consumer 不受影响。
+
+`STREAMING_VOICE_ENDPOINT_GRACE_MS = 500` 的 deadline 锚定最新 local VAD
+`speechActivityEnd`。final 在 deadline 前到达只等待剩余时间；final 晚到且没有新的
+speech 时立即决定；新的 speech 会取消 timer 并保留已有 final。一个 controller 只持有
+一个 bounded pending logical turn，使用稳定的 `telemetryTurnId` 跨 provider session
+聚合，不按文本相等去重；中文相邻片段保持相邻，Latin 片段用确定性单空格规则连接。
+旧 timer 通过 generation check 不能提交新 turn。
+
+`explicit-flush` 用于安全 teardown 时释放已有 pending text；`cancel` 丢弃 pending
+endpoint state，不产生空 chat。controller 的状态与文本只在 renderer 内用于构造
+chat message，telemetry 只含 turn ID、reason 和数值。
+
+### Future endpointing alternatives
 
 | 方案 | 延迟 | 自然停顿容忍度 | false split / false merge | barge-in 兼容性 | Android portability |
 | --- | --- | --- | --- | --- | --- |
@@ -1161,11 +1195,11 @@ streaming path 的 direct boundary 改写成 1200 ms。
 | 3. explicit user-turn/end signal | 近零额外等待 | 由用户显式控制 | split/merge 语义最清晰 | 最容易与 PTT/主动打断配合 | 高 |
 | 4. hybrid sentence-final + VAD/endpoint timer | 中等、可调 | 通常最好 | 需要调参，兼顾两类错误 | 可把 VAD、cancel、barge-in 分层 | 中/高 |
 
-当前推荐的未来接口是 hybrid endpoint decision：如果有明确 user-end/按键，优先使用；
-否则使用 bounded、可取消的本地 endpoint policy。不要复用 recorder 的 1200 ms，除非
-未来有独立证据证明那是目标 streaming 产品语义。`userTurnEndpointAt` 或
-`endpointDecisionAt` 应作为新的 renderer-clock milestone，放在 ASR final 与 chat
-submission 之间；当前不实现。
+当前 V1 采用 option 4 的 bounded 子集：VAD activity end + 500 ms grace，并保留
+explicit flush/cancel seam。它不是 recorder 的 1200 ms；自然停顿的 false split/merge
+权衡必须在后续真实 runtime 中重新测量。`endpointDecisionAt` 已作为 renderer-clock
+milestone 放在 ASR final 与 chat submission 之间，并同时保留 first/last final 的
+latency 口径。
 
 sentence final 不等于 VAD speech end；VAD speech end 也不等于 AEC。VAD/endpointing
 可以决定何时提交或停止一轮，barge-in 可以决定何时取消 TTS/LLM，但 AEC 仍负责回声

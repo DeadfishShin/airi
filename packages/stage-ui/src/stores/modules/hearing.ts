@@ -579,6 +579,9 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
   const streamingCallbacks = {
     onSentenceEnd: (delta: string) => streamingConsumers.emitSentenceEnd(delta),
     onSpeechEnd: (text: string) => streamingConsumers.emitSpeechEnd(text),
+    onSpeechActivityStart: () => streamingConsumers.emitSpeechActivityStart(),
+    onSpeechActivityEnd: () => streamingConsumers.emitSpeechActivityEnd(),
+    onSpeechActivityCancel: () => streamingConsumers.emitSpeechActivityCancel(),
     onTranscriptionUpdate: (text: string) => streamingConsumers.emitTranscriptionUpdate(text),
   }
   const {
@@ -948,15 +951,18 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
     const vad = useVAD(vadWorkletUrl, {
       onSpeechStart: () => {
         vadSession.activeSegment = { audioChunks: [] }
+        streamingCallbacks.onSpeechActivityStart()
         vadSession.lifecycle.onSpeechStart()
       },
       onSpeechAudio: ({ buffer }) => {
         enqueueVadAudio(vadSession.activeSegment, buffer)
       },
       onSpeechEnd: () => {
+        streamingCallbacks.onSpeechActivityEnd()
         vadSession.lifecycle.onSpeechEnd()
       },
       onSpeechCancel: () => {
+        streamingCallbacks.onSpeechActivityCancel()
         vadSession.lifecycle.onSpeechEnd()
       },
     })
@@ -991,7 +997,7 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
       supportsStreamInput: supportsStreamInput.value,
       hasStream: !!stream,
       providerId: activeTranscriptionProvider.value,
-      hasCallbacks: !!(options.onSentenceEnd || options.onSpeechEnd || options.onTranscriptionUpdate),
+      hasCallbacks: !!(options.onSentenceEnd || options.onSpeechEnd || options.onSpeechActivityStart || options.onSpeechActivityEnd || options.onSpeechActivityCancel || options.onTranscriptionUpdate),
     })
 
     if (!supportsStreamInput.value) {
