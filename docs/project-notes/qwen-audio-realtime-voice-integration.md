@@ -306,7 +306,20 @@ Owner 观察到：speech detected、realtime partial visible、没有 duplicate 
 
 ## 8. Current Unresolved ASR→Chat Latency
 
-`apps/stage-tamagotchi/src/renderer/pages/index.vue` 当前仍有：
+当前语音输入有两个明确的 ingress mode，不能把它们合并成一个“ASR final → chat 都等待 1200 ms”的结论：
+
+### Streaming ASR sentence-end
+
+`handleStreamingSentenceEnd()` 在 `apps/stage-tamagotchi/src/renderer/pages/index.vue`
+中直接调用 `sendVoiceInputTextToChat(finalText)`。它不经过
+`voiceTranscriptBuffer`；`asrFinalToTranscriptFlushMs` 记录的是 final sentence
+到直接 chat boundary 的 renderer-clock 开销，通常应接近 direct-boundary overhead，
+不是预设的 1200 ms。`SOURCE_PROVEN`；该 direct path 在 E2E telemetry commit
+之前已经存在，当前实现没有改变它的提交时序。
+
+### Recorder-backed transcription
+
+recorder path 的 `onTranscriptionResult` 仍然调用：
 
 ```ts
 createTranscriptBuffer({
@@ -316,9 +329,15 @@ createTranscriptBuffer({
 })
 ```
 
-这 `1200 ms` 是 `ASR final → AIRI chat input` 的产品层 transcript buffer 延迟，不是 Qwen ASR model latency，也不是 LLM→TTS buffering。状态：`OPEN / NOT_YET_OPTIMIZED`。
+其 `onTranscriptionResult → voiceTranscriptBuffer.push() → flush → chat` 路径
+可以包含配置的 1200 ms 等待。这里的 `asrFinalToTranscriptFlushMs` 才能归因于
+该 AIRI 产品层 buffer；它不是 Qwen ASR model/network latency。状态：
+`OPEN / NOT_YET_OPTIMIZED`，但仅针对 recorder-backed buffer policy/latency。
 
-后续完整 E2E 必须把 ASR model、network、endpointing、transcript buffer、LLM first token、TTS first audio 和 local playback 分开测量，不能把 1200ms 误报为模型延迟。
+因此，早先把 1200 ms 泛化为 Qwen streaming ASR final → chat 延迟的假设已撤回。
+后续完整 E2E 必须先记录 `transcriptIngressMode`，再分别测量 ASR model/network、
+direct sentence-end boundary、recorder buffer、LLM first token、TTS first audio
+和 local playback。
 
 ## 9. PAYG Qwen3 Realtime TTS Architecture
 
@@ -891,7 +910,7 @@ local playback state
 以下未完成，不得写成已完成：
 
 1. Full real microphone `Streaming ASR → LLM → Token Plan Streaming TTS` 同一轮完整 E2E。
-2. ASR final → chat 的 `1200 ms` transcript buffer 优化。
+2. recorder-backed transcript buffer policy/latency 优化；这不是 Qwen streaming ASR sentence-end 的 blocker。
 3. Endpointing / natural pause policy。
 4. Barge-in。
 5. VAD 与更完整的 speaking/echo coordination。
@@ -985,17 +1004,22 @@ drain 语义。当前只有 synthetic/focused tests，尚未执行一轮完整�
 ### Turn identity
 
 ASR final 发生在 chat runtime 生成其 `roundId` 之前，所以 renderer 在 ASR
-final 时创建 bounded、opaque 的 `telemetryTurnId`。它随语音 transcript buffer
-flush 一起传入 `ChatSendPayload`，再经过 `ChatOrchestratorSendOptions` 到
+final 时创建 bounded、opaque 的 `telemetryTurnId`。同时显式记录
+`transcriptIngressMode`：`streaming-sentence-end` 由
+`handleStreamingSentenceEnd()` 设置，`buffered-recorder` 由 recorder 的
+`onTranscriptionResult()` 设置。该 mode 随语音 transcript buffer flush 或直接
+chat boundary 一起传入 `ChatSendPayload`，再经过 `ChatOrchestratorSendOptions` 到
 `ChatStreamEventContext`；同一 context 会被 `onBeforeMessageComposed`、
 `onTokenLiteral`、`onStreamEnd` 和 Stage TTS 生命周期复用。这个 ID 只用于
 correlation，不进入 prompt、消息正文或 provider request。
 
-实时 ASR sentence-end 已经是 chat boundary，会直接记录 flush-requested；
-recorder fallback 则继续使用现有 `createTranscriptBuffer({ flushDelayMs: 1200,
-maxBufferedTextLength: 90 })`，在 buffer flush callback 记录同一时刻。这样
-`asrFinalToTranscriptFlushMs` 观测的是 AIRI 产品层 buffer 等待，不是 Qwen
-ASR 网络或模型延迟。没有稳定的 `speechEnd` timestamp 时，
+实时 ASR sentence-end 是 direct chat boundary，会在同一 ingress turn 中记录
+ASR final 与 flush-requested；recorder fallback 则继续使用现有
+`createTranscriptBuffer({ flushDelayMs: 1200, maxBufferedTextLength: 90 })`，在
+buffer flush callback 记录释放时刻。`asrFinalToTranscriptFlushMs` 的准确含义是：
+当前 ingress path 观察到 final transcription 到产品 boundary release 的时间；
+streaming path 通常接近零，buffered-recorder path 可以包含 1200 ms。没有稳定的
+`speechEnd` timestamp 时，
 `speechEndToFirstTtsPlaybackScheduleMs` 保持 unavailable，不作估算。
 
 ### Renderer-clock milestones and metrics
@@ -1044,19 +1068,22 @@ main 以 bounded 64-ID remembered set 去重，输出唯一的：
 [Realtime Voice E2E] turn finished
 ```
 
-这只是 renderer-clock 派生数据的 main-process sink，不是重新测量 transport
+日志还包含闭集合 `transcriptIngressMode`：`streaming-sentence-end` 或
+`buffered-recorder`。这只是 renderer-clock 派生数据的 main-process sink，不是重新测量 transport
 或 acoustic onset。`turnId` 截断，所有数值先做 finite filtering；sink 不接收
 transcript、prompt、LLM output、PCM、Base64、credential 或 raw provider
 payload。diagnostic sink 不可用时不得影响语音完成。
 
 ### Evidence status
 
-`SOURCE_PROVEN`：turn ID 贯通 chat hooks；1200/90 buffer 未修改；E2E state
-machine 的 success/failure/cancel/duplicate/finite-number 规则和 main sink
+`SOURCE_PROVEN`：turn ID 贯通 chat hooks；两个 ingress mode 在各自 source path
+显式赋值；1200/90 buffer 未修改；E2E state machine 的
+success/failure/cancel/duplicate/finite-number 规则和 main sink
 的 bounded exactly-once 行为由 focused tests 覆盖。
 
 `OPEN / NOT_YET_PROVEN`：完整真实麦克风到扬声器的一轮仍未执行；因此目前没有
-可发布的 real `asrFinalToFirstTtsPlaybackScheduleMs` 基线。下一次真实验证应在
-Owner 的安全 credential policy 允许的前提下，单独记录 transcript buffer 等待、
-chat 首 token、TTS 首 audio event 与首 playback schedule，不能用 ASR 模型指标
-替代 `1200 ms` 产品层 buffer 指标。
+可发布的 real `asrFinalToFirstTtsPlaybackScheduleMs` 基线。下一次真实 streaming
+ASR 验证应预期 `asrFinalToTranscriptFlushMs` 是 direct-boundary overhead，不能
+预先写成 1200 ms；recorder 验证则单独保留 1200 ms buffer attribution。两者都要
+与 chat 首 token、TTS 首 audio event 和首 playback schedule 分开记录，不能用 ASR
+模型指标替代产品层 buffer 指标。

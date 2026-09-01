@@ -14,6 +14,7 @@ describe('realtime voice E2E main telemetry sink', () => {
     const report = defineInvoke(context, realtimeVoiceE2eTurnTelemetry)
     const payload = {
       turnId: '012345678901234567890123456789',
+      transcriptIngressMode: 'buffered-recorder' as const,
       asrFinalToTranscriptFlushMs: 1200,
       firstAudioEventRelativeToInputFinishMs: -500,
       firstAudioScheduledRelativeToInputFinishMs: -500,
@@ -27,6 +28,7 @@ describe('realtime voice E2E main telemetry sink', () => {
     expect(info).toHaveBeenCalledTimes(1)
     expect(info).toHaveBeenCalledWith('[Realtime Voice E2E] turn finished', expect.objectContaining({
       turnId: '678901234567890123456789',
+      transcriptIngressMode: 'buffered-recorder',
       firstAudioEventRelativeToInputFinishMs: -500,
       firstAudioScheduledRelativeToInputFinishMs: -500,
     }))
@@ -44,6 +46,7 @@ describe('realtime voice E2E main telemetry sink', () => {
 
     await report({
       turnId: 'voice-safe',
+      transcriptIngressMode: 'streaming-sentence-end',
       asrFinalToChatSubmissionMs: Number.NaN,
       firstLlmTextToFirstTtsAudioEventMs: Number.POSITIVE_INFINITY,
       transcript: 'must not be logged',

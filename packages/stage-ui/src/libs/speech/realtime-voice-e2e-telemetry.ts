@@ -1,6 +1,6 @@
 import type { EventContext } from '@moeru/eventa'
 
-import type { RealtimeVoiceE2eTurnTelemetryPayload } from '../providers/realtime-voice-e2e-ipc'
+import type { RealtimeVoiceE2eTurnTelemetryPayload, RealtimeVoiceTranscriptIngressMode } from '../providers/realtime-voice-e2e-ipc'
 
 import { defineInvoke } from '@moeru/eventa'
 import { createContext as createElectronRendererContext } from '@moeru/eventa/adapters/electron/renderer'
@@ -22,6 +22,7 @@ type RealtimeVoiceTurnMilestone
 
 export interface RealtimeVoiceTurnState {
   turnId: string
+  transcriptIngressMode: RealtimeVoiceTranscriptIngressMode
   status: 'active' | 'completed' | 'cancelled' | 'failed'
   asrFinalReceivedAt?: number
   transcriptFlushRequestedAt?: number
@@ -61,10 +62,11 @@ function pruneTurns() {
 }
 
 /** Creates a renderer-local voice-turn identity before chat creates its round id. */
-export function createRealtimeVoiceTurn(options: { turnId?: string, at?: number } = {}): string {
+export function createRealtimeVoiceTurn(options: { transcriptIngressMode: RealtimeVoiceTranscriptIngressMode, turnId?: string, at?: number }): string {
   const turnId = boundedTurnId(options.turnId?.trim() || createOpaqueTurnId())
   turns.set(turnId, {
     turnId,
+    transcriptIngressMode: options.transcriptIngressMode,
     status: 'active',
     ...(finiteTimestamp(options.at) === undefined ? {} : { asrFinalReceivedAt: options.at }),
   })
@@ -126,6 +128,7 @@ export function completeRealtimeVoiceTurn(turnId: string | undefined): RealtimeV
 
   return {
     turnId: boundedTurnId(state.turnId),
+    transcriptIngressMode: state.transcriptIngressMode,
     asrFinalToTranscriptFlushMs: elapsed(state.asrFinalReceivedAt, state.transcriptFlushRequestedAt),
     transcriptFlushToChatSubmissionMs: elapsed(state.transcriptFlushRequestedAt, state.chatSubmissionAt),
     asrFinalToChatSubmissionMs: elapsed(state.asrFinalReceivedAt, state.chatSubmissionAt),

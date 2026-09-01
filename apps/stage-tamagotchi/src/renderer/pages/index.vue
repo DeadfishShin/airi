@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { CaptionChannelEvent, HearingInputChannelEvent } from '@proj-airi/stage-shared'
 import type { ModelSettingsRuntimeSnapshot } from '@proj-airi/stage-ui/components/scenarios/settings/model-settings/runtime'
+import type { RealtimeVoiceTranscriptIngressMode } from '@proj-airi/stage-ui/libs/providers/realtime-voice-e2e-ipc'
 
 import type { ModelSettingsRuntimeChannelEvent } from '../../shared/model-settings-runtime'
 
@@ -564,8 +565,12 @@ async function sendVoiceInputTextToChat(text: string, telemetryTurnId?: string) 
   }
 }
 
-function markRealtimeVoiceAsrFinal(): string {
-  pendingRealtimeVoiceTurnId ??= createRealtimeVoiceTurn()
+function markRealtimeVoiceAsrFinal(transcriptIngressMode: RealtimeVoiceTranscriptIngressMode): string {
+  if (transcriptIngressMode === 'streaming-sentence-end')
+    pendingRealtimeVoiceTurnId = createRealtimeVoiceTurn({ transcriptIngressMode })
+  else
+    pendingRealtimeVoiceTurnId ??= createRealtimeVoiceTurn({ transcriptIngressMode })
+
   recordRealtimeVoiceTurnMilestone(pendingRealtimeVoiceTurnId, 'asrFinalReceivedAt')
   return pendingRealtimeVoiceTurnId
 }
@@ -584,7 +589,7 @@ function handleStreamingSentenceEnd(delta: string) {
   scheduleHearingInputClear(sourceId)
   activeHearingInputSourceId = undefined
   postSpeakerCaption(finalText, 'replace')
-  const turnId = markRealtimeVoiceAsrFinal()
+  const turnId = markRealtimeVoiceAsrFinal('streaming-sentence-end')
   // Realtime ASR sentence-end is already the chat boundary; unlike the
   // recorder fallback below it does not pass through the 1200 ms buffer.
   recordRealtimeVoiceTurnMilestone(turnId, 'transcriptFlushRequestedAt')
@@ -636,7 +641,7 @@ const voiceInputSession = useVoiceInputSession(stream, {
     postSpeakerCaption(text)
     toast(`Voice input transcribed: ${text}`)
     if (text.trim())
-      markRealtimeVoiceAsrFinal()
+      markRealtimeVoiceAsrFinal('buffered-recorder')
     voiceTranscriptBuffer.push(text)
   },
   onTranscriptionEmpty: () => {

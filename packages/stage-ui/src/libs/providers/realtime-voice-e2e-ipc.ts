@@ -1,8 +1,11 @@
 import { defineInvokeEventa } from '@moeru/eventa'
 
+export type RealtimeVoiceTranscriptIngressMode = 'streaming-sentence-end' | 'buffered-recorder'
+
 /** Renderer-clock, content-free summary for one completed voice turn. */
 export interface RealtimeVoiceE2eTurnTelemetryPayload {
   turnId: string
+  transcriptIngressMode: RealtimeVoiceTranscriptIngressMode
   asrFinalToTranscriptFlushMs?: number
   transcriptFlushToChatSubmissionMs?: number
   asrFinalToChatSubmissionMs?: number

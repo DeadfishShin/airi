@@ -1,5 +1,5 @@
 import type { createContext } from '@moeru/eventa/adapters/electron/main'
-import type { RealtimeVoiceE2eTurnTelemetryPayload } from '@proj-airi/stage-ui/libs/providers/realtime-voice-e2e-ipc'
+import type { RealtimeVoiceE2eTurnTelemetryPayload, RealtimeVoiceTranscriptIngressMode } from '@proj-airi/stage-ui/libs/providers/realtime-voice-e2e-ipc'
 import type { Lifecycle } from 'injeca'
 
 import { defineInvokeHandler } from '@moeru/eventa'
@@ -10,6 +10,7 @@ import { ipcMain } from 'electron'
 type RealtimeVoiceE2eMainEventContext = ReturnType<typeof createContext>['context']
 
 export const MAX_REALTIME_VOICE_E2E_TURN_LOGS = 64
+const REALTIME_VOICE_TRANSCRIPT_INGRESS_MODES: RealtimeVoiceTranscriptIngressMode[] = ['streaming-sentence-end', 'buffered-recorder']
 
 export interface RealtimeVoiceE2eTelemetryServiceOptions {
   context: RealtimeVoiceE2eMainEventContext
@@ -28,6 +29,7 @@ function isBoundedPayload(payload: RealtimeVoiceE2eTurnTelemetryPayload): boolea
   return typeof payload.turnId === 'string'
     && payload.turnId.trim().length > 0
     && payload.turnId.trim().length <= 128
+    && REALTIME_VOICE_TRANSCRIPT_INGRESS_MODES.includes(payload.transcriptIngressMode)
 }
 
 /** Main-process sink for one content-free, renderer-clock voice-turn summary. */
@@ -54,6 +56,7 @@ export function createRealtimeVoiceE2eTelemetryService(options: RealtimeVoiceE2e
 
     console.info('[Realtime Voice E2E] turn finished', {
       turnId,
+      transcriptIngressMode: payload.transcriptIngressMode,
       asrFinalToTranscriptFlushMs: finiteMetric(payload.asrFinalToTranscriptFlushMs),
       transcriptFlushToChatSubmissionMs: finiteMetric(payload.transcriptFlushToChatSubmissionMs),
       asrFinalToChatSubmissionMs: finiteMetric(payload.asrFinalToChatSubmissionMs),
