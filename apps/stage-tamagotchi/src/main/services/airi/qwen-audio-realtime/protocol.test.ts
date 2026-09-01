@@ -164,6 +164,66 @@ describe('qwen Audio realtime ASR protocol', () => {
     expect(errors).toHaveLength(0)
   })
 
+  it('aggregates multiple sentence-final results into one task final before renderer handoff', async () => {
+    const socket = new FakeSocket()
+    const partial: QwenAsrSentence[] = []
+    const final: QwenAsrSentence[] = []
+    const session = new QwenAudioRealtimeAsrSession('session-1', runtimeConfig, 'auto', {
+      onStarted: () => {},
+      onPartial: (sentence) => { partial.push(sentence) },
+      onFinal: (sentence) => { final.push(sentence) },
+      onFinished: () => {},
+      onError: (error) => { throw error },
+    }, () => socket)
+
+    session.start()
+    socket.emit('open')
+    socket.emit('message', serverEvent('task-started'))
+    await settleEvents()
+
+    socket.emit('message', resultEvent('句段A', false, 'session-1', 1))
+    socket.emit('message', resultEvent('句段A', true, 'session-1', 1))
+    // Represents a natural pause followed by a new provider sentence.
+    socket.emit('message', resultEvent('句段B', false, 'session-1', 2))
+    socket.emit('message', resultEvent('句段B', true, 'session-1', 2))
+    expect(final).toHaveLength(0)
+
+    const finishing = session.finish()
+    socket.emit('message', serverEvent('task-finished'))
+    await finishing
+
+    expect(partial.map(sentence => sentence.text)).toEqual(['句段A', '句段A', '句段A句段B', '句段A句段B'])
+    expect(final.map(sentence => sentence.text)).toEqual(['句段A句段B'])
+    expect(final).toHaveLength(1)
+  })
+
+  it('deduplicates repeated delivery of one sentence identity before the renderer final callback', async () => {
+    const socket = new FakeSocket()
+    const final: QwenAsrSentence[] = []
+    const session = new QwenAudioRealtimeAsrSession('session-1', runtimeConfig, 'auto', {
+      onStarted: () => {},
+      onPartial: () => {},
+      onFinal: (sentence) => { final.push(sentence) },
+      onFinished: () => {},
+      onError: (error) => { throw error },
+    }, () => socket)
+
+    session.start()
+    socket.emit('open')
+    socket.emit('message', serverEvent('task-started'))
+    await settleEvents()
+    socket.emit('message', resultEvent('重复句', true, 'session-1', 1))
+    socket.emit('message', resultEvent('重复句', true, 'session-1', 1))
+
+    const finishing = session.finish()
+    socket.emit('message', serverEvent('task-finished'))
+    await finishing
+
+    expect(final).toHaveLength(1)
+    expect(final[0]?.sentenceId).toBe(1)
+    expect(final[0]?.text).toBe('重复句')
+  })
+
   it('rejects malformed result events instead of accepting generic assistant text', async () => {
     const socket = new FakeSocket()
     const errors: Error[] = []

@@ -911,7 +911,7 @@ local playback state
 
 1. Full real microphone `Streaming ASR → LLM → Token Plan Streaming TTS` 同一轮完整 E2E。
 2. recorder-backed transcript buffer policy/latency 优化；这不是 Qwen streaming ASR sentence-end 的 blocker。
-3. Endpointing / natural pause policy。
+3. Streaming ASR sentence-final 与 user-turn endpoint decision policy；当前 direct handoff 可能因独立 VAD/provider segment 而拆分用户轮次，见 Section 33。
 4. Barge-in。
 5. VAD 与更完整的 speaking/echo coordination。
 6. AEC / self-voice rejection。
@@ -1087,3 +1087,86 @@ ASR 验证应预期 `asrFinalToTranscriptFlushMs` 是 direct-boundary overhead�
 预先写成 1200 ms；recorder 验证则单独保留 1200 ms buffer attribution。两者都要
 与 chat 首 token、TTS 首 audio event 和首 playback schedule 分开记录，不能用 ASR
 模型指标替代产品层 buffer 指标。
+
+## 33. ASR sentence final vs user-turn endpoint authority
+
+本节只描述当前源码和官方协议已经证明的边界，不代表已实现 endpointing 修复。
+
+### 已证明的两层边界
+
+Alibaba ASR 文档把 `result-generated` 中的 `sentence_end=true` 定义为当前识别句
+已经结束的 final result，把 `sentence_end=false` 定义为 intermediate result；文档另
+行定义 `task-finished` 为任务正常结束。因此 `sentence_end` 是识别稳定性/句段边界，
+不是用户明确交棒的 conversational turn 信号。当前裁决为
+`SENTENCE_FINAL_EQUALS_USER_TURN_END = NO_NOT_EQUIVALENT`（`OFFICIAL_DOC_SUPPORTED`）。
+参见 [ASR server events](https://help.aliyun.com/zh/model-studio/fun-asr-server-events)
+和 [ASR WebSocket API](https://help.aliyun.com/zh/model-studio/fun-asr-realtime-websocket-api)。
+
+当前 Qwen main session 以 `sentence_id` 保存和替换句段更新；多个
+`sentence_end=true` 结果在同一个 provider task 内会在 `task-finished` 时聚合为一次
+ordered final，再交给 renderer。因此 raw provider 的多个 sentence final 不会直接各自
+触发 chat。可是 `createVadStreamingSession` 的 authority 是“一段 detected speech 一个
+provider session”；当一个物理发言被当前 VAD 分成两个 session 时，每个 session 的 final
+都会进入 Stage 的 direct handoff。该结论由源码与 deterministic tests (`SOURCE_PROVEN`) 支持。
+
+### 当前 AIRI chat 触发链
+
+```text
+Qwen result-generated(sentence_end)
+  → main sentence map / ordered partial snapshots
+  → task-finished 时 onFinal(aggregate)
+  → renderer final snapshot / stream completion
+  → StreamingTranscriptionConsumers.onSentenceEnd
+  → handleStreamingSentenceEnd(finalText)
+  → sendVoiceInputTextToChat(finalText)
+  → chatStore.send() / runtime.ingest()
+```
+
+`handleStreamingSentenceEnd()` 本身不经过 `voiceTranscriptBuffer`，也没有额外的
+debounce、endpoint decision 或跨 session aggregation。非空回调一次就调用一次
+`sendVoiceInputTextToChat()`；在当前 chat contract 中，每次 `chatStore.send()` 都是
+独立的 chat ingest/turn。单 final 的 deterministic control 为 `CHAT_SEND_COUNT=1`。
+两个独立 VAD/provider segment 的 final 为 `CHAT_SEND_COUNT=2`、
+`CHAT_TURN_COUNT=2`，所以当前产品风险裁决为：
+`CURRENT_DIRECT_SENTENCE_FINAL_TO_CHAT_CAN_FRAGMENT_ONE_USER_TURN`。
+
+重复行为也必须分层理解：Qwen main 的相同 `sentence_id` 更新会被 Map 替换，
+在 renderer final callback 前只保留一次（`SOURCE_PROVEN`）；但 Stage direct callback
+自身没有去重，若上游真的交付两个相同 final callback，会产生两个 chat send。不能把
+上游已去重误写成 Stage 层具备通用重复保护。
+
+### Endpointing authority matrix
+
+| Event / signal | ASR stability authority | Acoustic-end authority | User-turn-end authority | Current chat trigger |
+| --- | --- | --- | --- | --- |
+| partial transcript | intermediate/stable recognition update | 无 | 无 | 不触发 |
+| `result-generated`, `sentence_end=true` | 当前句段 final | 可能反映 provider segmentation/pause，但未证明是完整声学结束 | 无官方保证 | 在当前 Qwen task 中不直接触发；进入 aggregate |
+| `task-finished` | task 内 aggregate final 可交付 | provider task lifecycle 结束 | 仍不等于用户 conversational intent | 触发 main `onFinal`，随后 renderer final stream handoff |
+| VAD speech end | 当前本地 speech segment boundary | VAD silence/segment signal | 不自动等于用户交棒 | 停止当前 provider session，可能导致一个 direct chat boundary |
+| recorder flush boundary | recorder result 已进入 app buffer | 无 | 无 | `voiceTranscriptBuffer` flush callback 触发 chat |
+
+当前 recorder 路径仍是 `createTranscriptBuffer({ flushDelayMs: 1200,
+maxBufferedTextLength: 90 })`；它不能被借作 streaming ASR endpointing authority，也不能把
+streaming path 的 direct boundary 改写成 1200 ms。
+
+### Future endpointing contract（未实现）
+
+需要在 provider final 与 `chatStore.send()` 之间增加明确的 endpoint decision layer，
+把 sentence final 当作识别稳定性输入，而不是直接当作用户 turn end。候选方案的边界如下：
+
+| 方案 | 延迟 | 自然停顿容忍度 | false split / false merge | barge-in 兼容性 | Android portability |
+| --- | --- | --- | --- | --- | --- |
+| 1. 短的 bounded post-final aggregation window | 可控增加 | 取决于窗口 | split 降低、merge 风险上升 | 可在窗口内取消/打断 | 高 |
+| 2. provider acoustic/VAD speech-end authority | 可能最低 | 依赖 provider | 依赖 provider segmentation | 可直接连接 speech-end，但仍需取消竞态 | 中/低 |
+| 3. explicit user-turn/end signal | 近零额外等待 | 由用户显式控制 | split/merge 语义最清晰 | 最容易与 PTT/主动打断配合 | 高 |
+| 4. hybrid sentence-final + VAD/endpoint timer | 中等、可调 | 通常最好 | 需要调参，兼顾两类错误 | 可把 VAD、cancel、barge-in 分层 | 中/高 |
+
+当前推荐的未来接口是 hybrid endpoint decision：如果有明确 user-end/按键，优先使用；
+否则使用 bounded、可取消的本地 endpoint policy。不要复用 recorder 的 1200 ms，除非
+未来有独立证据证明那是目标 streaming 产品语义。`userTurnEndpointAt` 或
+`endpointDecisionAt` 应作为新的 renderer-clock milestone，放在 ASR final 与 chat
+submission 之间；当前不实现。
+
+sentence final 不等于 VAD speech end；VAD speech end 也不等于 AEC。VAD/endpointing
+可以决定何时提交或停止一轮，barge-in 可以决定何时取消 TTS/LLM，但 AEC 仍负责回声
+路径与自声抑制，三者不能互相替代。
