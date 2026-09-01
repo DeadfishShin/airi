@@ -31,6 +31,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 
+import { ensureQwenTtsModelCatalog } from './speech-model-catalog'
+
 const { t } = useI18n()
 const providersStore = useProviderStore()
 const providerStore = useProviderConfigStore()
@@ -76,12 +78,6 @@ let lastOfficialTtsExposureKey = ''
 
 const STREAMING_MODEL_OPTION_PREFIX = 'streaming:'
 const isQwenRealtimeProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)
-
-async function ensureQwenRealtimeModelCatalog(providerId = activeSpeechProvider.value) {
-  if (providerId !== QWEN3_TTS_REALTIME_PROVIDER_ID || providersStore.getModelsForProvider(providerId).length > 0)
-    return
-  await providersStore.fetchModelsForProvider(providerId)
-}
 
 const selectableSpeechSources = computed(() => {
   const configuredSources = moduleSpeechProvidersMetadata.value
@@ -368,7 +364,7 @@ function syncOpenAICompatibleSettings() {
 
 onMounted(async () => {
   await providersStore.loadModelsForConfiguredProviders()
-  await ensureQwenRealtimeModelCatalog()
+  await ensureQwenTtsModelCatalog(providersStore, activeSpeechProvider.value)
   speechStore.ensureActiveSpeechModel()
   await speechStore.loadVoicesForProvider(activeSpeechProvider.value, activeSpeechModel.value || undefined)
   syncOpenAICompatibleSettings()
@@ -377,7 +373,7 @@ onMounted(async () => {
 
 watch(activeSpeechProvider, async (newProvider, oldProvider) => {
   await providersStore.loadModelsForConfiguredProviders()
-  await ensureQwenRealtimeModelCatalog(newProvider)
+  await ensureQwenTtsModelCatalog(providersStore, newProvider)
 
   // Reset model and voice when switching providers (but not on initial load)
   const isMergedOfficialSwitch = (
