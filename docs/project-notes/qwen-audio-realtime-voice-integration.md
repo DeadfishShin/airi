@@ -92,13 +92,14 @@ Renderer 只持有 provider/model/voice 的非秘密选择和必要的 session I
 | ASR | Token Plan Personal | `qwen-audio-3.0-asr-flash` | N/A | `TOKEN_PLAN_API_KEY` | 当前矩阵未提供等价的 live streaming replacement；`OPEN` |
 | TTS | Qwen PAYG | `qwen3-tts-flash-realtime` | `Cherry` | PAYG route | native realtime WS；LLM→TTS overlap：PASS |
 | TTS | Token Plan Personal | `qwen-audio-3.0-tts-plus` | AIRI 当前 canary：`longanlingxin` | `TOKEN_PLAN_API_KEY` | native WS runtime：PASS |
-| Speech-to-speech | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | 由服务能力决定 | Token Plan route | 作为 end-to-end realtime speech conversation；当前未作 standalone ASR/TTS adapter |
+| Speech-to-speech | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | 由服务能力决定 | Token Plan route | protocol matrix：支持 AOQ/WebRTC/WebSocket；作为 end-to-end realtime speech conversation；AIRI custom-app API policy：`OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE` |
+| Realtime transcript seam | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | N/A | Token Plan route | push-to-talk/manual 下可先提交音频并接收 transcript，再独立决定是否发送 `response.create`；runtime entitlement 未证明 |
 
 重要区分：`qwen-audio-3.0-asr-flash` 与 `qwen-audio-3.0-asr-flash-streaming` 不是同一个 model ID。当前官方 ASR model 文档把前者描述为非 realtime HTTP 模式，把后者描述为 realtime WebSocket 模式。[Alibaba ASR model 文档](https://help.aliyun.com/zh/model-studio/asr-model)（`OFFICIAL_DOC_SUPPORTED`）。
 
 当前 Token Plan Personal 官方 overview 列出的音频模型至少包括：`qwen-audio-3.0-tts-plus`、`qwen-audio-3.0-realtime-plus`、`qwen-audio-3.0-asr-flash`，区域为华北 2（北京）。[Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)（`OFFICIAL_DOC_SUPPORTED`）。
 
-Token Plan Personal 的官方页面也描述了工具使用范围和限制。文档明确文字应按原文理解，不能自行推导出“所有自研交互应用绝对允许”或“所有 custom app 一律禁止”的额外结论。Owner-operated interactive AIRI canary 已有实测成功，但产品分发政策仍需以当时的服务条款和官方说明为准。`OFFICIAL_DOC_SUPPORTED` + `REAL_RUNTIME_PROVEN`，不作法律保证。
+Token Plan Personal 的当前官方 overview 与第三方工具页面明确规定：仅限兼容的 AI coding / agent tools 中的交互使用，并明确不支持自定义应用程序直接在自动化脚本或应用后端调用 API。故对 AIRI 自研应用 API 使用必须标记为 `OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE`。这不是自行作出的法律结论；AIRI 是否能被 Alibaba/provider 明确认定为允许的“agent tool”仍需 provider explicit confirmation。Owner-operated interactive AIRI canary 的 runtime 成功不能覆盖该政策边界。`OFFICIAL_DOC_SUPPORTED` + `REAL_RUNTIME_PROVEN`，但不作法律保证。
 
 # 4. Credential / Cost Isolation Rules
 
@@ -480,7 +481,126 @@ wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
 
 第一次 probe 因 frame/finish sequencing 问题未得到完整结果；修正 probe 后 Owner 观察到 upgrade、auth、model entitlement、task start、binary audio、result-generated sentence lifecycle、task-finished 和正常 close。故该 endpoint 当前标记为 `PROBE_PROVEN / REAL_RUNTIME_PROVEN`，而不是仅凭某个页面把它宣称为 Token Plan TTS 专属官方 endpoint。`OFFICIAL_DOC_SUPPORTED` 只支持 protocol family，entitlement 由 probe/runtime 支持。
 
-# 13. Token Plan Native WS Protocol Lessons
+# 13. Realtime-plus transcript seam 与 Token Plan policy correction
+
+本节修正上一轮 architecture preflight 的两个证据偏差：Token Plan Personal 的 custom-app/API 使用政策，以及 Qwen-Audio-Realtime 在 push-to-talk 模式下的 transcript-first seam。
+
+## A. Token Plan Personal policy
+
+当前中国站官方公开规则不是“所有自研交互应用都未分类”，而是明确规定 Token Plan Personal 仅供个人在指定的 AI coding / agent tools 中交互使用，并明确不支持自定义应用程序直接在自动化脚本或应用后端调用 API。`more-tools` 页面进一步把工作流/自动化平台、API 测试工具和自定义应用程序列为不支持类型；FAQ 也把生产自动化、批量脚本和后台定时任务列为不允许场景。[Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)、[更多工具](https://help.aliyun.com/zh/model-studio/more-tools)、[Token Plan Personal FAQ](https://help.aliyun.com/zh/model-studio/token-plan-personal-faq)（`OFFICIAL_DOC_SUPPORTED`）。
+
+因此本项目不得再把政策状态写成简单的 `NOT_YET_CLEARED`：
+
+```text
+TOKEN_PLAN_CUSTOM_AIRI_POLICY = OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE
+```
+
+这不是法律意见，也不自行判断 AIRI 是否属于官方所称的“agent tool”。如果要继续把 Token Plan Personal 用于 AIRI，自研应用是否可被 provider 明确认定为允许类别必须取得 provider explicit confirmation；在确认前，正式架构决策为：
+
+```text
+HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS
+```
+
+FAQ 同时提醒，Key、Base URL 或模型白名单不匹配可能导致 401/403、`model_not_found`，或错误进入按量计费路径；因此不能用 runtime “能通”反推政策允许，也不能用失败时的 PAYG route 兜底。
+
+## B. push-to-talk transcript-first seam
+
+官方 Qwen-Audio-Realtime WebSocket 文档将 `turn_detection=null` 定义为 push-to-talk/manual 模式。此模式下客户端持续发送 `input_audio_buffer.append`，说完后发送 `input_audio_buffer.commit`；`commit` 只把音频提交为用户消息，不自动触发推理，之后是否发送独立的 `response.create` 由客户端决定。[Qwen-Audio Realtime WebSocket API](https://help.aliyun.com/zh/model-studio/fun-audiochat-realtime-websocket-api)（`OFFICIAL_DOC_SUPPORTED`）。
+
+对 AIRI 的 transcript-first 集成，协议因果链应记录为：
+
+```text
+input_audio_buffer.append
+  → conversation.item.input_audio_transcription.delta (zero or more)
+  → input_audio_buffer.commit
+  → conversation.item.input_audio_transcription.completed
+  → input_audio_buffer.committed
+  → conversation.item.created
+  → response.create (optional, independent inference trigger)
+```
+
+官方 client events 明确写出：`input_audio_buffer.commit` 在 push-to-talk 下创建用户消息但不会触发 inference，必须另发 `response.create` 才开始模型推理；server events 明确提供 `conversation.item.input_audio_transcription.delta`、`conversation.item.input_audio_transcription.completed`、`input_audio_buffer.committed` 和 `conversation.item.created`。[Qwen-Audio client events](https://help.aliyun.com/zh/model-studio/fun-audiochat-client-events)、[Qwen-Audio server events](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-server-events)（`OFFICIAL_DOC_SUPPORTED`）。
+
+证据边界也必须保留：官方页面明确保证 `commit` 与 `response.create` 的因果分离，并描述上述 server event family；不同服务端实现可能让 delta、completed、committed、item-created 的到达时间交错，不能把页面示例误读为每个事件都具有不可交错的严格总顺序。对 AIRI 足够的结论是：在不发送 `response.create` 的情况下，客户端至少有一个官方支持的 transcript delivery seam，可以把用户音频转写交给 AIRI 自己的 LLM；这不等价于 standalone ASR 产品，也不等价于 Token Plan runtime entitlement 已通过。
+
+## C. 三个结论必须分开
+
+```text
+ARCH_C_TRANSCRIPT_ONLY_SEAM = OFFICIAL_PROTOCOL_SUPPORTED
+TOKEN_PLAN_REALTIME_PLUS_ENTITLEMENT_RUNTIME_PROVEN = NOT_RUNTIME_PROVEN
+TOKEN_PLAN_CUSTOM_AIRI_POLICY_ALLOWED = NOT_CONFIRMED / PUBLISHED_POLICY_CONFLICT
+```
+
+第一个结论是协议能力；第二个是账号、Key、地域和实际调用路径的运行时事实；第三个是服务使用政策。三者不能互相替代。当前既没有 Token Plan `qwen-audio-3.0-realtime-plus` 的 AIRI 专属 entitlement 实测，也没有 provider 对 AIRI custom/agent 分类的明确确认。
+
+## D. ARCH_A、ARCH_C' 与 ARCH_B
+
+### ARCH_A
+
+```text
+qwen-audio-3.0-asr-flash-streaming (PAYG standalone ASR)
+  → AIRI transcript
+  → AIRI streaming LLM
+  → AIRI TTS
+```
+
+这是当前已验证的分层方式。它保留 AIRI 的 transcript、persona、history、memory、tools、LLM token authority、`StageTtsSession`、speaking、lipsync 和 cancellation。不得因为 realtime-plus 出现在 Token Plan model catalog 中就替换这条已通过 baseline 的路径。
+
+### ARCH_C'
+
+```text
+Qwen-Audio-Realtime input audio/transcript events
+  → AIRI streaming LLM
+  → AIRI TTS
+  （push-to-talk/manual；不发送 response.create）
+```
+
+ARCH_C' 的 transcript-first seam 在协议层为 `OFFICIAL_PROTOCOL_SUPPORTED`，是上一轮 `ARCH_C = NOT_SUPPORTED_BY_PROTOCOL` 的修正。它仍然需要确认 Token Plan Personal 对 AIRI custom application 的政策适用性与 realtime-plus 的实际 entitlement；在这两项解决前，不得作为生产路线选择。
+
+### ARCH_B
+
+```text
+Qwen-Audio-Realtime
+  → vendor text/audio response
+```
+
+ARCH_B 是官方支持的端到端 speech-to-speech 形态：模型同时接收 Audio/Text 并输出 Audio/Text，支持 Function Calling；但它会让 vendor realtime session 成为主要的 response、turn、history 和 audio authority。若要保持 AIRI persona、memory、tools 和本地会话语义，就需要显式同步或重建这些语义，不能把它当成当前 `StageTtsSession` 的透明替换。
+
+本任务不在 ARCH_A 与 ARCH_C' 之间作生产路线选择，也不批准 ARCH_B 替代 AIRI LLM。当前唯一有效的下一步裁决是：
+
+```text
+HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS
+```
+
+直到取得 provider 明确允许，或改用允许 custom application API 的计费/credential route。
+
+## E. server_vad、smart_turn 与 interruption
+
+官方文档说明：
+
+- `server_vad`：服务端检测语音结束并自动触发推理。
+- `smart_turn`：结合声学/语义判断 turn，某些无意义声音不会触发对话轮。
+- `turn_detection=null`：关闭 VAD，进入手动 push-to-talk。
+- `response.cancel`：取消当前 response；服务端返回 cancelled 状态。
+- realtime response 也可能因用户新语音而被 server 侧打断。
+
+因此 server-side VAD、turn detection 和 response cancellation 可以减少未来自研 endpointing、自然停顿和部分 barge-in 状态机工作，尤其适合 ARCH_B 或需要 vendor-managed turn 的路线。但它们不自动提供完整 AEC；官方 capability matrix 明确 WebSocket 没有内建回声消除/降噪，AOQ 与 WebRTC 才有相应能力。[Realtime API overview](https://help.aliyun.com/zh/model-studio/realtime-api-overview)（`OFFICIAL_DOC_SUPPORTED`）。
+
+如果 AIRI 只要 transcript，push-to-talk/manual 是最干净的协议 seam：AIRI 决定何时 commit，也决定是否发送 `response.create`。当前未找到一种同时使用 server endpointing、又由官方配置完全阻止 vendor inference 的 realtime-plus 模式，因此该组合标记为 `NOT_YET_PROVEN`。
+
+## F. 当前 capability 裁决
+
+| 项目 | 裁决 | 证据级别 |
+| --- | --- | --- |
+| `qwen-audio-3.0-realtime-plus` 在 Token Plan Personal model catalog | YES | `OFFICIAL_DOC_SUPPORTED` |
+| realtime-plus 的 AOQ/WebRTC/WebSocket protocol matrix | YES | `OFFICIAL_DOC_SUPPORTED` |
+| ARCH_C' transcript-before-`response.create` seam | YES | `OFFICIAL_DOC_SUPPORTED` |
+| Token Plan realtime-plus AIRI custom-app runtime entitlement | NOT_YET_PROVEN | `OPEN` |
+| Token Plan Personal 对 AIRI custom-app API 的政策允许 | NOT_CONFIRMED / `OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE` | `OFFICIAL_DOC_SUPPORTED` |
+| realtime-plus 等价替换 standalone ASR | NO | model/protocol semantics differ |
+| realtime-plus 作为 current Token Plan TTS adapter | NO / NOT_YET_PROVEN | 未发现 incremental TTS-only contract |
+
+# 14. Token Plan Native WS Protocol Lessons
 
 当前被 runtime 证明的 flow：
 
@@ -501,7 +621,7 @@ socket open
 
 取消使用本地立即停止 + 远端 cancel directive 的 route-specific 处理，不等同 graceful finish。remote task-finished 只表示远端生成完成，不能清掉本地播放 tail。
 
-# 14. Token Plan Probe Schema Failure
+# 15. Token Plan Probe Schema Failure
 
 第一次 WS probe 的错误不是 provider unsupported，而是 probe 自身与协议不一致：
 
@@ -513,7 +633,7 @@ socket open
 
 修正后 probe：`task-started → continue-task → finish-task → continue receive audio/result → task-finished`，实际得到 binary audio 和完整 lifecycle。`a3a9dc1dadc1f4a6360070efea2dfd99ba56bed0` 修复 AIRI runtime 的同类 crossws frame-kind 问题；probe 复核经验本身属于可复用的 `PROBE_PROVEN` lesson。
 
-# 15. Provider Detail Page vs Active Runtime Selection
+# 16. Provider Detail Page vs Active Runtime Selection
 
 一次真实失败清楚地说明：Token Plan detail page 能显示 `qwen-audio-3.0-tts-plus` / `longanlingxin`，不等于它已成为 active speech source。Stage 实际仍可能运行旧的 `qwen3-tts-realtime` / `qwen3-tts-flash-realtime`，最终报 `Qwen3 realtime TTS API key is unavailable`。
 
@@ -528,7 +648,7 @@ activeSpeechVoice
 
 而不是 detail page 的视觉内容。`SOURCE_PROVEN` + `REAL_RUNTIME_PROVEN`。
 
-# 16. Runtime Voice Hydration Lesson
+# 17. Runtime Voice Hydration Lesson
 
 `activeSpeechVoiceId` 和 resolved `activeSpeechVoice: VoiceInfo | undefined` 是不同层次。Streaming snapshot 使用 resolved voice object 的 id；只恢复 string ID 而没有从当前 provider catalog hydrate object，仍会在 session creation 前 fail closed。
 
@@ -540,7 +660,7 @@ provider + model + voiceId + voice object
 
 四者一致。不能在 `Stage.vue` 里用 Cherry 或其他 voice 做硬编码 fallback。`SOURCE_PROVEN` + `CURRENT_DESIGN_DECISION`。
 
-# 17. Token Plan Silent Runtime / Instrumentation
+# 18. Token Plan Silent Runtime / Instrumentation
 
 曾出现：persistent provider/model/voice 看起来正确、`muted=false`，但没有声音、没有表面 error、也没有 transport success/failure log。静态 UI 不足以证明 session entry。
 
@@ -585,7 +705,7 @@ SOCKET_CLOSE
 
 原则：realtime pipeline 不能只记录 success/failure；必须记录不含内容的 pipeline milestones，且不打印 token、prompt、PCM、key 或 Authorization。`SOURCE_PROVEN`。
 
-# 18. Critical crossws Frame-Kind Bug
+# 19. Critical crossws Frame-Kind Bug
 
 ## Runtime symptom
 
@@ -615,7 +735,7 @@ isBinary = true  → PCM binary
 
 不要把 Buffer/Uint8Array/ArrayBufferView 的 JavaScript 类型当作 frame kind。Node/WebSocket adapter 可能用相同 payload representation 表示 text 和 binary；任何 provider/backend port 都必须保留并测试显式 frame metadata。
 
-# 19. Token Plan Short Runtime Baseline
+# 20. Token Plan Short Runtime Baseline
 
 `QWEN_AUDIO_TOKEN_PLAN_NATIVE_WS_TTS_MACOS_CANARY_BASELINE_V1`，proof HEAD 为 `a3a9dc1dadc1f4a6360070efea2dfd99ba56bed0`。`REAL_RUNTIME_PROVEN` + `PROBE_PROVEN`。
 
@@ -632,7 +752,7 @@ isBinary = true  → PCM binary
 | `VISIBLE_ERROR` | NO |
 | `SOCKET_CLOSE` | 1000 |
 
-# 20. Token Plan Real Streaming Overlap Baseline
+# 21. Token Plan Real Streaming Overlap Baseline
 
 `QWEN_AUDIO_TOKEN_PLAN_NATIVE_WS_TTS_MACOS_STREAMING_OVERLAP_BASELINE_V1`，proof HEAD 为 `def22aded10d6b7f8ae1c35c5ef13c4036590e4e`。`REAL_RUNTIME_PROVEN`。
 
@@ -652,7 +772,7 @@ isBinary = true  → PCM binary
 
 负 overlap 值证明第一块 audio 已在 LLM input stream 完成前进入 audio event/playback schedule。它不能被改写成“第一音频等待了 126.7ms”；signed overlap 和 first-audio latency 是不同指标。
 
-# 21. Long Local Drain Is Not Automatically a Bug
+# 22. Long Local Drain Is Not Automatically a Bug
 
 PAYG 和 Token Plan 都曾观察到 remote generation finished 后，本地 playback 仍 drain 数十秒。原因可能是 provider 生成 audio 的速度高于人类播放速度，本地已经排队了大量 PCM。
 
@@ -664,7 +784,7 @@ remote finish ≠ audible finish
 
 正常结束必须是 remote finish + local owned source drain；cancel/error 才立即 stop。本规则由 PCM bridge、Stage adapter tests 与 real runtime tail completion 共同支持。`SOURCE_PROVEN` + `REAL_RUNTIME_PROVEN`。
 
-# 22. Token Plan Model Catalog UI Bug
+# 23. Token Plan Model Catalog UI Bug
 
 Speech 主设置页曾同时显示：
 
@@ -685,11 +805,11 @@ Current Model: qwen-audio-3.0-tts-plus
 
 不要通过隐藏 empty warning 掩盖 catalog 缺失；要在正确 lifecycle 加载真实静态 catalog，并保持 genuinely empty provider 的 warning。`SOURCE_PROVEN`。
 
-# 23. Voice Catalog Clarification
+# 24. Voice Catalog Clarification
 
 AIRI 当前 Token Plan provider 静态注册的 voice 只有 `longanlingxin`，表示当前 canary UI 只暴露一个确定的系统/技术 donor voice，不表示 Alibaba server 只有一个 voice。官方 voice list 文档描述了更大的可用集合；完整 voice catalog/selection UX 是 backlog。`SOURCE_PROVEN` + `OFFICIAL_DOC_SUPPORTED` + `OPEN`。
 
-# 24. Logging / Diagnostics Safety
+# 25. Logging / Diagnostics Safety
 
 允许记录：
 
@@ -708,7 +828,7 @@ AIRI 当前 Token Plan provider 静态注册的 voice 只有 `longanlingxin`，�
 
 主进程日志应记录 bounded final summary，而不是每个 token/audio event。renderer console 只是 developer aid，不能作为 Owner audit 的唯一渠道。`CURRENT_DESIGN_DECISION` + `SOURCE_PROVEN`。
 
-# 25. Runtime State Authority
+# 26. Runtime State Authority
 
 后续 App/Android 开发必须把这些状态分开：
 
@@ -724,7 +844,7 @@ local playback state
 
 任何一层的 UI 展示都不是完整 runtime truth。例如 detail page 的 voice 和 persisted voice ID 正确，不保证 renderer 已 hydrate `VoiceInfo`；remote `task-finished` 正确，不保证 speaker tail 已结束。
 
-# 26. Session / Race Safety
+# 27. Session / Race Safety
 
 所有 realtime provider 可复用的安全原则：
 
@@ -743,7 +863,7 @@ local playback state
 - success telemetry exactly once；
 - dispose 清除 target、queue、listeners、sources，不留下永久 session leak。
 
-# 27. Future App Porting Checklist
+# 28. Future App Porting Checklist
 
 - [ ] capability-scoped ASR/TTS route
 - [ ] credential isolation
@@ -766,7 +886,7 @@ local playback state
 - [ ] real speaker validation
 - [ ] overlap validation
 
-# 28. Known Remaining Work
+# 29. Known Remaining Work
 
 以下未完成，不得写成已完成：
 
@@ -779,10 +899,14 @@ local playback state
 7. Multi-turn realtime stability。
 8. Android port。
 9. Token Plan full voice catalog / voice selection UX。
+10. Token Plan Personal 对 AIRI custom application API use 的 provider explicit confirmation；在确认前保持 `HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS`。
+11. Token Plan `qwen-audio-3.0-realtime-plus` 的 AIRI-specific runtime entitlement、credential 和 endpoint mapping。
+12. ARCH_C' transcript-first seam 的 AIRI adapter 设计验证；协议 seam 已获官方支持，但不代表 Token Plan entitlement 或 policy 已通过。
+13. 在不触发 vendor inference 的前提下，server endpointing 与 transcript-only 组合是否有官方配置；当前为 `NOT_YET_PROVEN`。
 
 当前 Token Plan real TTS 与 LLM→TTS overlap 已有独立短句/长文本 PASS；这不等于第 1 项完整 ASR→LLM→TTS 已 PASS。
 
-# 29. Chronological Incident / Commit Table
+# 30. Chronological Incident / Commit Table
 
 下表使用完整 SHA 和真实 commit message，便于后续定位相似事故。日期来自当前 branch 的 git history。
 
@@ -809,7 +933,7 @@ local playback state
 | 2026-09-01 | `def22aded10d6b7f8ae1c35c5ef13c4036590e4e` — `feat(stage-ui): bridge Token Plan TTS stage telemetry` | Token Plan telemetry | 需要 real overlap audit | provider-specific stage summary main sink | `SOURCE_PROVEN` + real overlap | PAYG/Token Plan telemetry identity 分离 |
 | 2026-09-01 | `dc76e677a6d7bfed3822f5b3493525e149bdf9ee` — `fix(stage-pages): load Token Plan speech model catalog` | Token Plan settings | model 当前值存在但列表显示 empty | 主 Speech page 未触发 Token Plan static catalog lifecycle | `SOURCE_PROVEN` + Owner UI | 加载 catalog，不隐藏 empty state |
 
-# 30. Baseline Status Summary
+# 31. Baseline Status Summary
 
 | Baseline / capability | Status | Notes |
 | --- | --- | --- |
@@ -819,6 +943,8 @@ local playback state
 | Token Plan native WS TTS | PASS | native WS full task/audio lifecycle proven |
 | Token Plan real audible runtime | PASS | Chinese clear、continuity、tail complete |
 | Token Plan real LLM→TTS overlap | PASS | signed scheduled overlap `-126.70` |
+| realtime-plus transcript-before-`response.create` seam | PROTOCOL SUPPORTED | push-to-talk/manual transcript-first seam；不代表 Token Plan entitlement |
+| Token Plan realtime-plus AIRI custom-app runtime | NOT YET PROVEN | policy/credential/endpoint confirmation pending |
 | Token Plan model catalog UI | PASS | persisted startup/provider switch repaired |
 | Full ASR→LLM→TTS voice E2E | PENDING | not run as one unified accepted baseline |
 | Barge-in | PENDING | not implemented/validated |
@@ -830,8 +956,13 @@ local playback state
 以下是本笔记核对过的 Alibaba 中国站 primary references。文档页面会变化；引用它们时应同时记录访问日期和具体 model/region/protocol 语义。
 
 - [Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)：Personal region、model catalog、工具/调用限制。
+- [更多工具](https://help.aliyun.com/zh/model-studio/more-tools)：第三方工具兼容范围与 custom application 限制。
+- [Token Plan Personal FAQ](https://help.aliyun.com/zh/model-studio/token-plan-personal-faq)：Key/Base URL/model entitlement 错误与使用规则。
 - [Token Plan Personal quick start](https://help.aliyun.com/zh/model-studio/token-plan-personal-quick-start)：Token Plan key 与 compatible API 使用说明。
 - [Realtime API overview](https://help.aliyun.com/zh/model-studio/realtime-api-overview)：realtime API capability matrix。
+- [Qwen-Audio Realtime WebSocket API](https://help.aliyun.com/zh/model-studio/fun-audiochat-realtime-websocket-api)：workspace endpoint、session、VAD 与 push-to-talk 流程。
+- [Qwen-Audio client events](https://help.aliyun.com/zh/model-studio/fun-audiochat-client-events)：`input_audio_buffer.commit` 与独立 `response.create`。
+- [Qwen-Audio server events](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-server-events)：transcription、conversation item 和 response events。
 - [Qwen Audio realtime user guides](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides)：`qwen-audio-3.0-realtime-plus` 的 realtime audio/VAD/session capability。
 - [ASR model](https://help.aliyun.com/zh/model-studio/asr-model)：`qwen-audio-3.0-asr-flash` 与 `qwen-audio-3.0-asr-flash-streaming` 的差异。
 - [TTS model](https://help.aliyun.com/zh/model-studio/tts-model)：Qwen3 realtime TTS model 与 WebSocket capability。
