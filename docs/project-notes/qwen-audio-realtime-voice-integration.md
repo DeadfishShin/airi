@@ -1204,3 +1204,144 @@ latency 口径。
 sentence final 不等于 VAD speech end；VAD speech end 也不等于 AEC。VAD/endpointing
 可以决定何时提交或停止一轮，barge-in 可以决定何时取消 TTS/LLM，但 AEC 仍负责回声
 路径与自声抑制，三者不能互相替代。
+
+## 34. Barge-in cancellation authority and duplex prerequisites
+
+本节是对当前 macOS-first 实现的只读审计，不表示自动 barge-in 已实现，也没有改变
+ASR、chat、TTS、PCM 或 endpointing 语义。当前结论为
+`CURRENT_BARGE_IN_POSSIBLE = NO`（`SOURCE_PROVEN`）。
+
+### 当前为什么不能自动 barge-in
+
+`apps/stage-tamagotchi/src/renderer/pages/index.vue` 以 canonical `nowSpeaking` 为
+assistant playback 状态。`watch(nowSpeaking)` 在进入 speaking 时调用
+`voiceInputInteractionLifecycle.stop({ flushTranscript: false })`；该 lifecycle 会停止
+streaming transcription、VAD/provider segment 和相关 recorder consumer。与此同时，
+`inspectVoiceInputStreamingRequestGate()` 及 provider-request gate 在
+`isVoiceInputSuppressed()` 为真时跳过新输入。播放结束后仍有
+`DEFAULT_ASSISTANT_SPEECH_INPUT_COOLDOWN_MS = 800` 的 suppression deadline。因此
+assistant 播放期间既没有持续的 local VAD 检测入口，也没有可授权新 ASR segment 的输入流，
+不能从源头检测可信的用户打断。这个 suppression 同时是当前 self-echo 保护措施，不能被
+错误描述成 barge-in detector。
+
+### 现有取消 authority
+
+| 范围 | 当前 authority | 已证明语义 |
+| --- | --- | --- |
+| Stage speech output | `Stage.vue:stopSpeechOutput()` | 取消 current `StageTtsSession`，停止 shared `speechPipeline` 与 `playbackManager`，重置 speaking surface。 |
+| PAYG Qwen3 TTS | `qwen-tts-stage-session` + `qwen-tts-pcm-playback` | local PCM sources 先停、terminal session 忽略晚到音频，再 best-effort 发 renderer→main remote cancel；正常 remote finish 仍等待 local drain。 |
+| Token Plan TTS | `qwen-audio-tts-token-plan-stage-session` + 同一 PCM bridge | 与 PAYG 同样 local-first cancel、远端 cancel、late-event guard 和 remote-finish/local-drain 分离；没有跨 billing route fallback。 |
+| Generic/segmenter TTS | `tts-session.ts` 的 `IntentHandle.cancel`，外加 Stage shared pipeline/playback stop | 上层接口一致，但具体 provider 的 remote cancel 属于其 `IntentHandle` contract，不能假设与 Qwen WebSocket 相同。 |
+| Voice input / ASR | Stage voice-input lifecycle、`stopStreamingTranscription(true)` 与 VAD session dispose | 停止输入和 provider session；`flushTranscript: false` 会清掉 pending streaming endpoint state。 |
+
+`streamingVoiceTurnEndpoint.cancel()` 会取消 generation-protected timer、清除 pending
+aggregated transcript、activity state 和 pending telemetry turn；`forceFlush()` 是在安全
+teardown 时释放已有文本的相反操作。未来 barge-in 应使用 `cancel()`，不得让旧 timer 在新
+的用户语音之后提交 stale chat。若 barge-in 发生在已有 assistant output 期间，已排队的
+assistant PCM 必须立即停止，不能等待 remote cancel。
+
+### TTS 取消不等于 LLM 取消
+
+当前 `speech-output-control.ts` 明确把 manual stop/mute 定义为“停止语音输出而不取消
+chat text generation”。`useChatStore`/`ChatOrchestratorRuntime` 暴露的是
+`cancelPendingSends()`（取消尚未开始的 queued send）；运行中的 stream 依赖 session
+generation 检查来丢弃 stale work，而当前公开 authority 没有一个由 speech-stop 直接调用的
+active generation abort。`chatSession.cleanup()` 会使 generation 失效并清理队列，但不能从
+源码证明它必然立即中断底层 provider 网络请求。
+
+所以 `BARGE_IN_CANCEL_TTS_ONLY_IS_SUFFICIENT = NO`（`SOURCE_PROVEN`）：只取消 TTS 时，
+旧 LLM token 可能继续产生；若当前 generation 未被失效，它仍可能进入 Stage 的
+`onTokenLiteral`/speech hooks。已有 generation guard 能抑制部分 stale work，但不是当前
+barge-in authority。未来实现必须把 active LLM generation invalidation/abort 与 TTS cancel
+作为两个明确的动作。
+
+### 麦克风、VAD 与语音前缀
+
+`packages/stage-ui/src/composables/audio/audio-device.ts` 的 `getUserMedia` constraints
+请求 `echoCancellation: true`、`noiseSuppression: true` 和 `autoGainControl: true`，但
+请求不是实际效果证明。当前 VAD 默认值为：`threshold = 0.52`、
+`minSilenceDurationMs = 1200`、`speechPadMs = 360`、`minSpeechDurationMs = 300`；本节不
+修改这些值。
+
+`hearing.ts` 在 `onSpeechStart` 创建 segment 的 `audioChunks`，在 provider controller
+准备好前继续缓存 PCM，并由 `createVadAudioStream()` 按序 flush 后清空。这对“已检测到的
+segment 在 provider 启动期间保留开头”是 `SOURCE_PROVEN` 的前缀保护；它不是 assistant
+说话期间仍在运行的 standby preroll ring buffer，因为当前 speaking watcher 会先停止 VAD。
+因此未来 Option B 若要在 speaker playback 中保留 microphone + local VAD，可能需要把此
+segment 机制接到新的 standby gate，或增加有界 preroll；不能把现有 `audioChunks` 直接描述
+成完整 barge-in 支持。
+
+### AEC 三个证据等级
+
+| 等级 | 能证明什么 | 当前状态 |
+| --- | --- | --- |
+| Level 1 | 浏览器收到 AEC constraint request | YES，源码请求了 `echoCancellation`；NS/AGC 也被请求。 |
+| Level 2 | `MediaStreamTrack.getSettings()` 报告当前 track 的有效设置 | `NOT_YET_PROVEN`；当前 production path 没有采集/输出这些 settings。 |
+| Level 3 | 真实 speaker→microphone leakage 足够低，自动触发不会把 assistant 误当用户 | `NOT_TESTED / NOT_PROVEN`；没有本地 duplex smoke 证据。 |
+
+未来可在不保存音频的前提下读取 `getConstraints()`（请求值）、
+`getCapabilities()`（设备支持范围）和 `getSettings()`（当前有效值），并记录
+sample rate/channel count（若浏览器暴露）。即使 Level 2 通过，也不自动达到 Level 3；AEC
+也不等于 VAD、noise suppression、AGC 或完整 AEC 质量保证。
+
+### 未来输入策略比较
+
+| 方案 | 延迟 | self-transcription risk | AEC 依赖 | cloud cost | speech-prefix | 复杂度 / Android |
+| --- | --- | --- | --- | --- | --- | --- |
+| A. speaking 时继续完整 ASR | 最低 | 最高，需强 AEC/过滤 | 高 | 持续消耗 | 最好 | 中 / 可移植性中 |
+| B. speaking 时仅保留 mic + local VAD；可信用户 speech 后再 cancel 并启动/继续 ASR | 低到中，取决于本地 VAD gate | 低于 A，仍需验证 AEC | 中到高 | 只在 credible speech 后付费 | 需 standby preroll 或 segment prefix | 中 / 中高 |
+| C. explicit push-to-interrupt / PTT | 用户动作决定 | 最低 | 低 | 可控 | 由按键/动作边界决定 | 最低 / 高 |
+
+推荐下一实现 slice 采用 **Option B** 作为自动 barge-in 的最小架构：assistant playback
+期间 microphone 与 local VAD 存活，但不把音频送远端 ASR；只有可信 speech activity 通过
+短 debounce/gate 后，按“取消 pending endpoint → 失效/abort 当前 LLM generation →
+local-first 取消 TTS/停止 PCM → 清理 speaking → 授权新的 ASR segment”的顺序进入
+`USER_SPEAKING`。Option C 可以作为安全手动 fallback，但不是本次推荐的自动架构。Option B
+必须先通过 Level 2/3 证据；本节不实现它，也不把 browser AEC request 当成安全许可。
+
+### 最小未来 duplex state machine
+
+```text
+LISTENING
+  → ASSISTANT_GENERATING
+  → ASSISTANT_SPEAKING
+  → BARGE_IN_CANDIDATE
+  → INTERRUPTING
+  → USER_SPEAKING
+```
+
+`nowSpeaking` 仍是 assistant output 的 canonical speaking surface；它不能单独充当
+barge-in state。未来 controller 应拥有 candidate/interrupt generation token，避免 late
+LLM token、late TTS audio、remote `task-finished`、stale `onDone` 或旧 source `onended`
+在 interruption 后重新激活 speaking/chat。现有 Qwen adapters 已有 terminal state、session
+identity、renderer-scoped Eventa、PCM cancel 和 late-audio guards；缺口是统一的 LLM abort/
+generation invalidation，以及 speaking 期间存活的 local VAD gate。
+
+### 本地-only duplex / AEC smoke 计划
+
+后续可用 fake/local audio 做一次不调用云端的 bounded smoke：
+
+1. 请求真实 microphone，但只读取 track 的 `getConstraints()`、`getCapabilities()`、
+   `getSettings()`，记录布尔 capability 与 sample rate/channel count，不保存原始音频。
+2. 通过本地生成的 assistant-like test signal 播放到测试输出，同时运行 local VAD，记录
+   content-free activity count/timing，确认 playback 是否单独触发 speech activity。
+3. 在 playback 中加入本地测试语音/受控输入，比较 activity 事件的可分离性；只记录事件、
+   时间和计数，不记录 transcript、PCM 或用户语音文件。
+4. 以 `speechActivityStart/End/Cancel`、assistant playback active/drained、track settings
+   作为输出，明确该 smoke 最多证明本机行为，不替代不同设备、音量和房间条件下的 Level 3
+   validation。
+
+### 当前裁决
+
+```text
+CURRENT_BARGE_IN_POSSIBLE = NO
+BARGE_IN_CANCEL_TTS_ONLY_IS_SUFFICIENT = NO
+AEC_LEVEL_1 = SOURCE_PROVEN
+AEC_LEVEL_2 = NOT_YET_PROVEN
+AEC_LEVEL_3 = NOT_TESTED / NOT_PROVEN
+RECOMMENDED_FUTURE_BARGE_IN_ARCH = OPTION_B
+```
+
+这些结论是 characterization / `SOURCE_PROVEN` 或明确的 `OPEN / NOT_YET_PROVEN`，不是
+real runtime PASS。当前没有执行云端 voice session，也没有改变现有 suppression、VAD、
+LLM cancellation、TTS cancellation、playback 或 endpointing 行为。

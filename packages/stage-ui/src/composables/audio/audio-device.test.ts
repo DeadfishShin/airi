@@ -6,6 +6,7 @@ const audioDeviceMock = vi.hoisted(() => ({
   startStream: vi.fn(),
   stopStream: vi.fn(),
   trackMicrophonePermissionDenied: vi.fn(),
+  userMediaOptions: undefined as unknown as { constraints: unknown, enabled: boolean, autoSwitch: boolean },
 }))
 
 vi.mock('@vueuse/core', async () => {
@@ -19,11 +20,14 @@ vi.mock('@vueuse/core', async () => {
       permissionGranted: ref(false),
       ensurePermissions: audioDeviceMock.ensurePermissions,
     }),
-    useUserMedia: () => ({
-      stream: ref(undefined),
-      stop: audioDeviceMock.stopStream,
-      start: audioDeviceMock.startStream,
-    }),
+    useUserMedia: (options: typeof audioDeviceMock.userMediaOptions) => {
+      audioDeviceMock.userMediaOptions = options
+      return ({
+        stream: ref(undefined),
+        stop: audioDeviceMock.stopStream,
+        start: audioDeviceMock.startStream,
+      })
+    },
   }
 })
 
@@ -39,6 +43,7 @@ describe('useAudioDevice analytics lifecycle', () => {
       audioDeviceMock.audioInputsRef.value = []
     audioDeviceMock.ensurePermissions.mockReset()
     audioDeviceMock.trackMicrophonePermissionDenied.mockReset()
+    audioDeviceMock.userMediaOptions = undefined as unknown as typeof audioDeviceMock.userMediaOptions
     vi.spyOn(console, 'error').mockImplementation(() => {})
   })
 
@@ -74,5 +79,21 @@ describe('useAudioDevice analytics lifecycle', () => {
     await askPermission()
 
     expect(audioDeviceMock.trackMicrophonePermissionDenied).not.toHaveBeenCalled()
+  })
+
+  it('requests browser AEC, noise suppression, and AGC for the microphone stream', async () => {
+    const { useAudioDevice } = await import('./audio-device')
+    const audioDevice = useAudioDevice()
+    const audioConstraints = audioDevice.deviceConstraints.value.audio
+
+    expect(audioDeviceMock.userMediaOptions).toMatchObject({
+      enabled: false,
+      autoSwitch: true,
+    })
+    expect(audioConstraints).toMatchObject({
+      autoGainControl: true,
+      echoCancellation: true,
+      noiseSuppression: true,
+    })
   })
 })
