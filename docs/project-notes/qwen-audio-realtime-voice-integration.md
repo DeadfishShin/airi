@@ -1345,3 +1345,30 @@ RECOMMENDED_FUTURE_BARGE_IN_ARCH = OPTION_B
 这些结论是 characterization / `SOURCE_PROVEN` 或明确的 `OPEN / NOT_YET_PROVEN`，不是
 real runtime PASS。当前没有执行云端 voice session，也没有改变现有 suppression、VAD、
 LLM cancellation、TTS cancellation、playback 或 endpointing 行为。
+
+## 35. Local-only duplex / AEC / VAD smoke harness
+
+仓库提供一个独立的 diagnostics-only Electron 入口：
+
+```text
+pnpm --filter @proj-airi/stage-tamagotchi smoke:realtime-voice-local-duplex
+```
+
+它不启动正常 AIRI、不会 import 或初始化 Qwen provider service、不会进入 ASR/TTS/LLM/chat，也不需要任何 Alibaba credential。启动时会从本进程环境移除
+`TOKEN_PLAN_API_KEY`、`DASHSCOPE_API_KEY`、`DASHSCOPE_WORKSPACE_ID`、`DASHSCOPE_REGION`；渲染页只通过 loopback 提供本地 VAD 资源，外部网络请求会被独立的 Electron session 拒绝并计数。`SOURCE_PROVEN` + `CURRENT_DESIGN_DECISION`。
+
+诊断按固定阶段运行：
+
+```text
+PHASE_0  track constraints/capabilities/settings + local VAD initialization
+PHASE_1  quiet baseline
+PHASE_2  deterministic local playback only
+PHASE_3  user speech without playback
+PHASE_4  user speech during deterministic local playback
+```
+
+麦克风请求与 production path 等价：`echoCancellation=true`、`noiseSuppression=true`、`autoGainControl=true`。报告只保留这些约束的安全布尔结果、`sampleRate`/`channelCount`（若浏览器暴露）、VAD event counts 和 monotonic latency；不保存、转写、打印或上传麦克风 PCM。播放信号在内存中生成，使用上限为 `0.25` 的本地 `GainNode`，不改变系统音量，也不把音频写入仓库。`SOURCE_PROVEN`。
+
+当前 VAD 诊断沿用生产配置值：threshold `0.52`、`minSilenceDurationMs=1200`、`speechPadMs=360`、`minSpeechDurationMs=300`。运行时使用已安装的本地 `@ricky0123/vad-web` Silero v5 compatibility runner 和本地模型资源，不使用生产应用的远端 Transformers model-loading 路径；因此它复用了模型族/参数的诊断边界，但不是完整 AIRI worker 集成测试。浏览器的 `getUserMedia` constraint 是 Level 1 证据；只有 `MediaStreamTrack.getSettings().echoCancellation === true` 才是本次本机 Level 2 PASS。Level 3 local-device candidate 还必须同时满足：playback-only 没有 credible speech-start、静音播放外用户讲话可检测、播放期间用户讲话仍可检测。即使 Level 3 candidate PASS，也不构成跨设备、跨系统或 Android 的 AEC 认证，更不等于已实现自动 barge-in。`SOURCE_PROVEN` + `OPEN`。
+
+Owner 未运行该命令前，`HARNESS_READY` 不得写成 `AEC_LEVEL_2_PASS` 或 `AEC_LEVEL_3_LOCAL_DEVICE_CANDIDATE` 的 runtime PASS。完成或取消都会停止 tracks、销毁 VAD、停止 playback、关闭 `AudioContext`、移除 timers/listeners，并输出一个 bounded 的 `LOCAL_DUPLEX_AEC_VAD_REPORT`；Esc 或 Cancel 按钮是本地立即取消入口。该 harness 只测量 barge-in 的本机前置条件，不改变 `nowSpeaking` suppression、LLM/TTS cancellation、endpointing 或任何生产语义。`CURRENT_DESIGN_DECISION`。

@@ -20,6 +20,7 @@
     "start:xwayland": "install-electron && electron-vite preview -- --ozone-platform=x11",
     "dev": "install-electron && electron-vite dev",
     "dev:xwayland": "install-electron && electron-vite dev -- --ozone-platform=x11",
+    "smoke:realtime-voice-local-duplex": "electron scripts/local-duplex-aec-vad-smoke.mjs",
     "build": "electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "pnpm run build && electron-builder --dir",
