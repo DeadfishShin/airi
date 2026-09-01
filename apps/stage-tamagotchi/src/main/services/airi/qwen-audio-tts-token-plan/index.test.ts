@@ -89,9 +89,13 @@ class FakeSocket implements QwenAudioTtsTokenPlanSocket {
   readyState = 0
   closed = false
   terminated = false
-  private readonly listeners = new Map<string, Array<(message?: unknown, detail?: unknown) => void>>()
+  private readonly listeners = new Map<string, Array<(...args: never[]) => void>>()
 
-  on(event: 'open' | 'message' | 'error' | 'close', listener: (message?: unknown, detail?: unknown) => void) {
+  on(event: 'open', listener: () => void): void
+  on(event: 'message', listener: (message: unknown, isBinary?: boolean) => void): void
+  on(event: 'error', listener: (error: unknown, detail?: unknown) => void): void
+  on(event: 'close', listener: (code?: number, reason?: string | Uint8Array) => void): void
+  on(event: 'open' | 'message' | 'error' | 'close', listener: (...args: never[]) => void) {
     const callbacks = this.listeners.get(event) ?? []
     callbacks.push(listener)
     this.listeners.set(event, callbacks)
@@ -115,7 +119,7 @@ class FakeSocket implements QwenAudioTtsTokenPlanSocket {
     if (event === 'open')
       this.readyState = 1
     for (const callback of this.listeners.get(event) ?? [])
-      callback(message, detail)
+      (callback as (message?: unknown, detail?: unknown) => void)(message, detail)
   }
 }
 

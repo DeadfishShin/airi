@@ -50,12 +50,19 @@ export function buildQwenAudioTtsTokenPlanHeaders(config: QwenAudioTtsTokenPlanR
   return { Authorization: `Bearer ${config.apiKey}` }
 }
 
+export interface QwenAudioTtsTokenPlanSocketOn {
+  (event: 'open', listener: () => void): void
+  (event: 'message', listener: (message: unknown, isBinary?: boolean) => void): void
+  (event: 'error', listener: (error: unknown, detail?: unknown) => void): void
+  (event: 'close', listener: (code?: number, reason?: string | Uint8Array) => void): void
+}
+
 export interface QwenAudioTtsTokenPlanSocket {
   readyState: number
   send: (data: string) => void
   close: (code?: number, reason?: string) => void
   terminate?: () => void
-  on: (event: 'open' | 'message' | 'error' | 'close', listener: (message?: unknown, detail?: unknown) => void) => void
+  on: QwenAudioTtsTokenPlanSocketOn
 }
 
 export type QwenAudioTtsTokenPlanSocketFactory = (
@@ -400,9 +407,9 @@ export class QwenAudioTtsTokenPlanSession {
       this.socket = this.socketFactory(buildQwenAudioTtsTokenPlanEndpoint(), buildQwenAudioTtsTokenPlanHeaders(this.config))
       this.emitDiagnostic('SOCKET_CREATED')
       this.socket.on('open', () => this.handleOpen())
-      this.socket.on('message', (message) => {
+      this.socket.on('message', (message, isBinary) => {
         this.messageChain = this.messageChain
-          .then(() => this.handleMessage(message))
+          .then(() => this.handleMessage(message, isBinary))
           .catch(error => this.fail('protocol_error', errorMessageFrom(error) ?? 'Qwen Audio Token Plan TTS message handling failed.'))
       })
       this.socket.on('error', (error, detail) => {
@@ -485,12 +492,16 @@ export class QwenAudioTtsTokenPlanSession {
       this.emitDiagnostic('RUN_TASK_SENT')
   }
 
-  private async handleMessage(message: unknown): Promise<void> {
+  private async handleMessage(message: unknown, isBinary?: boolean): Promise<void> {
     if (this.state === 'finished' || this.state === 'cancelled' || this.state === 'failed')
       return
 
-    const isBinary = typeof message !== 'string' && (message instanceof ArrayBuffer || ArrayBuffer.isView(message))
-    if (isBinary) {
+    // crossws' Node adapter uses ws' `(data, isBinary)` EventEmitter contract:
+    // text data may be a Buffer, so explicit frame metadata must win over shape.
+    // Test/fake sockets from older callers may omit the flag; retain the bounded
+    // legacy inference only for that compatibility seam.
+    const frameIsBinary = isBinary ?? (typeof message !== 'string' && (message instanceof ArrayBuffer || ArrayBuffer.isView(message)))
+    if (frameIsBinary) {
       let audio: ArrayBuffer
       try {
         audio = decodeQwenAudioTtsTokenPlanBinaryAudio(message)

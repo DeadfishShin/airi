@@ -1,5 +1,7 @@
 import type { QwenAudioTtsTokenPlanSocket } from './protocol'
 
+import { Buffer } from 'node:buffer'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -24,9 +26,13 @@ class FakeSocket implements QwenAudioTtsTokenPlanSocket {
   readyState = 0
   closed = false
   terminated = false
-  private readonly listeners = new Map<string, Array<(message?: unknown, detail?: unknown) => void>>()
+  private readonly listeners = new Map<string, Array<(...args: never[]) => void>>()
 
-  on(event: 'open' | 'message' | 'error' | 'close', listener: (message?: unknown, detail?: unknown) => void) {
+  on(event: 'open', listener: () => void): void
+  on(event: 'message', listener: (message: unknown, isBinary?: boolean) => void): void
+  on(event: 'error', listener: (error: unknown, detail?: unknown) => void): void
+  on(event: 'close', listener: (code?: number, reason?: string | Uint8Array) => void): void
+  on(event: 'open' | 'message' | 'error' | 'close', listener: (...args: never[]) => void) {
     const callbacks = this.listeners.get(event) ?? []
     callbacks.push(listener)
     this.listeners.set(event, callbacks)
@@ -50,7 +56,7 @@ class FakeSocket implements QwenAudioTtsTokenPlanSocket {
     if (event === 'open')
       this.readyState = 1
     for (const callback of this.listeners.get(event) ?? [])
-      callback(message, detail)
+      (callback as (message?: unknown, detail?: unknown) => void)(message, detail)
   }
 }
 
@@ -140,24 +146,89 @@ describe('token Plan Qwen Audio TTS protocol', () => {
     const completion = session.finish()
     expect(socket.sent).toHaveLength(1)
 
-    socket.emit('message', event('task-started'))
+    socket.emit('message', Buffer.from(event('task-started')), false)
     await settle()
     expect(events).toEqual(['ready'])
     expect(socket.sent.slice(1).map(frame => JSON.parse(frame).header.action)).toEqual(['continue-task', 'continue-task', 'finish-task'])
     expect(socket.sent.slice(1, 3).map(frame => JSON.parse(frame).payload.input.text)).toEqual(['你', '好'])
     expect(socket.sent.map(frame => (JSON.parse(frame) as { header: { task_id: string } }).header.task_id)).toEqual([taskId, taskId, taskId, taskId])
 
-    socket.emit('message', new Uint8Array([0, 1, 2, 3]))
-    socket.emit('message', JSON.stringify({
+    socket.emit('message', Buffer.from([0, 1, 2, 3]), true)
+    socket.emit('message', Buffer.from(JSON.stringify({
       header: { event: 'result-generated' },
       payload: { output: { type: 'sentence-synthesis' } },
-    }))
+    })), false)
     await settle()
     expect(audio).toEqual([{ sequence: 0, bytes: 4 }])
-    socket.emit('message', event('task-finished'))
+    socket.emit('message', Buffer.from(event('task-finished')), false)
     await completion
     expect(events.at(-1)).toBe('finished')
     expect(session.stateValue).toBe('finished')
+  })
+
+  it('uses explicit text frame metadata for Buffer task-started events', async () => {
+    const socket = new FakeSocket()
+    const audio: number[] = []
+    const errors: string[] = []
+    const session = new QwenAudioTtsTokenPlanSession(
+      'buffer-text-task-started',
+      { apiKey: 'unit-test-token-plan-key' },
+      'longanlingxin',
+      {
+        onReady: () => {},
+        onAudioDelta: (_chunk, sequence) => { audio.push(sequence) },
+        onResponseDone: () => {},
+        onFinished: () => {},
+        onError: (error) => { errors.push(error.message) },
+      },
+      () => socket,
+    )
+
+    session.start()
+    socket.emit('open')
+    socket.emit('message', Buffer.from(event('task-started')), false)
+    await settle()
+
+    expect(session.stateValue).toBe('ready')
+    expect(audio).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('parses task-failed and result-generated Buffer text frames instead of treating them as audio', async () => {
+    const socket = new FakeSocket()
+    const errors: string[] = []
+    const responses: number[] = []
+    const session = new QwenAudioTtsTokenPlanSession(
+      'buffer-text-events',
+      { apiKey: 'unit-test-token-plan-key' },
+      'longanlingxin',
+      {
+        onReady: () => {},
+        onAudioDelta: () => {},
+        onResponseDone: () => { responses.push(1) },
+        onFinished: () => {},
+        onError: (error) => { errors.push(error.message) },
+      },
+      () => socket,
+    )
+
+    session.start()
+    socket.emit('open')
+    socket.emit('message', Buffer.from(event('task-started')), false)
+    await settle()
+    socket.emit('message', Buffer.from(JSON.stringify({
+      header: { event: 'result-generated' },
+      payload: { output: { type: 'sentence-end' } },
+    })), false)
+    socket.emit('message', Buffer.from(event('task-failed', {
+      error_code: 'server_error',
+      error_message: 'bounded provider diagnostic',
+    })), false)
+    await settle()
+
+    expect(responses).toEqual([])
+    expect(errors).toEqual(['server_error: Qwen Audio Token Plan TTS task failed (error_code=server_error; error_message=bounded provider diagnostic).'])
+    expect(session.stateValue).toBe('failed')
   })
 
   it('rejects malformed/odd/empty audio and preserves task-failed details', () => {
