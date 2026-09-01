@@ -104,6 +104,7 @@ function createSessionHarness() {
   const calls: { start: number, text: string[], finish: number, cancel: number } = { start: 0, text: [], finish: 0, cancel: 0 }
   const onDone = vi.fn()
   const onError = vi.fn()
+  const onSpeakingChange = vi.fn()
 
   defineInvokeHandler(context, qwenAudioTtsTokenPlanSessionStart, () => {
     calls.start++
@@ -128,10 +129,10 @@ function createSessionHarness() {
     openIntent: () => { throw new Error('Token Plan must not use the segmenter.') },
     intentOptions: () => ({}) as never,
     hooks: { onDone, onError },
-    qwenTokenPlan: { eventContext: context as unknown as EventContext<any, any> },
+    qwenTokenPlan: { eventContext: context as unknown as EventContext<any, any>, onSpeakingChange },
   })
 
-  return { context, audioContext, calls, onDone, onError, session }
+  return { context, audioContext, calls, onDone, onError, onSpeakingChange, session }
 }
 
 describe('token Plan Qwen Audio TTS Stage adapter', () => {
@@ -167,6 +168,25 @@ describe('token Plan Qwen Audio TTS Stage adapter', () => {
     await settle()
     expect(harness.onDone).toHaveBeenCalledTimes(1)
     expect(harness.onError).not.toHaveBeenCalled()
+  })
+
+  it('keeps the shared speaking state active until the local Token Plan tail drains', async () => {
+    const harness = createSessionHarness()
+    await settle()
+    await harness.context.emit(qwenAudioTtsTokenPlanAudioDelta, {
+      sessionId: harness.session.intentId,
+      sequence: 0,
+      audio: pcm16(),
+    })
+    expect(harness.onSpeakingChange).toHaveBeenLastCalledWith(true)
+
+    await harness.context.emit(qwenAudioTtsTokenPlanSessionFinished, { sessionId: harness.session.intentId })
+    await settle()
+    expect(harness.onSpeakingChange).not.toHaveBeenLastCalledWith(false)
+
+    harness.audioContext.sources[0]?.end()
+    await settle()
+    expect(harness.onSpeakingChange).toHaveBeenLastCalledWith(false)
   })
 
   it('cancels local playback immediately and ignores later Token Plan audio', async () => {
