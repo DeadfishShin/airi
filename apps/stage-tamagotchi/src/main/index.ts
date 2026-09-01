@@ -36,6 +36,7 @@ import { setupBuiltInServer } from './services/airi/http-server'
 import { setupMcpStdioManager } from './services/airi/mcp-servers'
 import { setupExtensionHost } from './services/airi/plugins'
 import { setupQwenAudioRealtimeAsr } from './services/airi/qwen-audio-realtime'
+import { setupQwenAudioTtsTokenPlan } from './services/airi/qwen-audio-tts-token-plan'
 import { setupQwen3TtsRealtime } from './services/airi/qwen-tts-realtime'
 import { setupArtistryBridge } from './services/airi/widgets/artistry-bridge'
 import { setupAutoUpdater } from './services/electron/auto-updater'
@@ -211,6 +212,11 @@ app.whenReady().then(async () => {
     build: ({ dependsOn }) => setupQwenAudioRealtimeAsr(dependsOn),
   })
 
+  const qwenAudioTtsTokenPlan = injeca.provide('modules:qwen-audio-tts-token-plan', {
+    dependsOn: { lifecycle },
+    build: ({ dependsOn }) => setupQwenAudioTtsTokenPlan(dependsOn),
+  })
+
   const qwen3TtsRealtime = injeca.provide('modules:qwen3-tts-realtime', {
     dependsOn: { lifecycle },
     build: ({ dependsOn }) => setupQwen3TtsRealtime(dependsOn),
@@ -313,7 +319,7 @@ app.whenReady().then(async () => {
   }
 
   injeca.invoke({
-    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwen3TtsRealtime },
+    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioTtsTokenPlan, qwen3TtsRealtime },
     callback: async (deps) => {
       const { context } = createContext(ipcMain)
       await setupArtistryBridge({

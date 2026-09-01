@@ -1,9 +1,12 @@
 import type { IntentHandle, IntentOptions, PlaybackItem } from '@proj-airi/pipelines-audio'
 
+import type { QwenAudioTtsTokenPlanStageSessionOptions } from './qwen-audio-tts-token-plan-stage-session'
 import type { Qwen3TtsStageSessionOptions } from './qwen-tts-stage-session'
 import type { StreamingTtsPipelineOptions } from './streaming-pipeline'
 
+import { QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID } from '../providers/qwen-audio-tts-token-plan-ipc'
 import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '../providers/qwen-tts-realtime-ipc'
+import { createQwenAudioTtsTokenPlanStageSession } from './qwen-audio-tts-token-plan-stage-session'
 import { createQwen3TtsStageSession } from './qwen-tts-stage-session'
 import { createStreamingTtsPipeline } from './streaming-pipeline'
 
@@ -273,6 +276,8 @@ export interface StageTtsSessionContext<TAudio = AudioBuffer> {
   streamingPipelineFactory?: CreateStreamingSessionOptions<TAudio>['pipelineFactory']
   /** Provider-specific runtime seams; credentials never belong here. */
   qwenRealtime?: Pick<Qwen3TtsStageSessionOptions, 'eventContext' | 'destination' | 'onSourceCreated' | 'onSpeakingChange' | 'onTelemetry' | 'now'>
+  /** Token Plan Qwen adapter seam; credentials remain main-process-only. */
+  qwenTokenPlan?: Pick<QwenAudioTtsTokenPlanStageSessionOptions, 'eventContext' | 'destination' | 'onSourceCreated' | 'onSpeakingChange' | 'onTelemetry' | 'now'>
 }
 
 function createProviderAwareStreamingSession<TAudio>(
@@ -287,6 +292,16 @@ function createProviderAwareStreamingSession<TAudio>(
       audioContext: ctx.audioContext as unknown as Qwen3TtsStageSessionOptions['audioContext'],
       hooks: ctx.hooks,
       ...ctx.qwenRealtime,
+    })
+  }
+
+  if (ctx.providerId === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID) {
+    return createQwenAudioTtsTokenPlanStageSession({
+      intentId,
+      snapshot,
+      audioContext: ctx.audioContext as unknown as QwenAudioTtsTokenPlanStageSessionOptions['audioContext'],
+      hooks: ctx.hooks,
+      ...ctx.qwenTokenPlan,
     })
   }
 
@@ -325,8 +340,8 @@ export function createStageTtsSession<TAudio = AudioBuffer>(
   ctx: StageTtsSessionContext<TAudio>,
 ): StageTtsSession {
   const wantsStreaming = ctx.transport === 'bidirectional-ws'
-  if (ctx.providerId === QWEN3_TTS_REALTIME_PROVIDER_ID && !wantsStreaming)
-    throw new Error('Qwen3 realtime TTS requires the bidirectional WebSocket transport.')
+  if ((ctx.providerId === QWEN3_TTS_REALTIME_PROVIDER_ID || ctx.providerId === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID) && !wantsStreaming)
+    throw new Error(`${ctx.providerId === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID ? 'Qwen Audio Token Plan TTS' : 'Qwen3 realtime TTS'} requires the bidirectional WebSocket transport.`)
   const snapshot = wantsStreaming ? ctx.streaming?.() ?? null : null
   const canStream = wantsStreaming
     && snapshot != null
@@ -336,6 +351,8 @@ export function createStageTtsSession<TAudio = AudioBuffer>(
   if (!canStream) {
     if (ctx.providerId === QWEN3_TTS_REALTIME_PROVIDER_ID && wantsStreaming)
       throw new Error('Qwen3 realtime TTS requires an Electron audio context and selected voice.')
+    if (ctx.providerId === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID && wantsStreaming)
+      throw new Error('Qwen Audio Token Plan TTS requires an Electron audio context and selected voice.')
     // Segmenter path: open the existing IntentHandle and adapt 1:1.
     return fromIntent(ctx.openIntent(ctx.intentOptions()))
   }

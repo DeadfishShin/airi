@@ -58,6 +58,8 @@ export interface Qwen3TtsPcmPlaybackTelemetry {
 export interface Qwen3TtsPcmPlaybackBridgeOptions {
   audioContext: Qwen3TtsPcmAudioContext
   eventContext: Qwen3TtsRealtimeRendererEventContext
+  /** Provider-specific Eventa names. PAYG Qwen3 events remain the default. */
+  events?: Qwen3TtsPcmPlaybackEvents
   /** Existing AIRI output/gain destination. Defaults to audioContext.destination. */
   destination?: AudioNode
   now?: () => number
@@ -67,6 +69,13 @@ export interface Qwen3TtsPcmPlaybackBridgeOptions {
   onPlaybackDrained?: () => void
   /** Attach the source to existing AIRI analyser/lip-sync nodes as needed. */
   onSourceCreated?: (source: Qwen3TtsPcmAudioSource) => void
+}
+
+export interface Qwen3TtsPcmPlaybackEvents {
+  audioDelta: Eventa<{ sessionId: string, sequence: number, audio: ArrayBuffer }>
+  responseDone: Eventa<{ sessionId: string }>
+  sessionFinished: Eventa<{ sessionId: string }>
+  sessionError: Eventa<{ sessionId: string, code: string, message: string }>
 }
 
 export interface Qwen3TtsPcmPlaybackBridge {
@@ -147,6 +156,12 @@ export function createQwen3TtsPcmPlaybackBridge(
   const listeners: Array<() => void> = []
   let drainPromise: Promise<void> | undefined
   let resolveDrain: (() => void) | undefined
+  const events: Qwen3TtsPcmPlaybackEvents = options.events ?? {
+    audioDelta: qwen3TtsRealtimeAudioDelta,
+    responseDone: qwen3TtsRealtimeResponseDone,
+    sessionFinished: qwen3TtsRealtimeSessionFinished,
+    sessionError: qwen3TtsRealtimeSessionError,
+  }
 
   function telemetrySnapshot(): Qwen3TtsPcmPlaybackTelemetry {
     return { ...telemetryState }
@@ -268,10 +283,10 @@ export function createQwen3TtsPcmPlaybackBridge(
     boundSessionId = sessionId
     currentState = 'active'
     listeners.push(
-      options.eventContext.on(qwen3TtsRealtimeAudioDelta, handleAudioDelta),
-      options.eventContext.on(qwen3TtsRealtimeResponseDone, handleResponseDone),
-      options.eventContext.on(qwen3TtsRealtimeSessionFinished, handleSessionFinished),
-      options.eventContext.on(qwen3TtsRealtimeSessionError, handleSessionError),
+      options.eventContext.on(events.audioDelta, handleAudioDelta),
+      options.eventContext.on(events.responseDone, handleResponseDone),
+      options.eventContext.on(events.sessionFinished, handleSessionFinished),
+      options.eventContext.on(events.sessionError, handleSessionError),
     )
   }
 

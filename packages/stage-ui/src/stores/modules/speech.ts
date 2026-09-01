@@ -15,6 +15,7 @@ import { toXml } from 'xast-util-to-xml'
 import { x } from 'xastscript'
 
 import { getDefaultSpeechModel, getDefaultStreamingModel, OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, setupOfficialSpeechAutoPick } from '../../libs/providers/providers/official'
+import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID } from '../../libs/providers/qwen-audio-tts-token-plan-ipc'
 import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
@@ -134,7 +135,7 @@ export const useSpeechStore = defineStore('speech', () => {
         ...availableVoices.value,
         [provider]: voices,
       }
-      ensureQwenRealtimeSelection(provider)
+      ensureQwenCanarySelection(provider)
       return voices
     }
     catch (error) {
@@ -178,6 +179,31 @@ export const useSpeechStore = defineStore('speech', () => {
       activeSpeechVoiceId.value = QWEN3_TTS_REALTIME_VOICE_ID
     if (!isEqual(activeSpeechVoice.value, voice))
       activeSpeechVoice.value = voice
+  }
+
+  /** Applies the fixed, renderer-visible Token Plan canary selection. */
+  function ensureQwenTokenPlanSelection(provider = activeSpeechProvider.value) {
+    if (provider !== QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID || activeSpeechProvider.value !== provider)
+      return
+
+    if (activeSpeechModel.value !== QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
+      activeSpeechModel.value = QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL
+
+    const voice = availableVoices.value[provider]?.find(candidate => candidate.id === QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID)
+    if (!voice)
+      return
+
+    if (activeSpeechVoiceId.value !== QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID)
+      activeSpeechVoiceId.value = QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID
+    if (!isEqual(activeSpeechVoice.value, voice))
+      activeSpeechVoice.value = voice
+  }
+
+  function ensureQwenCanarySelection(provider = activeSpeechProvider.value) {
+    if (provider === QWEN3_TTS_REALTIME_PROVIDER_ID)
+      ensureQwenRealtimeSelection(provider)
+    else if (provider === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)
+      ensureQwenTokenPlanSelection(provider)
   }
 
   // Streaming TTS voices are model-scoped: the server only returns recommended
@@ -228,8 +254,8 @@ export const useSpeechStore = defineStore('speech', () => {
   }
 
   function ensureActiveSpeechModel() {
-    if (activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID) {
-      ensureQwenRealtimeSelection()
+    if (activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID || activeSpeechProvider.value === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID) {
+      ensureQwenCanarySelection()
       return
     }
 
@@ -482,6 +508,7 @@ export const useSpeechStore = defineStore('speech', () => {
     ensureStreamingDefaultModel,
     ensureActiveSpeechModel,
     ensureQwenRealtimeSelection,
+    ensureQwenTokenPlanSelection,
     generateSSML,
     resolveSpeechInput,
     resetState,

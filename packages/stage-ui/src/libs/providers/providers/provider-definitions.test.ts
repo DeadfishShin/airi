@@ -46,6 +46,7 @@ describe('migrated provider definitions', () => {
       'comet-api-transcription',
       'mimo-audio-transcription',
       'qwen-audio-realtime-transcription',
+      'qwen-audio-tts-token-plan',
       'player2-speech',
       'kokoro-local',
       'google-gemini-audio-speech',

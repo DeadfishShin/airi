@@ -36,6 +36,7 @@
     "./libs/pinia": "./src/libs/pinia/index.ts",
     "./libs/providers/stream-transcription": "./src/libs/providers/stream-transcription/index.ts",
     "./libs/providers/qwen-audio-realtime-ipc": "./src/libs/providers/qwen-audio-realtime-ipc.ts",
+    "./libs/providers/qwen-audio-tts-token-plan-ipc": "./src/libs/providers/qwen-audio-tts-token-plan-ipc.ts",
     "./libs/providers/qwen-tts-realtime-ipc": "./src/libs/providers/qwen-tts-realtime-ipc.ts",
     "./libs/speech/qwen-tts-pcm-playback": "./src/libs/speech/qwen-tts-pcm-playback.ts",
     "./libs/providers/providers/aliyun-nls": "./src/libs/providers/providers/aliyun-nls/index.ts",

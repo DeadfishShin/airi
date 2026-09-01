@@ -1579,6 +1579,18 @@ pages:
         preview:
           title: Realtime preview unavailable here
           description: Qwen3 realtime TTS is streaming-only in the Electron canary and is not available from this REST preview.
+      qwen-audio-tts-token-plan:
+        title: Qwen Audio TTS Token Plan
+        description: Alibaba Cloud Token Plan native WebSocket text-to-speech canary.
+        environment: >-
+          This canary reads TOKEN_PLAN_API_KEY from the Electron main process
+          environment and does not store credentials in AIRI settings.
+        catalogUnavailable: The static canary catalog could not be refreshed; the supported defaults remain available.
+        fields:
+          model:
+            label: Model
+          voice:
+            label: Voice
       browser-web-speech-api:
         description: Browser-native STT (requires Chrome/Edge/Safari)
         title: Web Speech API

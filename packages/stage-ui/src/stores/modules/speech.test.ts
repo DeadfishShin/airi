@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, providerOfficialSpeech } from '../../libs/providers/providers/official'
+import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID } from '../../libs/providers/qwen-audio-tts-token-plan-ipc'
 import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
@@ -564,6 +565,60 @@ describe('qwen realtime speech selection', () => {
 
     expect(speechStore.activeSpeechModel).toBe('default')
     expect(speechStore.activeSpeechVoiceId).toBe('3')
+    expect(speechStore.activeSpeechVoice).toBeUndefined()
+  })
+})
+
+describe('qwen Audio Token Plan speech selection', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  async function prepareTokenPlanCatalog() {
+    const providersStore = useProviderStore()
+    const speechStore = useSpeechStore()
+    await providersStore.initializeProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)
+    await providersStore.fetchModelsForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)
+    speechStore.activeSpeechProvider = QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID
+    await speechStore.loadVoicesForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
+    await nextTick()
+    return speechStore
+  }
+
+  it('repairs empty model and voice state from the Token Plan catalog', async () => {
+    const speechStore = await prepareTokenPlanCatalog()
+
+    expect(speechStore.activeSpeechModel).toBe(QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
+    expect(speechStore.activeSpeechVoiceId).toBe(QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID)
+    expect(speechStore.activeSpeechVoice).toMatchObject({ id: QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID })
+  })
+
+  it('survives the model watcher clearing voice and remains idempotent', async () => {
+    const speechStore = await prepareTokenPlanCatalog()
+    const selectedVoice = speechStore.activeSpeechVoice
+
+    speechStore.activeSpeechVoiceId = ''
+    speechStore.activeSpeechVoice = undefined
+    speechStore.ensureActiveSpeechModel()
+    await speechStore.loadVoicesForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
+    await nextTick()
+    speechStore.ensureActiveSpeechModel()
+    speechStore.ensureActiveSpeechModel()
+
+    expect(speechStore.activeSpeechVoiceId).toBe(QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID)
+    expect(speechStore.activeSpeechVoice).toMatchObject({ id: QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID })
+    expect(speechStore.activeSpeechVoice).toBe(selectedVoice)
+  })
+
+  it('does not apply longanlingxin to the PAYG Qwen3 route', async () => {
+    const speechStore = await prepareTokenPlanCatalog()
+    speechStore.activeSpeechProvider = QWEN3_TTS_REALTIME_PROVIDER_ID
+    speechStore.activeSpeechModel = QWEN3_TTS_REALTIME_MODEL
+    speechStore.activeSpeechVoiceId = ''
+    speechStore.activeSpeechVoice = undefined
+    speechStore.ensureQwenTokenPlanSelection()
+
+    expect(speechStore.activeSpeechVoiceId).toBe('')
     expect(speechStore.activeSpeechVoice).toBeUndefined()
   })
 })

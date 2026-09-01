@@ -826,6 +826,24 @@ function openTtsSession(turnId: string): StageTtsSession {
         latestQwenTelemetry = telemetry
       },
     },
+    qwenTokenPlan: {
+      destination: audioContext.destination,
+      onSourceCreated: (source) => {
+        if (audioAnalyser.value)
+          source.connect(audioAnalyser.value)
+        if (lipSyncNode.value)
+          source.connect(lipSyncNode.value)
+      },
+      onSpeakingChange: (speaking) => {
+        if (speaking)
+          nowSpeaking.value = true
+        else
+          resetSpeakingState()
+      },
+      onTelemetry: (telemetry) => {
+        latestQwenTelemetry = telemetry
+      },
+    },
     openIntent: opts => speechRuntimeStore.openIntent(opts),
     intentOptions: () => ({
       turnId,
