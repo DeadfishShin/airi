@@ -39,7 +39,9 @@ import { Emotion, EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_val
 import { live2dMotionMagicProfiles, useLive2DMotionMagic, useLive2DMotionMagicSettings } from '../../features/motions/live2d'
 import { getDefaultStreamingModel, getDefinedProvider } from '../../libs/providers/providers'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '../../libs/providers/providers/official'
+import { QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID } from '../../libs/providers/qwen-audio-tts-token-plan-ipc'
 import { bindSpeakingStateToPlaybackManager } from '../../libs/speech/playback-speaking-state'
+import { createQwenAudioTtsTokenPlanStageDiagnostics } from '../../libs/speech/qwen-audio-tts-token-plan-diagnostics'
 import { summarizeQwen3TtsStageTelemetry } from '../../libs/speech/qwen-tts-stage-session'
 import { createStageTtsSession } from '../../libs/speech/tts-session'
 import { getSpeechBusContext, speechOutputGetPlaybackState } from '../../services/speech/bus'
@@ -245,7 +247,7 @@ function resetAssistantSpeechSurface(source: string) {
 
 const { activeCard } = storeToRefs(useAiriCardStore())
 const speechStore = useSpeechStore()
-const { ssmlEnabled, activeSpeechProvider, activeSpeechModel, activeSpeechVoice, pitch } = storeToRefs(speechStore)
+const { ssmlEnabled, activeSpeechProvider, activeSpeechModel, activeSpeechVoiceId, activeSpeechVoice, pitch } = storeToRefs(speechStore)
 const activeCardId = computed(() => activeCard.value?.name ?? 'default')
 const speechRuntimeStore = useSpeechRuntimeStore()
 const backgroundStore = useBackgroundStore()
@@ -790,7 +792,10 @@ function resolveSpeechTransport(providerId: string | null | undefined): SpeechTr
   return getDefinedProvider(providerId)?.capabilities?.speech?.transport
 }
 
-function openTtsSession(turnId: string): StageTtsSession {
+function openTtsSession(
+  turnId: string,
+  diagnostics?: ReturnType<typeof createQwenAudioTtsTokenPlanStageDiagnostics>,
+): StageTtsSession {
   // A session must only clear the module-level `currentSession` if it IS that session. The previous
   // code cleared it whenever any `stream-` session completed, which is unsafe once sessions exist that
   // are not assigned to `currentSession` (e.g. one-off read-aloud sessions): one of those finishing
@@ -798,6 +803,7 @@ function openTtsSession(turnId: string): StageTtsSession {
   // compare identity; the `stream-` guard is preserved so segmenter sessions still don't self-clear.
   let session: StageTtsSession | null = null
   let latestQwenTelemetry: Qwen3TtsStageSessionTelemetry | undefined
+  let snapshot: StreamingSessionSnapshot | null | undefined
   const clearIfActive = () => {
     if (session && currentSession === session && session.intentId.startsWith('stream-'))
       currentSession = null
@@ -805,7 +811,15 @@ function openTtsSession(turnId: string): StageTtsSession {
   session = createStageTtsSession<AudioBuffer>({
     providerId: activeSpeechProvider.value,
     transport: resolveSpeechTransport(activeSpeechProvider.value),
-    streaming: () => buildStreamingSnapshot(turnId),
+    streaming: () => {
+      snapshot = buildStreamingSnapshot(turnId)
+      diagnostics?.emit('STAGE_SNAPSHOT_READY', {
+        ready: snapshot !== null,
+        modelId: snapshot?.model,
+        voiceId: snapshot?.voice,
+      })
+      return snapshot
+    },
     audioContext,
     playbackManager,
     qwenRealtime: {
@@ -843,6 +857,7 @@ function openTtsSession(turnId: string): StageTtsSession {
       onTelemetry: (telemetry) => {
         latestQwenTelemetry = telemetry
       },
+      onDiagnostic: milestone => diagnostics?.emit(milestone),
     },
     openIntent: opts => speechRuntimeStore.openIntent(opts),
     intentOptions: () => ({
@@ -874,6 +889,12 @@ function openTtsSession(turnId: string): StageTtsSession {
       },
     },
   })
+  if (session)
+    diagnostics?.setSessionId(session.intentId)
+  diagnostics?.emit('STAGE_SESSION_CREATED', {
+    modelId: snapshot?.model,
+    voiceId: snapshot?.voice,
+  })
   return session
 }
 
@@ -896,12 +917,36 @@ chatHookCleanups.push(onBeforeMessageComposed(async (_message, context) => {
   currentSession?.cancel('new-message')
   currentSession = null
 
+  if (activeSpeechProvider.value !== QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID) {
+    if (speechMuted.value)
+      return
+    setupAnalyser()
+    await setupLipSync()
+    currentSession = openTtsSession(context.turnId)
+    return
+  }
+
+  const diagnostics = createQwenAudioTtsTokenPlanStageDiagnostics(context.turnId)
+  diagnostics.emit('STAGE_BEFORE_MESSAGE')
+  diagnostics.emit('STAGE_PROVIDER_SELECTED', { providerId: activeSpeechProvider.value })
+  diagnostics.emit('STAGE_MODEL_SELECTED', { modelId: activeSpeechModel.value })
+  diagnostics.emit('STAGE_VOICE_ID_SELECTED', { voiceId: activeSpeechVoiceId.value })
+  diagnostics.emit('STAGE_VOICE_OBJECT_RESOLVED', {
+    resolved: !!activeSpeechVoice.value,
+    voiceId: activeSpeechVoice.value?.id,
+  })
+  diagnostics.emit('STAGE_MUTED', { muted: speechMuted.value })
+  diagnostics.emit('STAGE_TRANSPORT_RESOLVED', {
+    transport: resolveSpeechTransport(activeSpeechProvider.value) ?? 'none',
+  })
+  diagnostics.emit('STAGE_AUDIO_CONTEXT_AVAILABLE', { available: !!audioContext })
+
   if (speechMuted.value)
     return
 
   setupAnalyser()
   await setupLipSync()
-  currentSession = openTtsSession(context.turnId)
+  currentSession = openTtsSession(context.turnId, diagnostics)
 }))
 
 chatHookCleanups.push(onBeforeSend(async () => {

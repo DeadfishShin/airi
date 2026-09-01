@@ -105,6 +105,7 @@ function createSessionHarness() {
   const onDone = vi.fn()
   const onError = vi.fn()
   const onSpeakingChange = vi.fn()
+  const diagnostics: string[] = []
 
   defineInvokeHandler(context, qwenAudioTtsTokenPlanSessionStart, () => {
     calls.start++
@@ -129,10 +130,14 @@ function createSessionHarness() {
     openIntent: () => { throw new Error('Token Plan must not use the segmenter.') },
     intentOptions: () => ({}) as never,
     hooks: { onDone, onError },
-    qwenTokenPlan: { eventContext: context as unknown as EventContext<any, any>, onSpeakingChange },
+    qwenTokenPlan: {
+      eventContext: context as unknown as EventContext<any, any>,
+      onSpeakingChange,
+      onDiagnostic: milestone => diagnostics.push(milestone),
+    },
   })
 
-  return { context, audioContext, calls, onDone, onError, onSpeakingChange, session }
+  return { context, audioContext, calls, diagnostics, onDone, onError, onSpeakingChange, session }
 }
 
 describe('token Plan Qwen Audio TTS Stage adapter', () => {
@@ -146,6 +151,12 @@ describe('token Plan Qwen Audio TTS Stage adapter', () => {
     await settle()
 
     expect(harness.calls).toEqual({ start: 1, text: ['你', '好', '，', '世界'], finish: 1, cancel: 0 })
+    expect(harness.diagnostics).toEqual([
+      'TOKEN_PLAN_FIRST_APPEND_REQUESTED',
+      'TOKEN_PLAN_FINISH_REQUESTED',
+      'TOKEN_PLAN_RENDERER_START_REQUESTED',
+      'TOKEN_PLAN_RENDERER_START_RESOLVED',
+    ])
   })
 
   it('delivers binary PCM to the real bridge and waits for local drain after task-finished', async () => {

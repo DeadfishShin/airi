@@ -277,7 +277,7 @@ export interface StageTtsSessionContext<TAudio = AudioBuffer> {
   /** Provider-specific runtime seams; credentials never belong here. */
   qwenRealtime?: Pick<Qwen3TtsStageSessionOptions, 'eventContext' | 'destination' | 'onSourceCreated' | 'onSpeakingChange' | 'onTelemetry' | 'now'>
   /** Token Plan Qwen adapter seam; credentials remain main-process-only. */
-  qwenTokenPlan?: Pick<QwenAudioTtsTokenPlanStageSessionOptions, 'eventContext' | 'destination' | 'onSourceCreated' | 'onSpeakingChange' | 'onTelemetry' | 'now'>
+  qwenTokenPlan?: Pick<QwenAudioTtsTokenPlanStageSessionOptions, 'eventContext' | 'destination' | 'onSourceCreated' | 'onSpeakingChange' | 'onTelemetry' | 'onDiagnostic' | 'now'>
 }
 
 function createProviderAwareStreamingSession<TAudio>(

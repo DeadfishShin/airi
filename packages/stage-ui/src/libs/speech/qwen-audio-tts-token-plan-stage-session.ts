@@ -5,6 +5,7 @@ import type {
   QwenAudioTtsTokenPlanSessionStartPayload,
   QwenAudioTtsTokenPlanTextAppendPayload,
 } from '../providers/qwen-audio-tts-token-plan-ipc'
+import type { QwenAudioTtsTokenPlanStageMilestone } from './qwen-audio-tts-token-plan-diagnostics'
 import type {
   Qwen3TtsPcmAudioContext,
   Qwen3TtsPcmAudioSource,
@@ -48,6 +49,7 @@ export interface QwenAudioTtsTokenPlanStageSessionOptions {
   onSourceCreated?: (source: Qwen3TtsPcmAudioSource) => void
   onSpeakingChange?: (speaking: boolean) => void
   onTelemetry?: (telemetry: Qwen3TtsStageSessionTelemetry) => void
+  onDiagnostic?: (milestone: QwenAudioTtsTokenPlanStageMilestone) => void
   now?: () => number
 }
 
@@ -86,6 +88,14 @@ export function createQwenAudioTtsTokenPlanStageSession(options: QwenAudioTtsTok
   const append = defineInvoke(eventa.context, qwenAudioTtsTokenPlanTextAppend)
   const finish = defineInvoke(eventa.context, qwenAudioTtsTokenPlanSessionFinish)
   const cancelRemote = defineInvoke(eventa.context, qwenAudioTtsTokenPlanSessionCancel)
+  const diagnostic = options.onDiagnostic
+  const emittedDiagnostics = new Set<QwenAudioTtsTokenPlanStageMilestone>()
+  const emitDiagnostic = (milestone: QwenAudioTtsTokenPlanStageMilestone) => {
+    if (emittedDiagnostics.has(milestone))
+      return
+    emittedDiagnostics.add(milestone)
+    diagnostic?.(milestone)
+  }
 
   let terminal: 'active' | 'cancelled' | 'failed' | 'finished' = 'active'
   let finishRequested = false
@@ -203,7 +213,9 @@ export function createQwenAudioTtsTokenPlanStageSession(options: QwenAudioTtsTok
 
   queueOperation(async () => {
     const payload: QwenAudioTtsTokenPlanSessionStartPayload = { sessionId: intentId, voice: snapshot.voice }
+    emitDiagnostic('TOKEN_PLAN_RENDERER_START_REQUESTED')
     await start(payload)
+    emitDiagnostic('TOKEN_PLAN_RENDERER_START_RESOLVED')
   })
 
   const appendText = (text: string) => {
@@ -217,6 +229,7 @@ export function createQwenAudioTtsTokenPlanStageSession(options: QwenAudioTtsTok
       fail(new Error('Qwen Audio Token Plan TTS pending text buffer is full.'))
       return
     }
+    emitDiagnostic('TOKEN_PLAN_FIRST_APPEND_REQUESTED')
     telemetryState.s0FirstLlmText ??= now()
     telemetryState.s1FirstTextAppendRequested ??= now()
     updateDerivedTelemetry()
@@ -233,6 +246,7 @@ export function createQwenAudioTtsTokenPlanStageSession(options: QwenAudioTtsTok
     if (terminal !== 'active' || finishRequested)
       return
     finishRequested = true
+    emitDiagnostic('TOKEN_PLAN_FINISH_REQUESTED')
     telemetryState.inputFinishRequestedAt ??= now()
     updateDerivedTelemetry()
     emitTelemetry()

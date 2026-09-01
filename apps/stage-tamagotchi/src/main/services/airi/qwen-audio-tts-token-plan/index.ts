@@ -2,7 +2,12 @@ import type { Eventa } from '@moeru/eventa'
 import type { createContext, ElectronMainEmitOptions } from '@moeru/eventa/adapters/electron/main'
 import type { Lifecycle } from 'injeca'
 
-import type { QwenAudioTtsTokenPlanSocketFactory, QwenAudioTtsTokenPlanTelemetry } from './protocol'
+import type {
+  QwenAudioTtsTokenPlanMainDiagnosticDetails,
+  QwenAudioTtsTokenPlanMainMilestone,
+  QwenAudioTtsTokenPlanSocketFactory,
+  QwenAudioTtsTokenPlanTelemetry,
+} from './protocol'
 
 import { defineInvokeHandler } from '@moeru/eventa'
 import { createContext as createElectronContext } from '@moeru/eventa/adapters/electron/main'
@@ -23,6 +28,7 @@ import {
   MAX_TERMINAL_ERROR_TOMBSTONES,
   QwenAudioTtsTokenPlanSession,
   resolveQwenAudioTtsTokenPlanRuntimeConfig,
+  sanitizeQwenAudioTtsTokenPlanDiagnostic,
   TERMINAL_ERROR_TOMBSTONE_TTL_MS,
 } from './protocol'
 
@@ -45,6 +51,8 @@ export interface QwenAudioTtsTokenPlanServiceOptions {
   environment?: NodeJS.ProcessEnv
   lifecycle?: Lifecycle
   now?: () => number
+  onDiagnostic?: (sessionId: string, milestone: QwenAudioTtsTokenPlanMainMilestone, details?: QwenAudioTtsTokenPlanMainDiagnosticDetails) => void
+  onFailure?: (sessionId: string, error: Error) => void
   onTelemetry?: (sessionId: string, telemetry: QwenAudioTtsTokenPlanTelemetry) => void
   socketFactory?: QwenAudioTtsTokenPlanSocketFactory
 }
@@ -105,10 +113,25 @@ export function createQwenAudioTtsTokenPlanService(options: QwenAudioTtsTokenPla
   const handlers = [
     defineInvokeHandler(options.context, qwenAudioTtsTokenPlanSessionStart, (payload, invokeOptions) => {
       const sessionId = sessionIdFromPayload(payload)
+      options.onDiagnostic?.(sessionId, 'MAIN_SESSION_START_RECEIVED')
       if (sessions.has(sessionId))
         throw new Error('Qwen Audio Token Plan TTS session already exists.')
 
-      const config = resolveQwenAudioTtsTokenPlanRuntimeConfig(options.environment)
+      let config
+      try {
+        config = resolveQwenAudioTtsTokenPlanRuntimeConfig(options.environment)
+        options.onDiagnostic?.(sessionId, 'TOKEN_PLAN_CREDENTIAL_PRESENT', { credentialPresent: true })
+      }
+      catch (error) {
+        const configurationError = error instanceof Error ? error : new Error(String(error))
+        options.onDiagnostic?.(sessionId, 'TOKEN_PLAN_CREDENTIAL_PRESENT', { credentialPresent: false })
+        options.onDiagnostic?.(sessionId, 'TASK_FAILED', {
+          code: errorCodeFrom(configurationError),
+          message: sanitizeQwenAudioTtsTokenPlanDiagnostic(configurationError.message),
+        })
+        options.onFailure?.(sessionId, configurationError)
+        throw configurationError
+      }
       terminalErrors.delete(sessionId)
       const target = targetFromInvoke(invokeOptions)
       const session = new QwenAudioTtsTokenPlanSession(
@@ -130,6 +153,7 @@ export function createQwenAudioTtsTokenPlanService(options: QwenAudioTtsTokenPla
               return
             const authoritativeError = rememberTerminalError(sessionId, error)
             sessions.delete(sessionId)
+            options.onFailure?.(sessionId, authoritativeError)
             await emit(qwenAudioTtsTokenPlanSessionError, {
               sessionId,
               code: errorCodeFrom(authoritativeError),
@@ -137,6 +161,7 @@ export function createQwenAudioTtsTokenPlanService(options: QwenAudioTtsTokenPla
             }, sessionId)
             eventTargets.delete(sessionId)
           },
+          onDiagnostic: (milestone, details) => options.onDiagnostic?.(sessionId, milestone, details),
           onTelemetry: telemetry => options.onTelemetry?.(sessionId, telemetry),
         },
         socketFactory,
@@ -203,6 +228,24 @@ export function setupQwenAudioTtsTokenPlan(options: Omit<QwenAudioTtsTokenPlanSe
   const service = createQwenAudioTtsTokenPlanService({
     ...options,
     context: eventa.context,
+    onDiagnostic: options.onDiagnostic ?? ((sessionId, milestone, details) => {
+      console.info('[Qwen Audio Token Plan TTS transport] milestone', {
+        sessionId: sessionId.slice(0, 12),
+        milestone,
+        credentialPresent: details?.credentialPresent,
+        code: sanitizeQwenAudioTtsTokenPlanDiagnostic(details?.code),
+        message: sanitizeQwenAudioTtsTokenPlanDiagnostic(details?.message),
+        closeCode: typeof details?.closeCode === 'number' ? details.closeCode : undefined,
+        closeReason: sanitizeQwenAudioTtsTokenPlanDiagnostic(details?.closeReason),
+      })
+    }),
+    onFailure: options.onFailure ?? ((sessionId, error) => {
+      console.warn('[Qwen Audio Token Plan TTS transport] session failed', {
+        sessionId: sessionId.slice(0, 12),
+        code: errorCodeFrom(error),
+        message: sanitizeQwenAudioTtsTokenPlanDiagnostic(error.message),
+      })
+    }),
     onTelemetry: options.onTelemetry ?? ((sessionId, telemetry) => {
       console.info('[Qwen Audio Token Plan TTS transport] session finished', {
         sessionId: sessionId.slice(0, 12),

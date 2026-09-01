@@ -309,6 +309,30 @@ export interface QwenAudioTtsTokenPlanSessionCallbacks {
   onFinished: () => void | Promise<void>
   onError: (error: Error) => void | Promise<void>
   onTelemetry?: (telemetry: QwenAudioTtsTokenPlanTelemetry) => void
+  onDiagnostic?: (milestone: QwenAudioTtsTokenPlanMainMilestone, details?: QwenAudioTtsTokenPlanMainDiagnosticDetails) => void
+}
+
+export type QwenAudioTtsTokenPlanMainMilestone
+  = | 'MAIN_SESSION_START_RECEIVED'
+    | 'TOKEN_PLAN_CREDENTIAL_PRESENT'
+    | 'SOCKET_CREATED'
+    | 'SOCKET_OPEN'
+    | 'RUN_TASK_SENT'
+    | 'TASK_STARTED'
+    | 'FIRST_CONTINUE_TASK_SENT'
+    | 'FIRST_BINARY_AUDIO_RECEIVED'
+    | 'FINISH_TASK_SENT'
+    | 'TASK_FINISHED'
+    | 'TASK_FAILED'
+    | 'SOCKET_ERROR'
+    | 'SOCKET_CLOSE'
+
+export interface QwenAudioTtsTokenPlanMainDiagnosticDetails {
+  credentialPresent?: boolean
+  code?: string
+  message?: string
+  closeCode?: number
+  closeReason?: string
 }
 
 function difference(later: number | undefined, earlier: number | undefined): number | undefined {
@@ -331,6 +355,7 @@ export class QwenAudioTtsTokenPlanSession {
   private finishSent = false
   private audioSequence = 0
   private terminalError?: Error
+  private readonly emittedDiagnostics = new Set<QwenAudioTtsTokenPlanMainMilestone>()
   private resolveCompletion!: () => void
   private rejectCompletion!: (error: Error) => void
 
@@ -359,6 +384,13 @@ export class QwenAudioTtsTokenPlanSession {
     return { ...this.telemetry }
   }
 
+  private emitDiagnostic(milestone: QwenAudioTtsTokenPlanMainMilestone, details?: QwenAudioTtsTokenPlanMainDiagnosticDetails) {
+    if (this.emittedDiagnostics.has(milestone))
+      return
+    this.emittedDiagnostics.add(milestone)
+    this.callbacks.onDiagnostic?.(milestone, details)
+  }
+
   start(): void {
     if (this.state !== 'created_local')
       throw new Error('Qwen Audio Token Plan TTS session has already started.')
@@ -366,6 +398,7 @@ export class QwenAudioTtsTokenPlanSession {
     this.state = 'connecting'
     try {
       this.socket = this.socketFactory(buildQwenAudioTtsTokenPlanEndpoint(), buildQwenAudioTtsTokenPlanHeaders(this.config))
+      this.emitDiagnostic('SOCKET_CREATED')
       this.socket.on('open', () => this.handleOpen())
       this.socket.on('message', (message) => {
         this.messageChain = this.messageChain
@@ -373,14 +406,18 @@ export class QwenAudioTtsTokenPlanSession {
           .catch(error => this.fail('protocol_error', errorMessageFrom(error) ?? 'Qwen Audio Token Plan TTS message handling failed.'))
       })
       this.socket.on('error', (error, detail) => {
-        void this.fail('websocket_error', `Qwen Audio Token Plan TTS WebSocket failed (${qwenAudioTtsTokenPlanSocketErrorMessage(error, detail)}).`)
+        const diagnostic = qwenAudioTtsTokenPlanSocketErrorMessage(error, detail)
+        this.emitDiagnostic('SOCKET_ERROR', { message: diagnostic })
+        void this.fail('websocket_error', `Qwen Audio Token Plan TTS WebSocket failed (${diagnostic}).`)
       })
       this.socket.on('close', (code, reason) => {
         void this.handleClose(code, reason)
       })
     }
     catch (error) {
-      void this.fail('connect_error', `Qwen Audio Token Plan TTS could not connect (${qwenAudioTtsTokenPlanSocketErrorMessage(error)}).`)
+      const diagnostic = qwenAudioTtsTokenPlanSocketErrorMessage(error)
+      this.emitDiagnostic('SOCKET_ERROR', { message: diagnostic })
+      void this.fail('connect_error', `Qwen Audio Token Plan TTS could not connect (${diagnostic}).`)
     }
   }
 
@@ -443,7 +480,9 @@ export class QwenAudioTtsTokenPlanSession {
       return
     this.telemetry.t2 = this.now()
     this.state = 'waiting_task_started'
-    this.safeSend(JSON.stringify(buildQwenAudioTtsTokenPlanRunTaskFrame(this.taskId, this.voice)))
+    this.emitDiagnostic('SOCKET_OPEN')
+    if (this.safeSend(JSON.stringify(buildQwenAudioTtsTokenPlanRunTaskFrame(this.taskId, this.voice))))
+      this.emitDiagnostic('RUN_TASK_SENT')
   }
 
   private async handleMessage(message: unknown): Promise<void> {
@@ -465,6 +504,7 @@ export class QwenAudioTtsTokenPlanSession {
         return
       }
       this.telemetry.t5 ??= this.now()
+      this.emitDiagnostic('FIRST_BINARY_AUDIO_RECEIVED')
       await this.callbacks.onAudioDelta(audio, this.audioSequence++)
       return
     }
@@ -490,6 +530,7 @@ export class QwenAudioTtsTokenPlanSession {
       this.taskStartedSeen = true
       this.telemetry.t3 = this.now()
       this.state = 'ready'
+      this.emitDiagnostic('TASK_STARTED')
       await this.callbacks.onReady()
       this.flushPreReadyText()
       this.sendFinishIfReady()
@@ -521,7 +562,8 @@ export class QwenAudioTtsTokenPlanSession {
   private sendText(text: string): void {
     if (this.telemetry.t4 === undefined)
       this.telemetry.t4 = this.now()
-    this.safeSend(JSON.stringify(buildQwenAudioTtsTokenPlanContinueTaskFrame(this.taskId, text)))
+    if (this.safeSend(JSON.stringify(buildQwenAudioTtsTokenPlanContinueTaskFrame(this.taskId, text))))
+      this.emitDiagnostic('FIRST_CONTINUE_TASK_SENT')
   }
 
   private sendFinishIfReady(): void {
@@ -530,23 +572,26 @@ export class QwenAudioTtsTokenPlanSession {
     this.finishSent = true
     this.state = 'finishing'
     this.telemetry.t8 = this.now()
-    this.safeSend(JSON.stringify(buildQwenAudioTtsTokenPlanFinishTaskFrame(this.taskId)))
+    if (this.safeSend(JSON.stringify(buildQwenAudioTtsTokenPlanFinishTaskFrame(this.taskId))))
+      this.emitDiagnostic('FINISH_TASK_SENT')
   }
 
-  private safeSend(data: string): void {
+  private safeSend(data: string): boolean {
     if (!this.socket) {
       void this.fail('send_error', 'Qwen Audio Token Plan TTS socket is unavailable.')
-      return
+      return false
     }
     if (this.socket.readyState !== OPEN) {
       void this.fail('send_error', 'Qwen Audio Token Plan TTS socket is not open.')
-      return
+      return false
     }
     try {
       this.socket.send(data)
+      return true
     }
     catch (error) {
       void this.fail('send_error', `Qwen Audio Token Plan TTS send failed (${qwenAudioTtsTokenPlanSocketErrorMessage(error)}).`)
+      return false
     }
   }
 
@@ -559,6 +604,7 @@ export class QwenAudioTtsTokenPlanSession {
     this.telemetry.taskStartedLatencyMs = difference(this.telemetry.t3, this.telemetry.t2)
     this.telemetry.firstSentTextToFirstAudioMs = difference(this.telemetry.t5, this.telemetry.t4)
     this.telemetry.finishToTaskFinishedMs = difference(this.telemetry.t9, this.telemetry.t8)
+    this.emitDiagnostic('TASK_FINISHED')
     this.callbacks.onTelemetry?.({ ...this.telemetry })
     try {
       await this.callbacks.onFinished()
@@ -573,9 +619,13 @@ export class QwenAudioTtsTokenPlanSession {
   }
 
   private async handleClose(code?: unknown, reason?: unknown): Promise<void> {
+    const closeReason = typeof reason === 'string' ? sanitizeQwenAudioTtsTokenPlanDiagnostic(reason) : undefined
+    this.emitDiagnostic('SOCKET_CLOSE', {
+      closeCode: typeof code === 'number' ? code : undefined,
+      closeReason,
+    })
     if (this.state === 'finished' || this.state === 'cancelled' || this.state === 'failed')
       return
-    const closeReason = typeof reason === 'string' ? sanitizeQwenAudioTtsTokenPlanDiagnostic(reason) : undefined
     await this.fail('unexpected_close', `Qwen Audio Token Plan TTS WebSocket closed unexpectedly (close_code=${typeof code === 'number' ? code : 'unknown'}${closeReason ? `; close_reason=${closeReason}` : ''}).`)
   }
 
@@ -587,6 +637,10 @@ export class QwenAudioTtsTokenPlanSession {
     this.preReadyTextChars = 0
     const error = new Error(`${code}: ${sanitizeQwenAudioTtsTokenPlanDiagnostic(message) ?? 'details unavailable'}`)
     this.terminalError = error
+    this.emitDiagnostic('TASK_FAILED', {
+      code,
+      message: sanitizeQwenAudioTtsTokenPlanDiagnostic(message),
+    })
     this.socket?.terminate?.()
     this.socket?.close()
     this.rejectCompletion(error)

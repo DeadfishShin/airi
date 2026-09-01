@@ -197,9 +197,11 @@ describe('qwen Audio Token Plan main service', () => {
     const rendererB = createElectronRendererContext(otherIpc.renderer as never)
     const socket = new FakeSocket()
     const socketCalls: Array<{ endpoint: string, headers: Record<string, string> }> = []
+    const diagnostics: Array<{ sessionId: string, milestone: string, details?: unknown }> = []
     const service = createQwenAudioTtsTokenPlanService({
       context: mainEventa.context,
       environment: tokenPlanEnvironment,
+      onDiagnostic: (sessionId, milestone, details) => diagnostics.push({ sessionId, milestone, details }),
       socketFactory: (endpoint, headers) => {
         socketCalls.push({ endpoint, headers })
         return socket
@@ -246,6 +248,22 @@ describe('qwen Audio Token Plan main service', () => {
       await finishing
       expect(received).toContain('finished')
       expect(otherReceived).toEqual([])
+      expect(diagnostics.map(diagnostic => diagnostic.milestone)).toEqual([
+        'MAIN_SESSION_START_RECEIVED',
+        'TOKEN_PLAN_CREDENTIAL_PRESENT',
+        'SOCKET_CREATED',
+        'SOCKET_OPEN',
+        'RUN_TASK_SENT',
+        'TASK_STARTED',
+        'FIRST_CONTINUE_TASK_SENT',
+        'FIRST_BINARY_AUDIO_RECEIVED',
+        'FINISH_TASK_SENT',
+        'TASK_FINISHED',
+      ])
+      const serializedDiagnostics = JSON.stringify(diagnostics)
+      expect(serializedDiagnostics).not.toContain('你好')
+      expect(serializedDiagnostics).not.toContain('unit-test-token-plan-key')
+      expect(serializedDiagnostics).not.toContain('DASHSCOPE_API_KEY')
     }
     finally {
       for (const remove of removers)
@@ -260,9 +278,13 @@ describe('qwen Audio Token Plan main service', () => {
   it('fails closed without Token Plan key and never falls back to PAYG', async () => {
     const context = createContext()
     let socketCreated = false
+    const diagnostics: Array<{ milestone: string, details?: unknown }> = []
+    const failures: Error[] = []
     const service = createQwenAudioTtsTokenPlanService({
       context: context as never,
       environment: { DASHSCOPE_API_KEY: 'payg-only' },
+      onDiagnostic: (_sessionId, milestone, details) => diagnostics.push({ milestone, details }),
+      onFailure: (_sessionId, error) => failures.push(error),
       socketFactory: () => {
         socketCreated = true
         return new FakeSocket()
@@ -272,6 +294,12 @@ describe('qwen Audio Token Plan main service', () => {
 
     await expect(start({ sessionId: 'missing-token-plan-key', voice: 'longanlingxin' })).rejects.toThrow('API key is unavailable')
     expect(socketCreated).toBe(false)
+    expect(diagnostics).toEqual([
+      { milestone: 'MAIN_SESSION_START_RECEIVED', details: undefined },
+      { milestone: 'TOKEN_PLAN_CREDENTIAL_PRESENT', details: { credentialPresent: false } },
+      { milestone: 'TASK_FAILED', details: { code: 'provider_error', message: 'Qwen Audio Token Plan TTS API key is unavailable.' } },
+    ])
+    expect(failures).toHaveLength(1)
     await service.dispose()
   })
 
