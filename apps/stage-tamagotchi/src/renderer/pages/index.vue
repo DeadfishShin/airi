@@ -24,6 +24,7 @@ import {
 import { WidgetStage } from '@proj-airi/stage-ui/components/scenes'
 import { useVoiceInputSession } from '@proj-airi/stage-ui/composables'
 import { useCanvasPixelIsTransparentAtPoint } from '@proj-airi/stage-ui/composables/canvas-alpha'
+import { cancelRealtimeVoiceTurn, createRealtimeVoiceTurn, failRealtimeVoiceTurn, recordRealtimeVoiceTurnMilestone } from '@proj-airi/stage-ui/libs/speech/realtime-voice-e2e-telemetry'
 import { useSpeakingStore } from '@proj-airi/stage-ui/stores/audio'
 import { useChatStore } from '@proj-airi/stage-ui/stores/chat'
 import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-store'
@@ -332,11 +333,15 @@ const chatStore = useChatStore()
 const chatSession = useChatSessionStore()
 const streamingTranscriptionUnavailable = ref(false)
 const shouldUseStreamInput = computed(() => supportsStreamInput.value && !!stream.value && !streamingTranscriptionUnavailable.value)
+let pendingRealtimeVoiceTurnId: string | undefined
 const voiceTranscriptBuffer = createTranscriptBuffer({
   flushDelayMs: 1200,
   maxBufferedTextLength: 90,
   async flush(text) {
-    await sendVoiceInputTextToChat(text)
+    const turnId = pendingRealtimeVoiceTurnId
+    pendingRealtimeVoiceTurnId = undefined
+    recordRealtimeVoiceTurnMilestone(turnId, 'transcriptFlushRequestedAt')
+    await sendVoiceInputTextToChat(text, turnId)
   },
 })
 
@@ -544,16 +549,25 @@ function postSpeakerCaption(text: string, operation: NonNullable<CaptionChannelE
 /**
  * Sends buffered voice input text to the active chat session.
  */
-async function sendVoiceInputTextToChat(text: string) {
+async function sendVoiceInputTextToChat(text: string, telemetryTurnId?: string) {
+  recordRealtimeVoiceTurnMilestone(telemetryTurnId, 'chatSubmissionAt')
   try {
     await chatStore.send({
       sessionId: chatSession.activeSessionId,
       text,
+      telemetryTurnId,
     })
   }
   catch (err) {
+    failRealtimeVoiceTurn(telemetryTurnId)
     reportVoiceInputFailure('send to chat', err)
   }
+}
+
+function markRealtimeVoiceAsrFinal(): string {
+  pendingRealtimeVoiceTurnId ??= createRealtimeVoiceTurn()
+  recordRealtimeVoiceTurnMilestone(pendingRealtimeVoiceTurnId, 'asrFinalReceivedAt')
+  return pendingRealtimeVoiceTurnId
 }
 
 /** Sends completed streaming-ASR sentences to captions and chat. */
@@ -570,7 +584,12 @@ function handleStreamingSentenceEnd(delta: string) {
   scheduleHearingInputClear(sourceId)
   activeHearingInputSourceId = undefined
   postSpeakerCaption(finalText, 'replace')
-  void sendVoiceInputTextToChat(finalText)
+  const turnId = markRealtimeVoiceAsrFinal()
+  // Realtime ASR sentence-end is already the chat boundary; unlike the
+  // recorder fallback below it does not pass through the 1200 ms buffer.
+  recordRealtimeVoiceTurnMilestone(turnId, 'transcriptFlushRequestedAt')
+  pendingRealtimeVoiceTurnId = undefined
+  void sendVoiceInputTextToChat(finalText, turnId)
 }
 
 /** Replaces the caption with the provider's current volatile transcript. */
@@ -616,6 +635,8 @@ const voiceInputSession = useVoiceInputSession(stream, {
   onTranscriptionResult: ({ text }) => {
     postSpeakerCaption(text)
     toast(`Voice input transcribed: ${text}`)
+    if (text.trim())
+      markRealtimeVoiceAsrFinal()
     voiceTranscriptBuffer.push(text)
   },
   onTranscriptionEmpty: () => {
@@ -688,10 +709,14 @@ async function stopAudioInteractionConsumers(options: StopAudioInteractionOption
     voiceInputSession.stop({ flushActiveRecording: false }),
   ])
 
-  if (flushTranscript)
+  if (flushTranscript) {
     await voiceTranscriptBuffer.dispose()
-  else
+  }
+  else {
     voiceTranscriptBuffer.clear()
+    cancelRealtimeVoiceTurn(pendingRealtimeVoiceTurnId)
+    pendingRealtimeVoiceTurnId = undefined
+  }
 }
 
 watch(enabled, async (val) => {
@@ -749,6 +774,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelRealtimeVoiceTurn(pendingRealtimeVoiceTurnId)
+  pendingRealtimeVoiceTurnId = undefined
   removeStreamingTranscriptionConsumer(transcriptionConsumerId)
   for (const [timer, sourceId] of hearingInputClearTimers) {
     clearTimeout(timer)

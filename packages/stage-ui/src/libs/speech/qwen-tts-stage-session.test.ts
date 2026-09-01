@@ -268,7 +268,7 @@ describe('qwen3 Stage TTS adapter', () => {
     defineInvokeHandler(context, qwen3TtsRealtimeSessionFinish, () => {})
     defineInvokeHandler(context, qwen3TtsRealtimeTextAppend, () => {})
     const stageSummaries: unknown[] = []
-    defineInvokeHandler(context, qwen3TtsRealtimeStageTelemetry, payload => {
+    defineInvokeHandler(context, qwen3TtsRealtimeStageTelemetry, (payload) => {
       stageSummaries.push(payload)
     })
     const audioContext = new FakeAudioContext()

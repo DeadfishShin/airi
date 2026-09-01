@@ -62,6 +62,8 @@ export interface ChatOrchestratorSendOptions {
   toolReferences?: ChatToolReference[]
   /** Original transport input metadata used by bridge/devtools observers. */
   input?: ChatStreamEventContext['input']
+  /** Optional renderer-local voice-turn id carried only through lifecycle telemetry. */
+  telemetryTurnId?: string
 }
 
 interface QueuedSend {
@@ -490,6 +492,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
     const roundId = createId()
     const streamingMessageContext: ChatStreamEventContext = {
       turnId: roundId,
+      telemetryTurnId: options.telemetryTurnId,
       message: { role: 'user', content: sendingMessage, createdAt: sendingCreatedAt, id: streamContextMessageId },
       contexts: deps.context.snapshot(),
       composedMessage: [],

@@ -397,6 +397,34 @@ describe('createChatOrchestratorRuntime', () => {
     ])
   })
 
+  it('carries the optional voice-turn telemetry id through every chat hook', async () => {
+    const harness = createHarness()
+    const observed: string[] = []
+    harness.runtime.hooks.onBeforeMessageComposed(async (_message, context) => {
+      if (context.telemetryTurnId)
+        observed.push(`before:${context.telemetryTurnId}`)
+    })
+    harness.runtime.hooks.onTokenLiteral(async (_literal, context) => {
+      if (context.telemetryTurnId)
+        observed.push(`token:${context.telemetryTurnId}`)
+    })
+    harness.runtime.hooks.onStreamEnd(async (context) => {
+      if (context.telemetryTurnId)
+        observed.push(`end:${context.telemetryTurnId}`)
+    })
+
+    await harness.runtime.ingest('voice input', {
+      model: 'gpt-test',
+      chatProvider: provider,
+      telemetryTurnId: 'voice-turn-1',
+    })
+
+    expect(observed[0]).toBe('before:voice-turn-1')
+    expect(observed.filter(event => event.startsWith('token:'))).not.toHaveLength(0)
+    expect(observed.filter(event => event.startsWith('token:')).every(event => event === 'token:voice-turn-1')).toBe(true)
+    expect(observed.at(-1)).toBe('end:voice-turn-1')
+  })
+
   it('keeps timestamp prefixes stable for legacy user messages without createdAt', async () => {
     const harness = createHarness()
     const legacyUserMessage: ChatHistoryItem = {

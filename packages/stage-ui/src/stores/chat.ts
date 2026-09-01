@@ -51,6 +51,8 @@ export interface ChatSendPayload {
   attachments?: { type: 'image', data: string, mimeType: string }[]
   /** Original input metadata for chat hooks and telemetry. */
   input?: WebSocketEventInputs
+  /** Renderer-local voice-turn correlation used only by E2E telemetry. */
+  telemetryTurnId?: string
   /** Session that owns the new turn. */
   sessionId: string
   /** User text for the new turn. */
@@ -397,6 +399,7 @@ export const useChatStore = defineStore('chat', () => {
       chatProvider,
       attachments: payload.attachments,
       input: payload.input,
+      telemetryTurnId: payload.telemetryTurnId,
       toolReferences: payload.tools,
       // Resolve this function after the request reaches the per-session queue.
       // The history then contains tool names from every earlier queued turn.
