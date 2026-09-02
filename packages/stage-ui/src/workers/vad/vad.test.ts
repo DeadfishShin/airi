@@ -3,6 +3,12 @@ import type { PreTrainedModel } from '@huggingface/transformers'
 import { AutoModel } from '@huggingface/transformers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  PRODUCTION_VAD_MODEL_CONFIG,
+  PRODUCTION_VAD_MODEL_DTYPE,
+  PRODUCTION_VAD_MODEL_ID,
+  PRODUCTION_VAD_MODEL_REVISION,
+} from './model-authority'
 import { VAD } from './vad'
 
 vi.mock('@huggingface/transformers', async (importOriginal) => {
@@ -57,6 +63,19 @@ describe('vad speech duration', () => {
 
     expect(onSpeechReady).not.toHaveBeenCalled()
     expect(onSpeechCancel).toHaveBeenCalledOnce()
+  })
+
+  it('loads the pinned production model identity without changing VAD configuration', async () => {
+    vi.mocked(AutoModel.from_pretrained).mockResolvedValue(createProbabilityModel([0]))
+    const vad = new VAD()
+
+    await vad.initialize()
+
+    expect(AutoModel.from_pretrained).toHaveBeenCalledWith(PRODUCTION_VAD_MODEL_ID, {
+      revision: PRODUCTION_VAD_MODEL_REVISION,
+      config: PRODUCTION_VAD_MODEL_CONFIG,
+      dtype: PRODUCTION_VAD_MODEL_DTYPE,
+    })
   })
 
   it('keeps speech that reaches the minimum speech duration', async () => {
