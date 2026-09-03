@@ -1,14 +1,13 @@
 import type { Span } from '@opentelemetry/api'
 import type { MaybeRefOrGetter } from 'vue'
 
-import type { BaseVADConfig } from '../../../libs/audio/vad'
-
 import { merge } from '@moeru/std'
 import { errorMessageFromValue, IOAttributes, IOSpanNames, IOSubsystems } from '@proj-airi/stage-shared'
 import { ref, toRef, watch } from 'vue'
 
 import { startSpan } from '../../../composables/use-io-tracer'
 import { createVAD, createVADStates } from '../../../workers/vad'
+import { PRODUCTION_VAD_DEFAULTS, resolveProductionVADConfig } from '../../../workers/vad/config'
 
 interface UseVADOptions {
   threshold?: MaybeRefOrGetter<number>
@@ -23,34 +22,14 @@ interface UseVADOptions {
   onSpeechReady?: (event: { buffer: Float32Array, duration: number }) => void
 }
 
-const DEFAULT_VAD_THRESHOLD = 0.52
-const DEFAULT_VAD_MIN_SILENCE_DURATION_MS = 1200
-const DEFAULT_VAD_SPEECH_PAD_MS = 360
-const DEFAULT_VAD_MIN_SPEECH_DURATION_MS = 300
-
-export function resolveVADConfig(
-  threshold?: number,
-  minSilenceDurationMs?: number,
-  speechPadMs?: number,
-  minSpeechDurationMs?: number,
-): Pick<BaseVADConfig, 'speechThreshold' | 'exitThreshold' | 'minSilenceDurationMs' | 'speechPadMs' | 'minSpeechDurationMs'> {
-  const resolvedThreshold = threshold ?? DEFAULT_VAD_THRESHOLD
-
-  return {
-    speechThreshold: resolvedThreshold,
-    exitThreshold: resolvedThreshold * 0.3,
-    minSilenceDurationMs: minSilenceDurationMs ?? DEFAULT_VAD_MIN_SILENCE_DURATION_MS,
-    speechPadMs: speechPadMs ?? DEFAULT_VAD_SPEECH_PAD_MS,
-    minSpeechDurationMs: minSpeechDurationMs ?? DEFAULT_VAD_MIN_SPEECH_DURATION_MS,
-  }
-}
+export const resolveVADConfig = resolveProductionVADConfig
 
 export function useVAD(workerUrl: string, options?: UseVADOptions) {
   const defaultOptions: UseVADOptions = {
-    threshold: ref(DEFAULT_VAD_THRESHOLD),
-    minSilenceDurationMs: ref(DEFAULT_VAD_MIN_SILENCE_DURATION_MS),
-    speechPadMs: ref(DEFAULT_VAD_SPEECH_PAD_MS),
-    minSpeechDurationMs: ref(DEFAULT_VAD_MIN_SPEECH_DURATION_MS),
+    threshold: ref(PRODUCTION_VAD_DEFAULTS.threshold),
+    minSilenceDurationMs: ref(PRODUCTION_VAD_DEFAULTS.minSilenceDurationMs),
+    speechPadMs: ref(PRODUCTION_VAD_DEFAULTS.speechPadMs),
+    minSpeechDurationMs: ref(PRODUCTION_VAD_DEFAULTS.minSpeechDurationMs),
   }
 
   options = merge(defaultOptions, options)

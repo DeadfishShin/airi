@@ -2,6 +2,7 @@ import { useDevicesList, useUserMedia } from '@vueuse/core'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { useAnalytics } from '../use-analytics'
+import { PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS } from './microphone-constraints'
 
 const UNKNOWN_STT_PROVIDER_ID = 'unknown'
 
@@ -73,14 +74,10 @@ export function useAudioDevice(requestPermission: boolean = false) {
     audio: selectedAudioInput.value
       ? {
           deviceId: { exact: selectedAudioInput.value },
-          autoGainControl: true,
-          echoCancellation: true,
-          noiseSuppression: true,
+          ...PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS,
         }
       : {
-          autoGainControl: true,
-          echoCancellation: true,
-          noiseSuppression: true,
+          ...PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS,
         },
   }))
   const { stream, stop: stopStream, start: startUserMediaStream } = useUserMedia({ constraints: deviceConstraints, enabled: false, autoSwitch: true })

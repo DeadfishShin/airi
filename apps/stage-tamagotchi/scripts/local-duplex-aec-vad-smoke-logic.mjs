@@ -1,16 +1,3 @@
-export const LOCAL_DUPLEX_SMOKE_MICROPHONE_CONSTRAINTS = Object.freeze({
-  echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true,
-})
-
-export const LOCAL_DUPLEX_SMOKE_VAD_DEFAULTS = Object.freeze({
-  threshold: 0.52,
-  minSilenceDurationMs: 1200,
-  speechPadMs: 360,
-  minSpeechDurationMs: 300,
-})
-
 export const LOCAL_DUPLEX_SMOKE_PHASES = Object.freeze([
   'PHASE_0_TRACK_INSPECTION',
   'PHASE_1_QUIET_BASELINE',
@@ -78,12 +65,40 @@ export function classifyPlaybackOnlyFalseTrigger({ credibleSpeechStartCount, obs
   return credibleSpeechStartCount > 0 ? 'YES' : 'NO'
 }
 
-export function classifyLevel3LocalDeviceVerdict({ level2, playbackOnlyFalseTrigger, userOnlyDetected, userDuringPlaybackDetected }) {
-  if ([level2, playbackOnlyFalseTrigger, userOnlyDetected, userDuringPlaybackDetected].every(value => value === 'YES' || value === 'NO')) {
+export function classifyLevel3LocalDeviceVerdict({
+  level2,
+  playbackOnlyFalseTrigger,
+  userOnlyDetected,
+  userDuringPlaybackDetected,
+  productionVadAlignment = 'UNKNOWN',
+  phaseIsolation = 'UNKNOWN',
+  environmentInterpretable = 'UNKNOWN',
+  playbackProfile = 'UNKNOWN',
+  cleanupCompleted = 'UNKNOWN',
+  externalNetworkRequestCount = undefined,
+}) {
+  const requiredFlags = [
+    level2,
+    playbackOnlyFalseTrigger,
+    userOnlyDetected,
+    userDuringPlaybackDetected,
+    productionVadAlignment,
+    phaseIsolation,
+    environmentInterpretable,
+    cleanupCompleted,
+  ]
+  if (requiredFlags.some(value => value === 'INCONCLUSIVE' || value === 'UNKNOWN'))
+    return 'INCONCLUSIVE'
+
+  if (requiredFlags.every(value => value === 'YES' || value === 'NO') && externalNetworkRequestCount === 0 && playbackProfile === 'macos-local-speech') {
     return level2 === 'YES'
       && playbackOnlyFalseTrigger === 'NO'
       && userOnlyDetected === 'YES'
       && userDuringPlaybackDetected === 'YES'
+      && productionVadAlignment === 'YES'
+      && phaseIsolation === 'YES'
+      && environmentInterpretable === 'YES'
+      && cleanupCompleted === 'YES'
       ? 'PASS'
       : 'FAIL'
   }
@@ -140,6 +155,15 @@ export function serializeLocalDuplexReport(report) {
     'SMOKE_STATUS',
     'HARNESS_READY',
     'VAD_RUNTIME',
+    'PRODUCTION_VAD_ALIGNMENT',
+    'PRODUCTION_VAD_MODEL_ID',
+    'PRODUCTION_VAD_MODEL_REVISION',
+    'PRODUCTION_VAD_MODEL_DTYPE',
+    'PRODUCTION_VAD_ASSET',
+    'PRODUCTION_VAD_AUDIO_PATH',
+    'PRODUCTION_VAD_REMOTE_FALLBACK_ALLOWED',
+    'ENVIRONMENT_INTERPRETABLE',
+    'PHASE_ISOLATION',
     'PHASE_0_TRACK_INSPECTION',
     'TRACK_CONSTRAINTS_SUPPORTED',
     'TRACK_CAPABILITIES_SUPPORTED',
@@ -159,9 +183,13 @@ export function serializeLocalDuplexReport(report) {
     'MIC_SAMPLE_RATE',
     'MIC_CHANNEL_COUNT',
     'VAD_THRESHOLD',
+    'VAD_EXIT_THRESHOLD',
     'VAD_MIN_SILENCE_DURATION_MS',
     'VAD_SPEECH_PAD_MS',
     'VAD_MIN_SPEECH_DURATION_MS',
+    'VAD_SAMPLE_RATE',
+    'PHASE_SETTLE_MS',
+    'PLAYBACK_PROFILE',
     'PLAYBACK_GAIN_MAX',
     'PLAYBACK_START_COUNT',
     'PLAYBACK_END_COUNT',

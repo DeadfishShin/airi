@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs'
+
+import { PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS } from '@proj-airi/stage-ui/composables/audio/microphone-constraints'
+import { PRODUCTION_VAD_DEFAULTS, resolveProductionVADConfig } from '@proj-airi/stage-ui/workers/vad/config'
 import { describe, expect, it } from 'vitest'
 
 // eslint-disable-next-line no-restricted-syntax
@@ -10,9 +14,7 @@ import {
   isAllowedLocalResource,
   level2TrackVerdict,
   LOCAL_DUPLEX_SMOKE_CREDENTIAL_NAMES,
-  LOCAL_DUPLEX_SMOKE_MICROPHONE_CONSTRAINTS,
   LOCAL_DUPLEX_SMOKE_PHASES,
-  LOCAL_DUPLEX_SMOKE_VAD_DEFAULTS,
   normalizeFiniteMetric,
   normalizeTrackBoolean,
   serializeLocalDuplexReport,
@@ -21,14 +23,33 @@ import {
 } from './local-duplex-aec-vad-smoke-logic.mjs'
 
 describe('local duplex AEC/VAD smoke diagnostics', () => {
+  it('uses AIRI production VAD and AudioWorklet rather than the compatibility detector', () => {
+    const rendererSource = readFileSync(new URL('./local-duplex-aec-vad-smoke-renderer.ts', import.meta.url), 'utf8')
+
+    expect(rendererSource).toContain('from \'../../../packages/stage-ui/src/workers/vad\'')
+    expect(rendererSource).toContain('createVAD(')
+    expect(rendererSource).toContain('createVADStates(')
+    expect(rendererSource).toContain('process.worklet?worker&url')
+    expect(rendererSource).not.toContain('@ricky0123/vad-web')
+    expect(rendererSource).not.toContain('ScriptProcessor')
+  })
+
   it('keeps the production-equivalent microphone constraints and VAD defaults', () => {
-    expect(LOCAL_DUPLEX_SMOKE_MICROPHONE_CONSTRAINTS).toEqual({
+    expect(PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS).toEqual({
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
     })
-    expect(LOCAL_DUPLEX_SMOKE_VAD_DEFAULTS).toEqual({
+    expect(PRODUCTION_VAD_DEFAULTS).toEqual({
       threshold: 0.52,
+      minSilenceDurationMs: 1200,
+      speechPadMs: 360,
+      minSpeechDurationMs: 300,
+      sampleRate: 16000,
+    })
+    expect(resolveProductionVADConfig()).toMatchObject({
+      speechThreshold: 0.52,
+      exitThreshold: 0.156,
       minSilenceDurationMs: 1200,
       speechPadMs: 360,
       minSpeechDurationMs: 300,
@@ -63,12 +84,30 @@ describe('local duplex AEC/VAD smoke diagnostics', () => {
       playbackOnlyFalseTrigger: 'NO',
       userOnlyDetected: 'YES',
       userDuringPlaybackDetected: 'YES',
+      productionVadAlignment: 'YES',
+      phaseIsolation: 'YES',
+      environmentInterpretable: 'YES',
+      playbackProfile: 'macos-local-speech',
+      cleanupCompleted: 'YES',
+      externalNetworkRequestCount: 0,
     })).toBe('PASS')
     expect(classifyLevel3LocalDeviceVerdict({
       level2: 'UNKNOWN',
       playbackOnlyFalseTrigger: 'NO',
       userOnlyDetected: 'YES',
       userDuringPlaybackDetected: 'YES',
+    })).toBe('INCONCLUSIVE')
+    expect(classifyLevel3LocalDeviceVerdict({
+      level2: 'YES',
+      playbackOnlyFalseTrigger: 'NO',
+      userOnlyDetected: 'YES',
+      userDuringPlaybackDetected: 'YES',
+      productionVadAlignment: 'YES',
+      phaseIsolation: 'YES',
+      environmentInterpretable: 'YES',
+      playbackProfile: 'synthetic-compatibility',
+      cleanupCompleted: 'YES',
+      externalNetworkRequestCount: 0,
     })).toBe('INCONCLUSIVE')
   })
 
