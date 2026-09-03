@@ -1,7 +1,4 @@
-import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS } from '@proj-airi/stage-ui/composables/audio/microphone-constraints'
 import { PRODUCTION_VAD_DEFAULTS, resolveProductionVADConfig } from '@proj-airi/stage-ui/workers/vad/config'
@@ -26,30 +23,29 @@ import {
 } from './local-duplex-aec-vad-smoke-logic.mjs'
 
 describe('local duplex AEC/VAD smoke diagnostics', () => {
-  it('boots an isolated Vite server and resolves only the smoke production-VAD graph', () => {
-    const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), 'local-duplex-aec-vad-smoke.mjs')
-    const smokeEnvironment = { ...process.env }
-    for (const credentialName of LOCAL_DUPLEX_SMOKE_CREDENTIAL_NAMES)
-      delete smokeEnvironment[credentialName]
+  it('defines a no-media production-host boot probe contract', () => {
+    const probeSource = readFileSync(new URL('./local-duplex-production-host-boot-probe.mjs', import.meta.url), 'utf8')
 
-    const output = execFileSync(process.execPath, [scriptPath, '--preflight'], {
-      cwd: resolve(dirname(scriptPath), '../../..'),
-      env: smokeEnvironment,
-      encoding: 'utf8',
-      timeout: 30000,
-    })
+    expect(probeSource).toContain('const ELECTRON = resolve(APP_ROOT, \'node_modules/.bin/electron\')')
+    expect(probeSource).toContain('child = spawn(ELECTRON, [\'.\']')
+    expect(probeSource).toContain('AIRI_LOCAL_DUPLEX_DIAGNOSTIC_MODE: \'boot-probe\'')
+    expect(probeSource).toContain('APP_USER_DATA_PATH: diagnosticUserDataPath')
+    expect(probeSource).toContain('READY_FOR_OWNER_PHASE0')
+    expect(probeSource).toContain('production-host-boot-timeout')
+  })
 
-    expect(output).toContain('PREFLIGHT_VITE_LISTEN=PASS')
-    expect(output).toContain('PREFLIGHT_DEPENDENCY_PROCESSING=SKIPPED_BY_ISOLATION')
-    expect(output).toContain('VITE_CONFIG_FILE_DISCOVERY_DISABLED=YES')
-    expect(output).toContain('UNRELATED_WORKSPACE_SCAN_REMOVED=YES')
-    expect(output).toContain('WEB_EXTENSION_ENTRY_IN_SMOKE_GRAPH=NO')
-    expect(output).toContain('UNO_CSS_REQUIRED_BY_SMOKE=NO')
-    expect(output).toContain('PREFLIGHT_ROOT_HTML=PASS')
-    expect(output).toContain('PREFLIGHT_RENDERER_TRANSFORM=PASS')
-    expect(output).toContain('PREFLIGHT_PRODUCTION_VAD_GRAPH=PASS')
-    expect(output).not.toContain('airi-plugin-web-extension')
-    expect(output).not.toContain('uno.css')
+  it('routes the owner command through the production Electron main entry', () => {
+    const packageSource = readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+    const mainSource = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+    const diagnosticWindowSource = readFileSync(new URL('../src/main/windows/local-duplex-diagnostic.ts', import.meta.url), 'utf8')
+
+    expect(packageSource).toContain('AIRI_LOCAL_DUPLEX_DIAGNOSTIC_MODE=interactive electron-vite build')
+    expect(packageSource).toContain('AIRI_LOCAL_DUPLEX_DIAGNOSTIC_MODE=interactive electron-vite preview --skipBuild')
+    expect(packageSource).not.toContain('smoke:realtime-voice-local-duplex.mjs')
+    expect(mainSource).toContain('app.whenReady()')
+    expect(mainSource).toContain('setupLocalDuplexDiagnosticWindow')
+    expect(diagnosticWindowSource).toContain('session: diagnosticSession')
+    expect(diagnosticWindowSource).toContain('protocol.handle(LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL')
   })
 
   it('uses AIRI production VAD and AudioWorklet rather than the compatibility detector', () => {
@@ -62,6 +58,21 @@ describe('local duplex AEC/VAD smoke diagnostics', () => {
     expect(rendererSource).toContain('createVAD(')
     expect(rendererSource).toContain('createVADStates(')
     expect(rendererSource).toContain('process.worklet?worker&url')
+    expect(rendererSource).not.toContain('@ricky0123/vad-web')
+    expect(rendererSource).not.toContain('ScriptProcessor')
+  })
+
+  it('keeps the production-host diagnostic renderer on the production VAD graph', () => {
+    const bootSource = readFileSync(new URL('../src/renderer/local-duplex-diagnostic-boot.ts', import.meta.url), 'utf8')
+    const rendererSource = readFileSync(new URL('./local-duplex-aec-vad-smoke-renderer.ts', import.meta.url), 'utf8')
+
+    expect(bootSource).toContain('createVAD')
+    expect(bootSource).toContain('createVADStates')
+    expect(bootSource).toContain('process.worklet?worker&url')
+    expect(rendererSource).toContain('LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL')
+    expect(rendererSource).toContain('allowRemoteModels = false')
+    expect(rendererSource).toContain('localModelPath =')
+    expect(rendererSource).toContain('LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL}://production-vad/')
     expect(rendererSource).not.toContain('@ricky0123/vad-web')
     expect(rendererSource).not.toContain('ScriptProcessor')
   })

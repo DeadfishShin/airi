@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local duplex / AEC / VAD diagnostic</title>
+    <style>
+      :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+      body { max-width: 760px; margin: 0 auto; padding: 28px; background: #15171a; color: #f1f3f5; }
+      h1 { font-size: 22px; margin: 0 0 10px; }
+      p { color: #b9c0c8; line-height: 1.45; }
+      #phase { margin: 24px 0 8px; font-size: 20px; font-weight: 650; }
+      #instruction { min-height: 48px; }
+      #countdown { font-size: 36px; font-variant-numeric: tabular-nums; margin: 12px 0; }
+      #status { min-height: 30px; color: #8bd5ca; }
+      button { border: 0; border-radius: 8px; padding: 10px 16px; background: #d95f59; color: white; font-weight: 650; cursor: pointer; }
+      button:disabled { opacity: .55; cursor: default; }
+      .note { font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h1>Local duplex / AEC / VAD diagnostic</h1>
+    <p class="note">No ASR, TTS, LLM, provider, or chat path is used. Microphone audio stays in the AIRI production VAD graph and is never saved or displayed.</p>
+    <div id="phase">Preparing PHASE_0</div>
+    <div id="instruction">Inspecting local track settings and loading the bundled local VAD asset.</div>
+    <div id="countdown"></div>
+    <div id="status" aria-live="polite">Starting the production AIRI diagnostic host…</div>
+    <button id="cancel" type="button">Cancel smoke</button>
+    <script type="module" src="/local-duplex-diagnostic.ts"></script>
+  </body>
+</html>

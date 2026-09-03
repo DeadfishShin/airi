@@ -1,4 +1,7 @@
+import type { Plugin } from 'vite'
+
 import { join, resolve } from 'node:path'
+import { env } from 'node:process'
 
 import VueI18n from '@intlify/unplugin-vue-i18n/vite'
 import templateCompilerOptions from '@tresjs/core/template-compiler-options'
@@ -18,6 +21,91 @@ import { defineConfig } from 'electron-vite'
 
 const stageUIAssetsRoot = resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src', 'assets'))
 const sharedCacheDir = resolve(join(import.meta.dirname, '..', '..', '.cache'))
+const localDuplexDiagnosticMode = env.AIRI_LOCAL_DUPLEX_DIAGNOSTIC_MODE
+const isLocalDuplexDiagnostic = localDuplexDiagnosticMode === 'interactive' || localDuplexDiagnosticMode === 'boot-probe'
+const normalRendererPlugins: Plugin[] = [
+  Info(),
+
+  {
+    name: 'proj-airi:defines',
+    config(ctx) {
+      const define: Record<string, any> = {
+        'import.meta.env.RUNTIME_ENVIRONMENT': '\'electron\'',
+      }
+      if (ctx.mode === 'development') {
+        define['import.meta.env.URL_MODE'] = '\'server\''
+      }
+      if (ctx.mode === 'production') {
+        define['import.meta.env.URL_MODE'] = '\'file\''
+      }
+
+      return { define }
+    },
+  },
+
+  Inspect(),
+
+  Yaml(),
+
+  VueMacros({
+    plugins: {
+      vue: Vue({
+        include: [/\.vue$/, /\.md$/],
+        ...templateCompilerOptions,
+      }),
+      vueJsx: false,
+    },
+    betterDefine: false,
+  }),
+
+  VueRouter({
+    dts: resolve(import.meta.dirname, 'src/renderer/typed-router.d.ts'),
+    routesFolder: [
+      {
+        src: resolve(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src', 'pages'),
+        exclude: base => [
+          ...base,
+          '**/settings/account/index.vue',
+          '**/settings/connection/index.vue',
+          '**/settings/data/index.vue',
+          '**/settings/models/index.vue',
+          '**/settings/system/general.vue',
+          '**/settings/modules/mcp.vue',
+          '**/devtools/index.vue',
+          '**/settings/index.vue',
+        ],
+      },
+      resolve(import.meta.dirname, 'src', 'renderer', 'pages'),
+    ],
+    exclude: ['**/components/**'],
+  }),
+
+  VitePluginVueDevTools(),
+
+  // https://github.com/JohnCampionJr/vite-plugin-vue-layouts
+  Layouts({
+    layoutsDirs: [
+      resolve(import.meta.dirname, 'src', 'renderer', 'layouts'),
+      resolve(import.meta.dirname, '..', '..', 'packages', 'stage-layouts', 'src', 'layouts'),
+    ],
+    pagesDirs: [resolve(import.meta.dirname, 'src', 'renderer', 'pages')],
+  }),
+
+  UnoCss(),
+
+  // https://github.com/intlify/bundle-tools/tree/main/packages/unplugin-vue-i18n
+  VueI18n({
+    runtimeOnly: true,
+    compositionOnly: true,
+    fullInstall: true,
+  }),
+
+  DownloadLive2DSDK(),
+  Download('https://dist.ayaka.moe/live2d-models/hiyori_free_zh.zip', 'hiyori_free_zh.zip', 'live2d/models', { parentDir: stageUIAssetsRoot, cacheDir: sharedCacheDir }),
+  Download('https://dist.ayaka.moe/live2d-models/hiyori_pro_zh.zip', 'hiyori_pro_zh.zip', 'live2d/models', { parentDir: stageUIAssetsRoot, cacheDir: sharedCacheDir }),
+  Download('https://dist.ayaka.moe/vrm-models/VRoid-Hub/AvatarSample-A/AvatarSample_A.vrm', 'AvatarSample_A.vrm', 'vrm/models/AvatarSample-A', { parentDir: stageUIAssetsRoot, cacheDir: sharedCacheDir }),
+  Download('https://dist.ayaka.moe/vrm-models/VRoid-Hub/AvatarSample-B/AvatarSample_B.vrm', 'AvatarSample_B.vrm', 'vrm/models/AvatarSample-B', { parentDir: stageUIAssetsRoot, cacheDir: sharedCacheDir }),
+]
 
 export default defineConfig({
   main: {
@@ -100,8 +188,15 @@ export default defineConfig({
     build: {
       rolldownOptions: {
         input: {
-          'main': resolve(join(import.meta.dirname, 'src', 'renderer', 'index.html')),
-          'beat-sync': resolve(join(import.meta.dirname, 'src', 'renderer', 'beat-sync.html')),
+          ...(isLocalDuplexDiagnostic
+            ? {
+                'local-duplex-diagnostic': resolve(join(import.meta.dirname, 'src', 'renderer', 'local-duplex-diagnostic.html')),
+                'local-duplex-diagnostic-boot': resolve(join(import.meta.dirname, 'src', 'renderer', 'local-duplex-diagnostic-boot.html')),
+              }
+            : {
+                'main': resolve(join(import.meta.dirname, 'src', 'renderer', 'index.html')),
+                'beat-sync': resolve(join(import.meta.dirname, 'src', 'renderer', 'beat-sync.html')),
+              }),
         },
       },
     },
@@ -158,12 +253,16 @@ export default defineConfig({
         // See: https://vite.dev/config/server-options#server-fs-strict
         strict: false,
       },
-      warmup: {
-        clientFiles: [
-          `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src'))}/*.vue`,
-          `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src'))}/*.vue`,
-        ],
-      },
+      ...(isLocalDuplexDiagnostic
+        ? {}
+        : {
+            warmup: {
+              clientFiles: [
+                `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src'))}/*.vue`,
+                `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src'))}/*.vue`,
+              ],
+            },
+          }),
     },
 
     worker: {
@@ -175,88 +274,6 @@ export default defineConfig({
       },
     },
 
-    plugins: [
-      Info(),
-
-      {
-        name: 'proj-airi:defines',
-        config(ctx) {
-          const define: Record<string, any> = {
-            'import.meta.env.RUNTIME_ENVIRONMENT': '\'electron\'',
-          }
-          if (ctx.mode === 'development') {
-            define['import.meta.env.URL_MODE'] = '\'server\''
-          }
-          if (ctx.mode === 'production') {
-            define['import.meta.env.URL_MODE'] = '\'file\''
-          }
-
-          return { define }
-        },
-      },
-
-      Inspect(),
-
-      Yaml(),
-
-      VueMacros({
-        plugins: {
-          vue: Vue({
-            include: [/\.vue$/, /\.md$/],
-            ...templateCompilerOptions,
-          }),
-          vueJsx: false,
-        },
-        betterDefine: false,
-      }),
-
-      VueRouter({
-        dts: resolve(import.meta.dirname, 'src/renderer/typed-router.d.ts'),
-        routesFolder: [
-          {
-            src: resolve(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src', 'pages'),
-            exclude: base => [
-              ...base,
-              '**/settings/account/index.vue',
-              '**/settings/connection/index.vue',
-              '**/settings/data/index.vue',
-              '**/settings/models/index.vue',
-              '**/settings/system/general.vue',
-              '**/settings/modules/mcp.vue',
-              '**/devtools/index.vue',
-              '**/settings/index.vue',
-            ],
-          },
-          resolve(import.meta.dirname, 'src', 'renderer', 'pages'),
-        ],
-        exclude: ['**/components/**'],
-      }),
-
-      VitePluginVueDevTools(),
-
-      // https://github.com/JohnCampionJr/vite-plugin-vue-layouts
-      Layouts({
-        layoutsDirs: [
-          resolve(import.meta.dirname, 'src', 'renderer', 'layouts'),
-          resolve(import.meta.dirname, '..', '..', 'packages', 'stage-layouts', 'src', 'layouts'),
-        ],
-        pagesDirs: [resolve(import.meta.dirname, 'src', 'renderer', 'pages')],
-      }),
-
-      UnoCss(),
-
-      // https://github.com/intlify/bundle-tools/tree/main/packages/unplugin-vue-i18n
-      VueI18n({
-        runtimeOnly: true,
-        compositionOnly: true,
-        fullInstall: true,
-      }),
-
-      DownloadLive2DSDK(),
-      Download('https://dist.ayaka.moe/live2d-models/hiyori_free_zh.zip', 'hiyori_free_zh.zip', 'live2d/models', { parentDir: stageUIAssetsRoot, cacheDir: sharedCacheDir }),
-      Download('https://dist.ayaka.moe/live2d-models/hiyori_pro_zh.zip', 'hiyori_pro_zh.zip', 'live2d/models', { parentDir: stageUIAssetsRoot, cacheDir: sharedCacheDir }),
-      Download('https://dist.ayaka.moe/vrm-models/VRoid-Hub/AvatarSample-A/AvatarSample_A.vrm', 'AvatarSample_A.vrm', 'vrm/models/AvatarSample-A', { parentDir: stageUIAssetsRoot, cacheDir: sharedCacheDir }),
-      Download('https://dist.ayaka.moe/vrm-models/VRoid-Hub/AvatarSample-B/AvatarSample_B.vrm', 'AvatarSample_B.vrm', 'vrm/models/AvatarSample-B', { parentDir: stageUIAssetsRoot, cacheDir: sharedCacheDir }),
-    ],
+    plugins: isLocalDuplexDiagnostic ? [] : normalRendererPlugins,
   },
 })

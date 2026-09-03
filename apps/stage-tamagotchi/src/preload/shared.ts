@@ -1,9 +1,13 @@
 import type { ElectronWindow } from '@proj-airi/stage-shared'
 
-import { contextIsolated, platform } from 'node:process'
+import type { LocalDuplexDiagnosticAPI } from '../shared/local-duplex-diagnostic'
+
+import { contextIsolated, env, platform } from 'node:process'
 
 import { electronAPI } from '@electron-toolkit/preload'
 import { contextBridge, ipcRenderer } from 'electron'
+
+import { LOCAL_DUPLEX_DIAGNOSTIC_MODE_ENV, LOCAL_DUPLEX_DIAGNOSTIC_READY_CHANNEL } from '../shared/local-duplex-diagnostic'
 
 export function expose() {
   // TODO: once we refactored eventa to support window-namespaced contexts,
@@ -26,6 +30,18 @@ export function expose() {
   else {
     window.electron = electronAPI
     window.platform = platform
+  }
+
+  if (env[LOCAL_DUPLEX_DIAGNOSTIC_MODE_ENV]) {
+    const diagnosticAPI: LocalDuplexDiagnosticAPI = {
+      notifyReady: () => ipcRenderer.send(LOCAL_DUPLEX_DIAGNOSTIC_READY_CHANNEL),
+    }
+    if (contextIsolated) {
+      contextBridge.exposeInMainWorld('airiLocalDuplexDiagnostic', diagnosticAPI)
+    }
+    else {
+      window.airiLocalDuplexDiagnostic = diagnosticAPI
+    }
   }
 }
 

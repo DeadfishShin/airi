@@ -14,8 +14,8 @@
 | `RESOLVED_MODEL_FILE` | `onnx/model.onnx` |
 
 The model artifact is vendored for the AIRI production-aligned local
-diagnostics/offline-load proof. It is not a claim that the current duplex
-smoke phases have already been re-wired to the production detector.
+diagnostics/offline-load proof. The duplex smoke now uses the production VAD
+detector and this artifact through the production Electron diagnostic host.
 
 The public upstream `main` revision was independently checked at the time of
 acquisition and reported the same artifact hash and size. The immutable

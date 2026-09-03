@@ -15,6 +15,7 @@ import {
   PRODUCTION_VAD_MODEL_ID,
   PRODUCTION_VAD_MODEL_REVISION,
 } from '../../../packages/stage-ui/src/workers/vad/model-authority'
+import { LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL } from '../src/shared/local-duplex-diagnostic'
 // eslint-disable-next-line no-restricted-syntax
 import {
   classifyLevel3LocalDeviceVerdict,
@@ -47,6 +48,10 @@ const elements = {
   status: document.getElementById('status') as HTMLDivElement,
   cancel: document.getElementById('cancel') as HTMLButtonElement,
 }
+
+// The production-host main process uses this content-free handshake to prove that
+// the diagnostic renderer reached its pre-PHASE_0 boundary before media is requested.
+window.airiLocalDuplexDiagnostic?.notifyReady()
 
 interface PhaseResult {
   starts: number
@@ -87,11 +92,13 @@ const browserTransformersEnv = env as typeof env & {
 
 browserTransformersEnv.allowRemoteModels = false
 browserTransformersEnv.allowLocalModels = true
-browserTransformersEnv.localModelPath = '/production-vad/'
+browserTransformersEnv.localModelPath = `${LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL}://production-vad/`
 browserTransformersEnv.useBrowserCache = false
 browserTransformersEnv.useFSCache = false
 browserTransformersEnv.useCustomCache = false
-browserTransformersEnv.backends.onnx.wasm = { wasmPaths: '/ort/' }
+// The production Electron build includes the ONNX Runtime wasm asset next to
+// this renderer bundle. Leave its URL resolution to Transformers.js/Vite so
+// the diagnostic host does not need a second wasm server or path convention.
 
 function updateStatus(message: string) {
   elements.status.textContent = message

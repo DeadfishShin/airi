@@ -13,13 +13,14 @@ import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { Format, LogLevel, setGlobalFormat, setGlobalHookPostLog, setGlobalLogLevel, useLogg } from '@guiiai/logg'
 import { createContext } from '@moeru/eventa/adapters/electron/main'
 import { hasSelectedScreenCaptureSource, initScreenCaptureForMain } from '@proj-airi/electron-screen-capture/main'
-import { app, ipcMain, session } from 'electron'
+import { app, ipcMain, protocol, session } from 'electron'
 import { noop } from 'es-toolkit'
 import { createLoggLogger, injeca, lifecycle } from 'injeca'
 import { isLinux } from 'std-env'
 
 import icon from '../../resources/icon.png?asset'
 
+import { LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL, resolveLocalDuplexDiagnosticMode, stripLocalDuplexDiagnosticCredentials } from '../shared/local-duplex-diagnostic'
 import { openDebugger, setupDebugger } from './app/debugger'
 import { nullFileLoggerHandle, setupFileLogger } from './app/file-logger'
 import { resolveIsWayland } from './app/ozone'
@@ -51,12 +52,25 @@ import { setupChatWindowReusableFunc } from './windows/chat'
 import { isDesktopOverlayEnabled, setupDesktopOverlayWindow } from './windows/desktop-overlay'
 import { setupDevtoolsWindow } from './windows/devtools'
 import { setupEditorWindowManager } from './windows/editor'
+import { setupLocalDuplexDiagnosticWindow } from './windows/local-duplex-diagnostic'
 import { setupMainWindow } from './windows/main'
 import { setupNoticeWindowManager } from './windows/notice'
 import { setupOnboardingWindowManager } from './windows/onboarding'
 import { setupSettingsWindowReusableFunc } from './windows/settings'
 import { setupSpotlightWindowManager } from './windows/spotlight'
 import { setupWidgetsWindowManager } from './windows/widgets'
+
+if (resolveLocalDuplexDiagnosticMode(env)) {
+  protocol.registerSchemesAsPrivileged([{
+    scheme: LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  }])
+}
 
 // TODO: once we refactored eventa to support window-namespaced contexts,
 // we can remove the setMaxListeners call below since eventa will be able to dispatch and
@@ -150,6 +164,15 @@ let skipFileLogging = false
 
 app.whenReady().then(async () => {
   if (!shouldStartMainProcess) {
+    return
+  }
+
+  const localDuplexDiagnosticMode = resolveLocalDuplexDiagnosticMode(env)
+  if (localDuplexDiagnosticMode) {
+    // Diagnostic mode deliberately bypasses the normal provider/chat bootstrap.
+    // The renderer is still hosted by this production Electron main entry.
+    stripLocalDuplexDiagnosticCredentials(env)
+    await setupLocalDuplexDiagnosticWindow({ mode: localDuplexDiagnosticMode })
     return
   }
 
