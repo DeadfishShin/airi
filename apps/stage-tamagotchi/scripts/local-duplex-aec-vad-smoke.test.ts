@@ -1,4 +1,7 @@
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS } from '@proj-airi/stage-ui/composables/audio/microphone-constraints'
 import { PRODUCTION_VAD_DEFAULTS, resolveProductionVADConfig } from '@proj-airi/stage-ui/workers/vad/config'
@@ -23,9 +26,38 @@ import {
 } from './local-duplex-aec-vad-smoke-logic.mjs'
 
 describe('local duplex AEC/VAD smoke diagnostics', () => {
+  it('boots an isolated Vite server and resolves only the smoke production-VAD graph', () => {
+    const scriptPath = resolve(dirname(fileURLToPath(import.meta.url)), 'local-duplex-aec-vad-smoke.mjs')
+    const smokeEnvironment = { ...process.env }
+    for (const credentialName of LOCAL_DUPLEX_SMOKE_CREDENTIAL_NAMES)
+      delete smokeEnvironment[credentialName]
+
+    const output = execFileSync(process.execPath, [scriptPath, '--preflight'], {
+      cwd: resolve(dirname(scriptPath), '../../..'),
+      env: smokeEnvironment,
+      encoding: 'utf8',
+      timeout: 30000,
+    })
+
+    expect(output).toContain('PREFLIGHT_VITE_LISTEN=PASS')
+    expect(output).toContain('PREFLIGHT_DEPENDENCY_PROCESSING=SKIPPED_BY_ISOLATION')
+    expect(output).toContain('VITE_CONFIG_FILE_DISCOVERY_DISABLED=YES')
+    expect(output).toContain('UNRELATED_WORKSPACE_SCAN_REMOVED=YES')
+    expect(output).toContain('WEB_EXTENSION_ENTRY_IN_SMOKE_GRAPH=NO')
+    expect(output).toContain('UNO_CSS_REQUIRED_BY_SMOKE=NO')
+    expect(output).toContain('PREFLIGHT_ROOT_HTML=PASS')
+    expect(output).toContain('PREFLIGHT_RENDERER_TRANSFORM=PASS')
+    expect(output).toContain('PREFLIGHT_PRODUCTION_VAD_GRAPH=PASS')
+    expect(output).not.toContain('airi-plugin-web-extension')
+    expect(output).not.toContain('uno.css')
+  })
+
   it('uses AIRI production VAD and AudioWorklet rather than the compatibility detector', () => {
+    const launcherSource = readFileSync(new URL('./local-duplex-aec-vad-smoke.mjs', import.meta.url), 'utf8')
     const rendererSource = readFileSync(new URL('./local-duplex-aec-vad-smoke-renderer.ts', import.meta.url), 'utf8')
 
+    expect(launcherSource).toContain('configFile: false')
+    expect(launcherSource).toContain('disabled: true')
     expect(rendererSource).toContain('from \'../../../packages/stage-ui/src/workers/vad\'')
     expect(rendererSource).toContain('createVAD(')
     expect(rendererSource).toContain('createVADStates(')

@@ -21,6 +21,14 @@ const REPORT_MARKER = 'LOCAL_DUPLEX_AEC_VAD_REPORT_JSON:'
 const RENDERER_ENTRY = '/apps/stage-tamagotchi/scripts/local-duplex-aec-vad-smoke-renderer.ts'
 const MODEL_RESOURCE_ROOT = '/production-vad/'
 const ORT_RESOURCE_ROOT = '/ort/'
+const PRODUCTION_VAD_PREFLIGHT_MODULES = [
+  '/packages/stage-ui/src/workers/vad/index.ts',
+  '/packages/stage-ui/src/workers/vad/config.ts',
+  '/packages/stage-ui/src/workers/vad/model-authority.ts',
+  '/packages/stage-ui/src/workers/vad/vad.ts',
+  '/packages/stage-ui/src/workers/vad/manager.ts',
+  '/packages/stage-ui/src/workers/vad/process.worklet.ts?worker&url',
+]
 
 function findInstalledDirectory(prefix) {
   const directory = readdirSync(PNPM_DIRECTORY).find(name => name.startsWith(prefix))
@@ -142,9 +150,17 @@ async function createLocalViteServer(tempRoot) {
   const { createServer: createViteServer } = await import('vite')
   return createViteServer({
     root: REPOSITORY_ROOT,
+    // This server is a standalone diagnostics runtime. It must not discover
+    // the repository's app-level Vite configs or their plugin graphs.
+    configFile: false,
     cacheDir: join(tempRoot, 'vite-cache'),
     appType: 'spa',
     logLevel: 'error',
+    // The smoke entry is intentionally transformed on demand. Disabling the
+    // optimizer prevents Vite from scanning unrelated workspace HTML/entries.
+    optimizeDeps: {
+      disabled: true,
+    },
     server: {
       host: '127.0.0.1',
       port: 0,
@@ -160,15 +176,54 @@ async function createLocalViteServer(tempRoot) {
   })
 }
 
+function loopbackUrl(address, requestPath) {
+  return `http://127.0.0.1:${address.port}${requestPath}`
+}
+
+async function fetchLoopbackText(address, requestPath) {
+  const response = await fetch(loopbackUrl(address, requestPath))
+  if (!response.ok)
+    throw new Error(`preflight-http-${response.status}-${requestPath.replace(/[^\w./?-]/g, '-')}`)
+  return response.text()
+}
+
 async function runPreflight() {
   const credentialEnvStripped = stripCredentialEnvironment({ ...env })
   const tempRoot = await mkdtemp(join(tmpdir(), 'airi-local-duplex-'))
   const viteServer = await createLocalViteServer(tempRoot)
 
   try {
+    await viteServer.listen()
+    const address = viteServer.httpServer?.address()
+    if (!address || typeof address === 'string')
+      throw new Error('preflight-loopback-server-unavailable')
+
+    const rootHtml = await fetchLoopbackText(address, '/')
+    if (!rootHtml.includes(`src="${RENDERER_ENTRY}"`))
+      throw new Error('preflight-root-html-entry-unavailable')
+
+    const rendererResponse = await fetchLoopbackText(address, RENDERER_ENTRY)
+    if (rendererResponse.includes('airi-plugin-web-extension') || rendererResponse.includes('uno.css'))
+      throw new Error('preflight-unrelated-workspace-graph-detected')
+
     const transformed = await viteServer.transformRequest(RENDERER_ENTRY)
     if (!transformed?.code)
       throw new Error('production-vad-renderer-transform-unavailable')
+
+    const vadModules = await Promise.all(PRODUCTION_VAD_PREFLIGHT_MODULES.map(async (modulePath) => {
+      const result = await viteServer.transformRequest(modulePath)
+      if (!result?.code)
+        throw new Error(`production-vad-graph-module-unavailable-${modulePath.replace(/[^\w./?-]/g, '-')}`)
+      return result
+    }))
+    if (vadModules.length !== PRODUCTION_VAD_PREFLIGHT_MODULES.length)
+      throw new Error('production-vad-graph-incomplete')
+
+    const pluginNames = viteServer.config.plugins.map(plugin => plugin.name || '')
+    if (viteServer.config.configFile || viteServer.config.optimizeDeps.disabled !== true || pluginNames.some(name => name.includes('web-extension'))) {
+      throw new Error('preflight-vite-isolation-not-enforced')
+    }
+
     stdout.write([
       '<<LOCAL_DUPLEX_AEC_VAD_REPORT>>',
       'SMOKE_STATUS=DRY_RUN',
@@ -178,7 +233,16 @@ async function runPreflight() {
       'PRODUCTION_VAD_REMOTE_FALLBACK_ALLOWED=NO',
       `CREDENTIAL_ENV_STRIPPED=${credentialEnvStripped ? 'YES' : 'NO'}`,
       'EXTERNAL_NETWORK_REQUEST_COUNT=0',
+      'PREFLIGHT_VITE_LISTEN=PASS',
+      'PREFLIGHT_DEPENDENCY_PROCESSING=SKIPPED_BY_ISOLATION',
+      'VITE_CONFIG_FILE_DISCOVERY_DISABLED=YES',
+      'UNRELATED_WORKSPACE_SCAN_REMOVED=YES',
+      'WEB_EXTENSION_ENTRY_IN_SMOKE_GRAPH=NO',
+      'UNO_CSS_REQUIRED_BY_SMOKE=NO',
+      'PREFLIGHT_ROOT_HTML=PASS',
       'PRODUCTION_VAD_RENDERER_TRANSFORM=PASS',
+      'PREFLIGHT_RENDERER_TRANSFORM=PASS',
+      'PREFLIGHT_PRODUCTION_VAD_GRAPH=PASS',
       'REAL_TOKEN_PLAN_API_CALL_COUNT=0',
       'REAL_PAYG_API_CALL_COUNT=0',
       'REAL_LLM_API_CALL_COUNT=0',
