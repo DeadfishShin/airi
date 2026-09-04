@@ -1454,3 +1454,13 @@ EXACT_ELECTRON_LEVEL3_EXECUTED=NO
 ```
 
 该 PASS 仅表示当前 Mac + system Chromium/WebRTC + production AIRI VAD + local speech playback 已证明 playback-only 无 credible speech false trigger，用户单独讲话及播放期间讲话均可检测；不等价于 exact Electron Level-3 certification、Android certification、automatic barge-in 已实现或完整 realtime voice E2E 已完成。它只释放下一项独立的 **Option-B automatic barge-in source implementation**，本次 closure 不实现 barge-in。`SOURCE_PROVEN` + `OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。
+
+### Option-B automatic barge-in source implementation
+
+已接受的 macOS Chromium candidate gate 只释放 source implementation，不等于 automatic barge-in runtime 已验收。实现将 voice input 拆为两个 lifetime：assistant 播放期间持续运行的本地 microphone + production `VAD`/AudioWorklet listening lane，以及只有收到 production-VAD `speech-start` 后才获授权的 realtime ASR remote transcription lane。`nowSpeaking=true` 不再停止前者；没有可信用户 speech 时，麦克风帧不会因为本地 VAD 存活而自动开启 provider session 或上传到 ASR。既有 `DEFAULT_ASSISTANT_SPEECH_INPUT_COOLDOWN_MS=800` 仍只约束非 barge-in 的 remote re-arm，不阻塞 local VAD，也不重新申请麦克风。
+
+首次可信 `speech-start` 通过 bounded、幂等的 barge-in controller 只触发一次 transaction：先推进 interruption epoch 并使旧 assistant output 失效，再使用现有 TTS session `cancel()`、清空本地 playback、取消 pending streaming endpoint，并调用 chat orchestrator 的 active-generation abort authority。LLM transport 收到 `AbortSignal`；即使底层 provider 忽略 abort，per-session generation epoch 和 Stage turn identity 仍会丢弃旧 token、tool、completion 与 TTS side effects。旧 TTS 的 delayed speaking callback 也不能恢复新 turn 的 speaking state。
+
+当前 VAD 的 `speechPadMs=360` 已在 production `VAD` 内存态 segment 中保留前导音频：`speech-start` 先创建 segment，`createLeadingSpeechAudio()` 将 bounded previous buffers 与首个输入块一起排入 provider stream；因此本 slice 不新增数秒麦克风缓存或持久化 pre-roll。VAD `speechActivityEnd` 仍交给既有 streaming voice endpoint controller，以最新 local activity end 为锚点等待 `500ms` grace，sentence final 仍不直接决定 chat turn。
+
+新增的 barge-in telemetry 仅包含 bounded counters/epoch（local VAD active、trigger、duplicate suppression、TTS cancel、generation invalidate、remote ASR authorization、stale output suppression），不包含 transcript、prompt、LLM text、PCM 或音频。Voice disable、会话/角色切换和 unmount 会停止 mic/VAD/ASR 并清理 pending barge-in state。此提交只完成 source contract 与 deterministic regressions；Codex 未运行真人 microphone/speaker，也未调用 ASR、TTS、LLM 或 chat。exact Electron Level-3 仍 deferred，下一步是 Owner 在 integrated AIRI runtime 中验证 barge-in，而不是在此处推断 runtime PASS。`SOURCE_PROVEN` + `CURRENT_DESIGN_DECISION`。

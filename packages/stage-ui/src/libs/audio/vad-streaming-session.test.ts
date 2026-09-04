@@ -63,4 +63,29 @@ describe('createVadStreamingSession', () => {
     expect(start).not.toHaveBeenCalled()
     expect(stop).not.toHaveBeenCalled()
   })
+
+  it('keeps local speech lifecycle events while a remote ASR gate is closed', async () => {
+    const start = vi.fn(async () => {})
+    const stop = vi.fn(async () => {})
+    let remoteAsrAllowed = false
+    const session = createVadStreamingSession({
+      start,
+      stop,
+      canStart: () => remoteAsrAllowed,
+    })
+
+    session.onSpeechStart()
+    session.onSpeechEnd()
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+
+    expect(start).not.toHaveBeenCalled()
+    expect(stop).not.toHaveBeenCalled()
+
+    remoteAsrAllowed = true
+    session.onSpeechStart()
+    session.onSpeechEnd()
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledTimes(1))
+
+    expect(start).toHaveBeenCalledTimes(1)
+  })
 })

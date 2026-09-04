@@ -27,6 +27,11 @@ import { useVoiceInputSession } from '@proj-airi/stage-ui/composables'
 import { useCanvasPixelIsTransparentAtPoint } from '@proj-airi/stage-ui/composables/canvas-alpha'
 import { createStreamingVoiceTurnEndpoint } from '@proj-airi/stage-ui/libs/audio/streaming-voice-turn-endpoint'
 import {
+  createBargeInController,
+  recordBargeInGenerationCancelOrInvalidate,
+  recordBargeInRemoteAsrAuthorization,
+} from '@proj-airi/stage-ui/libs/speech/barge-in'
+import {
   cancelRealtimeVoiceTurn,
   createRealtimeVoiceTurn,
   failRealtimeVoiceTurn,
@@ -40,6 +45,7 @@ import { useChatSessionStore } from '@proj-airi/stage-ui/stores/chat/session-sto
 import { useHearingSpeechInputPipeline, useHearingStore } from '@proj-airi/stage-ui/stores/modules/hearing'
 import { useOnboardingStore } from '@proj-airi/stage-ui/stores/onboarding'
 import { useSettings, useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/settings'
+import { useSpeechOutputControlStore } from '@proj-airi/stage-ui/stores/speech-output-control'
 import { refDebounced, useBroadcastChannel } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, ref, shallowRef, toRef, watch } from 'vue'
@@ -340,8 +346,26 @@ const { error: transcriptionError, supportsStreamInput } = storeToRefs(hearingPi
 const transcriptionConsumerId = 'stage-tamagotchi:voice-input'
 const chatStore = useChatStore()
 const chatSession = useChatSessionStore()
+const speechOutputControlStore = useSpeechOutputControlStore()
 const streamingTranscriptionUnavailable = ref(false)
 const shouldUseStreamInput = computed(() => supportsStreamInput.value && !!stream.value && !streamingTranscriptionUnavailable.value)
+const isRealtimeBargeInMode = computed(() => shouldUseStreamInput.value && activeTranscriptionProvider.value !== 'browser-web-speech-api')
+let streamingVoiceTurnEndpoint: ReturnType<typeof createStreamingVoiceTurnEndpoint>
+const bargeInController = createBargeInController({
+  onBargeIn: () => {
+    // The Stage host executes the real TTS cancellation synchronously when it
+    // is mounted. The generation authority is independent and is always
+    // invalidated here before the VAD-owned ASR session is allowed to start.
+    const cancelledEndpointTurnId = streamingVoiceTurnEndpoint.cancel()
+    cancelRealtimeVoiceTurn(cancelledEndpointTurnId)
+    speechOutputControlStore.requestStopSpeaking('barge-in')
+    chatStore.cancelActiveGenerations(chatSession.activeSessionId)
+    recordBargeInGenerationCancelOrInvalidate()
+  },
+})
+const unregisterAssistantTurnStartHandler = speechOutputControlStore.registerAssistantTurnStartHandler(
+  turnId => bargeInController.assistantTurnStarted(turnId),
+)
 let pendingRealtimeVoiceTurnId: string | undefined
 let streamingVoiceEndpointingEnabled = false
 const voiceTranscriptBuffer = createTranscriptBuffer({
@@ -435,6 +459,11 @@ function isVoiceInputSuppressed(now = Date.now()) {
   }, now)
 }
 
+/** Keeps local VAD alive during assistant playback without arming ASR early. */
+function isLocalListeningAllowedDuringAssistantPlayback() {
+  return isRealtimeBargeInMode.value && nowSpeaking.value
+}
+
 /**
  * Captures whether a queued VAD segment can still leave the app for ASR.
  */
@@ -467,11 +496,15 @@ function inspectVoiceInputProviderRequestGate(generation: unknown) {
 function inspectVoiceInputStreamingRequestGate() {
   const audioEnabled = enabled.value
   const suppressed = isVoiceInputSuppressed()
+  const localListeningAllowed = isLocalListeningAllowedDuringAssistantPlayback()
 
   return {
     enabled: audioEnabled,
     suppressed,
-    skip: !audioEnabled || suppressed,
+    localListeningAllowed,
+    // In realtime mode, assistant playback suppresses only remote ASR before
+    // a production-VAD speech-start. The VAD/audio-worklet lane stays alive.
+    skip: !audioEnabled || (suppressed && !localListeningAllowed),
   }
 }
 
@@ -492,7 +525,11 @@ function clearAssistantSpeechResumeTimer() {
 function scheduleAssistantSpeechResume() {
   clearAssistantSpeechResumeTimer()
 
-  if (!enabled.value)
+  // Realtime mode keeps the local microphone/VAD lane alive throughout
+  // assistant playback. Its remote ASR gate is reopened by a credible VAD
+  // speech-start, so restarting the whole lifecycle here would duplicate the
+  // active VAD session and could race the barge-in transaction.
+  if (!enabled.value || isRealtimeBargeInMode.value)
     return
 
   const remainingCooldownMs = Math.max(
@@ -574,7 +611,7 @@ async function sendVoiceInputTextToChat(text: string, telemetryTurnId?: string) 
   }
 }
 
-const streamingVoiceTurnEndpoint = createStreamingVoiceTurnEndpoint({
+streamingVoiceTurnEndpoint = createStreamingVoiceTurnEndpoint({
   createTelemetryTurnId: at => createRealtimeVoiceTurn({ transcriptIngressMode: 'streaming-sentence-end', at }),
   onFinalTranscript: ({ text, at, telemetryTurnId }) => {
     recordRealtimeVoiceTurnFinal(telemetryTurnId, at)
@@ -617,7 +654,7 @@ function handleStreamingSentenceEnd(delta: string) {
     return
   }
 
-  if (isVoiceInputSuppressed())
+  if (isVoiceInputSuppressed() && !bargeInController.isInterruptionActive())
     return
 
   streamingVoiceTurnEndpoint.finalTranscript(delta)
@@ -643,6 +680,10 @@ function handleNonVadStreamingSentenceEnd(delta: string) {
 }
 
 function handleStreamingSpeechActivityStart() {
+  const bargeIn = bargeInController.speechStart()
+  if (bargeIn.triggered)
+    recordBargeInRemoteAsrAuthorization()
+
   if (streamingVoiceEndpointingEnabled)
     streamingVoiceTurnEndpoint.speechActivityStart()
 }
@@ -659,7 +700,7 @@ function handleStreamingSpeechActivityCancel() {
 
 /** Replaces the caption with the provider's current volatile transcript. */
 function handleStreamingTranscriptionUpdate(text: string) {
-  if (isVoiceInputSuppressed())
+  if (isVoiceInputSuppressed() && !bargeInController.isInterruptionActive())
     return
 
   replaceHearingInput(text)
@@ -668,7 +709,7 @@ function handleStreamingTranscriptionUpdate(text: string) {
 
 /** Publishes the provider's final streaming-ASR text to the caption overlay. */
 function handleStreamingSpeechEnd(text: string) {
-  if (isVoiceInputSuppressed())
+  if (isVoiceInputSuppressed() && !bargeInController.isInterruptionActive())
     return
 
   postSpeakerCaption(text, 'replace')
@@ -719,7 +760,7 @@ const voiceInputSession = useVoiceInputSession(stream, {
 
 /** Starts the active streaming or recorder-backed voice-input consumers. */
 async function startAudioInteractionConsumers() {
-  if (isVoiceInputSuppressed()) {
+  if (isVoiceInputSuppressed() && !isLocalListeningAllowedDuringAssistantPlayback()) {
     scheduleAssistantSpeechResume()
     return
   }
@@ -745,6 +786,7 @@ async function startAudioInteractionConsumers() {
       onSpeechActivityEnd: handleStreamingSpeechActivityEnd,
       onSpeechActivityCancel: handleStreamingSpeechActivityCancel,
       onTranscriptionUpdate: handleStreamingTranscriptionUpdate,
+      canStartRemoteAsr: () => !isVoiceInputSuppressed() || bargeInController.isInterruptionActive(),
     })
 
     if (inspectVoiceInputStreamingRequestGate().skip) {
@@ -757,6 +799,8 @@ async function startAudioInteractionConsumers() {
       await stopStreamingTranscription(true)
       console.warn('[Main Page] Streaming transcription unavailable; using recorder-backed fallback:', transcriptionError.value)
     }
+
+    bargeInController.setLocalVadActive(true)
   }
 
   if (!shouldUseStreamInput.value)
@@ -796,6 +840,8 @@ async function stopAudioInteractionConsumers(options: StopAudioInteractionOption
   }
 
   streamingVoiceEndpointingEnabled = false
+  bargeInController.setLocalVadActive(false)
+  bargeInController.reset()
 }
 
 watch(enabled, async (val) => {
@@ -832,7 +878,15 @@ watch([activeTranscriptionProvider, activeTranscriptionModel, supportsStreamInpu
 
 watch(nowSpeaking, async (speaking) => {
   if (speaking) {
+    bargeInController.assistantPlaybackStarted()
     clearAssistantSpeechResumeTimer()
+
+    // Realtime voice keeps its local microphone/VAD lane alive so a
+    // production-VAD speech-start can authorize a barge-in. The VAD itself
+    // remains the only authority that can start the remote ASR session.
+    if (isRealtimeBargeInMode.value)
+      return
+
     try {
       await voiceInputInteractionLifecycle.stop({ flushTranscript: false })
     }
@@ -842,6 +896,7 @@ watch(nowSpeaking, async (speaking) => {
     return
   }
 
+  bargeInController.assistantPlaybackEnded()
   assistantSpeechSuppressedUntil.value = assistantSpeechCooldownDeadline()
   scheduleAssistantSpeechResume()
 })
@@ -867,13 +922,14 @@ onUnmounted(() => {
     ownerInstanceId: modelSettingsRuntimeOwnerInstanceId,
   })
   clearAssistantSpeechResumeTimer()
+  unregisterAssistantTurnStartHandler()
   void voiceInputInteractionLifecycle.stop()
     .then(() => streamingVoiceTurnEndpoint.dispose())
     .catch(error => reportVoiceInputFailure('stop listening', error))
 })
 
 watch(stream, async (currentStream) => {
-  if (!enabled.value || !currentStream || voiceInputInteractionLifecycle.isStarting() || voiceInputInteractionLifecycle.isStopping() || isVoiceInputSuppressed())
+  if (!enabled.value || !currentStream || voiceInputInteractionLifecycle.isStarting() || voiceInputInteractionLifecycle.isStopping() || (isVoiceInputSuppressed() && !isLocalListeningAllowedDuringAssistantPlayback()))
     return
 
   // NOTICE: The controls-island mic toggle and device changes can replace the underlying MediaStream

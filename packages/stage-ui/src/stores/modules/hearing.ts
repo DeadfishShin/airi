@@ -116,6 +116,8 @@ interface MediaStreamTranscriptionOptions extends StreamingTranscriptionConsumer
   sampleRate?: number
   providerOptions?: Record<string, unknown>
   idleTimeoutMs?: number
+  /** Optional page-level authority for opening a remote ASR segment. */
+  canStartRemoteAsr?: () => boolean | Promise<boolean>
 }
 
 export const CONFIDENCE_THRESHOLD_DISABLED = -3
@@ -971,6 +973,7 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
       stop: async () => {
         await finishRealtimeTranscription()
       },
+      canStart: options.canStartRemoteAsr,
       onError: (err) => {
         error.value = errorMessage(err)
         console.error('Error managing VAD streaming transcription:', error.value)

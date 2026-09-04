@@ -87,6 +87,33 @@ describe('speech output control store', () => {
     })
   })
 
+  it('runs the barge-in stop handler immediately and marks the request consumed', () => {
+    const store = useSpeechOutputControlStore()
+    const stop = vi.fn()
+    const unregister = store.registerImmediateStopHandler(stop)
+
+    store.requestStopSpeaking('barge-in')
+
+    expect(stop).toHaveBeenCalledOnce()
+    expect(stop).toHaveBeenCalledWith('barge-in')
+    expect(store.consumeImmediatelyHandledRequest(store.latestStopRequest!.id)).toBe(true)
+    expect(store.consumeImmediatelyHandledRequest(store.latestStopRequest!.id)).toBe(false)
+
+    unregister()
+  })
+
+  it('announces assistant turn identity synchronously for renderer coordination', () => {
+    const store = useSpeechOutputControlStore()
+    const onTurnStarted = vi.fn()
+    const unregister = store.registerAssistantTurnStartHandler(onTurnStarted)
+
+    store.announceAssistantTurnStarted('turn-1')
+
+    expect(onTurnStarted).toHaveBeenCalledOnce()
+    expect(onTurnStarted).toHaveBeenCalledWith('turn-1')
+    unregister()
+  })
+
   it('persists mute state and requests an immediate stop when mute is enabled', async () => {
     const store = useSpeechOutputControlStore()
 

@@ -1,6 +1,8 @@
 export interface VadStreamingSessionOptions {
   start: () => Promise<void>
   stop: () => Promise<void>
+  /** Optional remote-ASR gate evaluated after local VAD speech-start. */
+  canStart?: () => boolean | Promise<boolean>
   onError?: (error: unknown) => void
 }
 
@@ -30,6 +32,9 @@ export function createVadStreamingSession(options: VadStreamingSessionOptions) {
     speechActive = true
     void enqueue(async () => {
       if (disposed || providerSessionActive)
+        return
+
+      if (options.canStart && !await options.canStart())
         return
 
       try {

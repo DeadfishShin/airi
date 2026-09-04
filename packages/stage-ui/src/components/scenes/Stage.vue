@@ -40,6 +40,7 @@ import { live2dMotionMagicProfiles, useLive2DMotionMagic, useLive2DMotionMagicSe
 import { getDefaultStreamingModel, getDefinedProvider } from '../../libs/providers/providers'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '../../libs/providers/providers/official'
 import { QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID } from '../../libs/providers/qwen-audio-tts-token-plan-ipc'
+import { recordBargeInStaleOutputSuppressed, recordBargeInTtsCancel } from '../../libs/speech/barge-in'
 import { bindSpeakingStateToPlaybackManager } from '../../libs/speech/playback-speaking-state'
 import { createQwenAudioTtsTokenPlanStageDiagnostics } from '../../libs/speech/qwen-audio-tts-token-plan-diagnostics'
 import { summarizeQwen3TtsStageTelemetry } from '../../libs/speech/qwen-tts-stage-session'
@@ -725,16 +726,22 @@ function setupAnalyser() {
 // point. See `packages/stage-ui/src/libs/speech/tts-session.ts`.
 let currentSession: StageTtsSession | null = null
 let currentSessionTelemetryTurnId: string | undefined
+let currentSessionTurnId: string | undefined
 
 function stopSpeechOutput(reason: string) {
+  if (reason === 'barge-in')
+    recordBargeInTtsCancel()
   cancelRealtimeVoiceTurn(currentSessionTelemetryTurnId)
   currentSession?.cancel(reason)
   currentSession = null
   currentSessionTelemetryTurnId = undefined
+  currentSessionTurnId = undefined
   speechPipeline.stopAll(reason)
   playbackManager.stopAll(reason)
   resetAssistantSpeechSurface(reason)
 }
+
+const unregisterImmediateStopHandler = speechOutputControlStore.registerImmediateStopHandler(stopSpeechOutput)
 
 /** Resolves the active streaming provider's model for the current Stage session. */
 function resolveStreamingSessionModel(): string | null {
@@ -815,6 +822,20 @@ function openTtsSession(
   let session: StageTtsSession | null = null
   let latestQwenTelemetry: Qwen3TtsStageSessionTelemetry | undefined
   let snapshot: StreamingSessionSnapshot | null | undefined
+  const setSpeakingForCurrentSession = (speaking: boolean) => {
+    // Provider callbacks can arrive after cancel() (for example, a delayed
+    // playback-drain event). Once another turn owns Stage, an old callback
+    // must not clear or re-enable its speaking state.
+    if (session && (currentSession !== session || currentSessionTurnId !== turnId)) {
+      recordBargeInStaleOutputSuppressed()
+      return
+    }
+
+    if (speaking)
+      nowSpeaking.value = true
+    else
+      resetSpeakingState()
+  }
   const clearIfActive = () => {
     if (session && currentSession === session && session.intentId.startsWith('stream-')) {
       currentSession = null
@@ -844,10 +865,7 @@ function openTtsSession(
           source.connect(lipSyncNode.value)
       },
       onSpeakingChange: (speaking) => {
-        if (speaking)
-          nowSpeaking.value = true
-        else
-          resetSpeakingState()
+        setSpeakingForCurrentSession(speaking)
       },
       onTelemetry: (telemetry) => {
         latestQwenTelemetry = telemetry
@@ -866,10 +884,7 @@ function openTtsSession(
           source.connect(lipSyncNode.value)
       },
       onSpeakingChange: (speaking) => {
-        if (speaking)
-          nowSpeaking.value = true
-        else
-          resetSpeakingState()
+        setSpeakingForCurrentSession(speaking)
       },
       onTelemetry: (telemetry) => {
         latestQwenTelemetry = telemetry
@@ -923,8 +938,19 @@ function openTtsSession(
   return session
 }
 
+function currentAssistantSessionForTurn(turnId: string): StageTtsSession | null {
+  if (!currentSession || currentSessionTurnId !== turnId) {
+    recordBargeInStaleOutputSuppressed()
+    return null
+  }
+  return currentSession
+}
+
 watch(latestStopRequest, (request) => {
   if (!request)
+    return
+
+  if (speechOutputControlStore.consumeImmediatelyHandledRequest(request.id))
     return
 
   stopSpeechOutput(request.reason)
@@ -943,6 +969,8 @@ chatHookCleanups.push(onBeforeMessageComposed(async (_message, context) => {
   currentSession?.cancel('new-message')
   currentSession = null
   currentSessionTelemetryTurnId = undefined
+  currentSessionTurnId = undefined
+  speechOutputControlStore.announceAssistantTurnStarted(context.turnId)
 
   if (activeSpeechProvider.value !== QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID) {
     if (speechMuted.value)
@@ -951,6 +979,7 @@ chatHookCleanups.push(onBeforeMessageComposed(async (_message, context) => {
     await setupLipSync()
     currentSession = openTtsSession(context.turnId, undefined, context.telemetryTurnId)
     currentSessionTelemetryTurnId = context.telemetryTurnId
+    currentSessionTurnId = context.turnId
     return
   }
 
@@ -976,6 +1005,7 @@ chatHookCleanups.push(onBeforeMessageComposed(async (_message, context) => {
   await setupLipSync()
   currentSession = openTtsSession(context.turnId, diagnostics, context.telemetryTurnId)
   currentSessionTelemetryTurnId = context.telemetryTurnId
+  currentSessionTurnId = context.turnId
 }))
 
 chatHookCleanups.push(onBeforeSend(async () => {
@@ -983,11 +1013,15 @@ chatHookCleanups.push(onBeforeSend(async () => {
 }))
 
 chatHookCleanups.push(onTokenLiteral(async (literal, context) => {
-  if (literal.length && currentSession) {
+  const session = currentAssistantSessionForTurn(context.turnId)
+  if (!session)
+    return
+
+  if (literal.length) {
     recordRealtimeVoiceTurnMilestone(context.telemetryTurnId, 'firstLlmTextAt')
     recordRealtimeVoiceTurnMilestone(context.telemetryTurnId, 'firstTtsAppendAt')
   }
-  currentSession?.appendText(literal)
+  session.appendText(literal)
 }))
 
 chatHookCleanups.push(onTokenSpecial(async (special, context) => {
@@ -998,15 +1032,27 @@ chatHookCleanups.push(onTokenSpecial(async (special, context) => {
     return
   }
 
-  currentSession?.appendSpecial(special)
+  const session = currentAssistantSessionForTurn(context.turnId)
+  if (!session)
+    return
+
+  session.appendSpecial(special)
 }))
 
-chatHookCleanups.push(onStreamEnd(async () => {
-  currentSession?.finishInput()
+chatHookCleanups.push(onStreamEnd(async (context) => {
+  const session = currentAssistantSessionForTurn(context.turnId)
+  if (!session)
+    return
+
+  session.finishInput()
 }))
 
-chatHookCleanups.push(onAssistantResponseEnd(async (_message) => {
-  currentSession?.end()
+chatHookCleanups.push(onAssistantResponseEnd(async (_message, context) => {
+  const session = currentAssistantSessionForTurn(context.turnId)
+  if (!session)
+    return
+
+  session.end()
   // Streaming sessions null-out via the onDone hook; segmenter sessions
   // stay around until the next `onBeforeMessageComposed` cancels them
   // (the segmenter pipeline's IntentHandle.end is idempotent and
@@ -1047,6 +1093,7 @@ watch(
     currentSession.cancel('provider-or-voice-changed')
     currentSession = null
     currentSessionTelemetryTurnId = undefined
+    currentSessionTurnId = undefined
   },
 )
 
@@ -1172,6 +1219,7 @@ async function captureFrame() {
 }
 
 onUnmounted(() => {
+  unregisterImmediateStopHandler()
   disposePlaybackStateHandler()
   resetLive2dLipSync()
   chatHookCleanups.forEach(dispose => dispose?.())
@@ -1185,6 +1233,7 @@ onUnmounted(() => {
   currentSession?.cancel('unmount')
   currentSession = null
   currentSessionTelemetryTurnId = undefined
+  currentSessionTurnId = undefined
   playbackManager.stopAll('unmount')
 })
 

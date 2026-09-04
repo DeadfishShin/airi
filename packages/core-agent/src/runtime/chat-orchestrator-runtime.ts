@@ -318,6 +318,8 @@ export interface ChatOrchestratorRuntime {
   ingest: (sendingMessage: string, options: ChatOrchestratorSendOptions, targetSessionId?: string) => Promise<void>
   /** Rejects queued sends that have not started yet. */
   cancelPendingSends: (sessionId?: string) => void
+  /** Aborts active LLM transports and invalidates their side effects. */
+  cancelActiveGenerations: (sessionId?: string) => void
   /** Returns serializable snapshots of currently queued sends. */
   getPendingQueuedSendSnapshot: () => QueuedSendSnapshot[]
   /** Returns the current queued send count. */
@@ -359,6 +361,12 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
   let activeSendSessionId: string | undefined
   let activeStreamingMessage: StreamingAssistantMessage | undefined
   let pendingQueuedSends: QueuedSend[] = []
+  const sessionGenerationEpochs = new Map<string, number>()
+  const activeGenerations = new Set<{
+    sessionId: string
+    epoch: number
+    abortController: AbortController
+  }>()
 
   function emitStateChange() {
     deps.onStateChange?.({
@@ -468,6 +476,15 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
 
     deps.session.ensureSession(sessionId)
 
+    const generationEpoch = sessionGenerationEpochs.get(sessionId) ?? 0
+    const generationAbortController = new AbortController()
+    const activeGeneration = {
+      sessionId,
+      epoch: generationEpoch,
+      abortController: generationAbortController,
+    }
+    activeGenerations.add(activeGeneration)
+
     const existingSessionMessages = deps.session.getSessionMessages(sessionId)
     const turnIndex = existingSessionMessages.filter(message => message.role === 'user').length + 1
 
@@ -509,9 +526,13 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
     })
 
     const isStaleGeneration = () => deps.session.getSessionGeneration(sessionId) !== generation
+      || (sessionGenerationEpochs.get(sessionId) ?? 0) !== generationEpoch
+      || generationAbortController.signal.aborted
     const shouldAbort = () => isStaleGeneration()
-    if (shouldAbort())
+    if (shouldAbort()) {
+      activeGenerations.delete(activeGeneration)
       return
+    }
 
     const buildingMessage: StreamingAssistantMessage = {
       role: 'assistant',
@@ -764,6 +785,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
 
       await deps.llm.stream(options.model, options.chatProvider, newMessages as Message[], {
         headers,
+        abortSignal: generationAbortController.signal,
         requestCorrelation: {
           conversationId: correlation.conversationId,
           roundId: correlation.roundId,
@@ -964,6 +986,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
       throw error
     }
     finally {
+      activeGenerations.delete(activeGeneration)
       setSending(false)
       deps.onSendSettled?.({ sessionId })
     }
@@ -1037,6 +1060,32 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
     emitStateChange()
   }
 
+  /**
+   * Cancels active generations without cancelling the newly queued user turn.
+   *
+   * The transport receives an AbortSignal when it supports aborting. The
+   * per-session epoch remains authoritative even when a provider ignores that
+   * signal: every post-await generation check then drops stale UI, hook, tool,
+   * and completion side effects.
+   */
+  function cancelActiveGenerations(sessionId?: string) {
+    const affectedSessionIds = new Set<string>()
+    for (const active of activeGenerations) {
+      if (sessionId && active.sessionId !== sessionId)
+        continue
+
+      affectedSessionIds.add(active.sessionId)
+      active.abortController.abort('generation-cancelled')
+    }
+
+    for (const affectedSessionId of affectedSessionIds) {
+      sessionGenerationEpochs.set(
+        affectedSessionId,
+        (sessionGenerationEpochs.get(affectedSessionId) ?? 0) + 1,
+      )
+    }
+  }
+
   function getPendingQueuedSendSnapshot() {
     return pendingQueuedSends.map(queued => ({
       sessionId: queued.sessionId,
@@ -1051,6 +1100,7 @@ export function createChatOrchestratorRuntime(deps: ChatOrchestratorRuntimeDeps)
   return {
     ingest,
     cancelPendingSends,
+    cancelActiveGenerations,
     getPendingQueuedSendSnapshot,
     getPendingQueuedSendCount: () => pendingQueuedSends.length,
     getSending: () => sending,

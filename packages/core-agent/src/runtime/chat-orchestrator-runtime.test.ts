@@ -808,6 +808,38 @@ describe('createChatOrchestratorRuntime', () => {
     expect(harness.telemetry.chatActivationSucceeded).toEqual([])
   })
 
+  it('aborts and invalidates an active generation so late provider events have no side effects', async () => {
+    const harness = createHarness()
+    let releaseStream: (() => void) | undefined
+    harness.stream.mockImplementationOnce(async (_model, _chatProvider, _messages, options) => {
+      await new Promise<void>((resolve) => {
+        releaseStream = resolve
+      })
+      await options?.onStreamEvent?.({ type: 'text-delta', text: 'stale assistant output' })
+      await options?.onStreamEvent?.({ type: 'finish', finishReason: 'stop' })
+    })
+
+    const pendingSend = harness.runtime.ingest('interrupt the answer', {
+      model: 'gpt-test',
+      chatProvider: provider,
+    })
+
+    await vi.waitFor(() => {
+      expect(harness.stream).toHaveBeenCalledTimes(1)
+    })
+    const streamOptions = harness.stream.mock.calls[0]?.[3] as StreamOptions | undefined
+    expect(streamOptions?.abortSignal?.aborted).toBe(false)
+
+    harness.runtime.cancelActiveGenerations('session-1')
+    expect(streamOptions?.abortSignal?.aborted).toBe(true)
+    releaseStream?.()
+    await pendingSend
+
+    expect(harness.assistantAppended).toEqual([])
+    expect(harness.assistantTurns).toEqual([])
+    expect(harness.foregroundPatches.some(message => message.content === 'stale assistant output')).toBe(false)
+  })
+
   it('rejects stale generation sends before they start', async () => {
     const harness = createHarness()
     let releaseFirstSend: (() => void) | undefined

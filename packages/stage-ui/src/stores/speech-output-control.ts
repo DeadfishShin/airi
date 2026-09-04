@@ -2,7 +2,10 @@ import { useLocalStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
-export type SpeechOutputStopReason = 'manual-chat' | 'manual-all' | 'muted'
+export type SpeechOutputStopReason = 'manual-chat' | 'manual-all' | 'muted' | 'barge-in'
+
+type ImmediateStopHandler = (reason: SpeechOutputStopReason) => void
+type AssistantTurnStartHandler = (turnId: string) => void
 
 /**
  * Represents a user-requested stop-speaking command for the stage output host.
@@ -20,6 +23,9 @@ export const useSpeechOutputControlStore = defineStore('speech-output-control', 
   })
   const latestStopRequest = ref<SpeechOutputStopRequest>()
   let nextRequestId = 1
+  let immediateStopHandler: ImmediateStopHandler | undefined
+  let immediatelyHandledRequestId = 0
+  let assistantTurnStartHandler: AssistantTurnStartHandler | undefined
 
   /**
    * Requests that the active speech output host stops assistant audio playback.
@@ -34,9 +40,48 @@ export const useSpeechOutputControlStore = defineStore('speech-output-control', 
    * - Nothing. The latest request is published for the Stage host to consume.
    */
   function requestStopSpeaking(reason: SpeechOutputStopReason) {
-    latestStopRequest.value = {
+    const request = {
       id: nextRequestId++,
       reason,
+    }
+    latestStopRequest.value = request
+
+    // Barge-in is latency-sensitive: a mounted Stage host can execute the
+    // existing cancellation primitive synchronously in the same renderer
+    // turn. The reactive request remains as a fallback for a host that is
+    // between mounts.
+    if (reason === 'barge-in' && immediateStopHandler) {
+      immediateStopHandler(reason)
+      immediatelyHandledRequestId = request.id
+    }
+  }
+
+  function registerImmediateStopHandler(handler: ImmediateStopHandler) {
+    immediateStopHandler = handler
+    return () => {
+      if (immediateStopHandler === handler)
+        immediateStopHandler = undefined
+    }
+  }
+
+  function consumeImmediatelyHandledRequest(requestId: number) {
+    if (immediatelyHandledRequestId !== requestId)
+      return false
+
+    immediatelyHandledRequestId = 0
+    return true
+  }
+
+  /** Announces a new assistant turn to synchronous renderer coordination seams. */
+  function announceAssistantTurnStarted(turnId: string) {
+    assistantTurnStartHandler?.(turnId)
+  }
+
+  function registerAssistantTurnStartHandler(handler: AssistantTurnStartHandler) {
+    assistantTurnStartHandler = handler
+    return () => {
+      if (assistantTurnStartHandler === handler)
+        assistantTurnStartHandler = undefined
     }
   }
 
@@ -63,6 +108,10 @@ export const useSpeechOutputControlStore = defineStore('speech-output-control', 
     latestStopRequest,
     speechMuted,
     requestStopSpeaking,
+    registerImmediateStopHandler,
+    consumeImmediatelyHandledRequest,
+    announceAssistantTurnStarted,
+    registerAssistantTurnStartHandler,
     setSpeechMuted,
     toggleSpeechMuted,
   }

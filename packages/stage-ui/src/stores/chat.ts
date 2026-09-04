@@ -513,6 +513,11 @@ export const useChatStore = defineStore('chat', () => {
     runtime.cancelPendingSends(sessionId)
   }
 
+  /** Aborts/invalidate the active assistant generation for barge-in. */
+  function cancelActiveGenerations(sessionId?: string) {
+    runtime.cancelActiveGenerations(sessionId)
+  }
+
   function getPendingQueuedSendSnapshot() {
     return runtime.getPendingQueuedSendSnapshot()
   }
@@ -533,6 +538,7 @@ export const useChatStore = defineStore('chat', () => {
     retry,
     send,
     cancelPendingSends,
+    cancelActiveGenerations,
     getPendingQueuedSendSnapshot,
 
     clearHooks: runtime.hooks.clearHooks,
