@@ -90,6 +90,71 @@ describe('system Chromium local duplex harness', () => {
     expect(chromiumRendererSource).not.toContain('ScriptProcessor')
   })
 
+  it('requires one explicit Start gesture and never auto-initializes Chromium audio', () => {
+    expect(chromiumHtml).toContain('<button id="start" type="button">Start diagnostic</button>')
+    expect(chromiumHtml).toContain('Click Start diagnostic once to request the microphone')
+    expect(chromiumRendererSource).toContain(`start?.addEventListener('click'`)
+    expect(chromiumRendererSource).toContain('start.disabled = true')
+    expect(chromiumRendererSource).toContain('startLocalDuplexDiagnostic()')
+    expect(chromiumRendererSource).not.toContain('void initialize()')
+    expect(smokeRendererSource).toContain(`if (chromiumRuntime)
+  setInitializationStage('WAITING_FOR_USER_START')
+else
+  void initialize()`)
+    expect(chromiumRuntimeSource).toContain(`if (typeof window !== 'undefined')`)
+    expect(chromiumRendererSource.indexOf(`import './local-duplex-chromium-runtime'`)).toBeLessThan(
+      chromiumRendererSource.indexOf('local-duplex-aec-vad-smoke-renderer'),
+    )
+  })
+
+  it('starts AudioContext work on the gesture path and bounds every interactive initialization stage', () => {
+    expect(smokeRendererSource).toContain('export function startLocalDuplexDiagnostic()')
+    expect(smokeRendererSource).toContain(`setInitializationStage('AUDIO_CONTEXT_CREATED')`)
+    expect(smokeRendererSource).toContain('const resumePromise = audioContext.resume()')
+    expect(smokeRendererSource).toContain('AUDIO_CONTEXT_RESUME_TIMEOUT_MS')
+    expect(smokeRendererSource).toContain('MICROPHONE_REQUEST_TIMEOUT_MS')
+    expect(smokeRendererSource).toContain('PRODUCTION_VAD_INIT_TIMEOUT_MS')
+    expect(smokeRendererSource).toContain(`'audio-context-resume-timeout'`)
+    expect(smokeRendererSource).toContain(`'microphone-request-timeout'`)
+    expect(smokeRendererSource).toContain(`'production-vad-init-timeout'`)
+    expect(smokeRendererSource).toContain(`setInitializationStage('MICROPHONE_REQUESTING')`)
+    expect(smokeRendererSource).toContain(`setInitializationStage('PRODUCTION_VAD_LOADING')`)
+    expect(smokeRendererSource).toContain(`setInitializationStage('PHASE_1_READY')`)
+  })
+
+  it('serializes only allowlisted initialization stages and AudioContext outcomes', () => {
+    const report = serializeLocalDuplexReport({
+      INITIALIZATION_STAGE: 'AUDIO_CONTEXT_RESUMED',
+      INITIALIZATION_FAILURE_STAGE: 'none',
+      AUDIO_CONTEXT_STATE_AFTER_CREATE: 'suspended',
+      AUDIO_CONTEXT_STATE_AFTER_RESUME: 'running',
+      AUDIO_CONTEXT_RESUME_RESULT: 'PASS',
+    })
+    expect(report).toContain('INITIALIZATION_STAGE=AUDIO_CONTEXT_RESUMED')
+    expect(report).toContain('INITIALIZATION_FAILURE_STAGE=none')
+    expect(report).toContain('AUDIO_CONTEXT_STATE_AFTER_CREATE=suspended')
+    expect(report).toContain('AUDIO_CONTEXT_STATE_AFTER_RESUME=running')
+    expect(report).toContain('AUDIO_CONTEXT_RESUME_RESULT=PASS')
+
+    const unsafe = serializeLocalDuplexReport({
+      INITIALIZATION_STAGE: 'user transcript',
+      INITIALIZATION_FAILURE_STAGE: 'https://example.test/secret',
+      AUDIO_CONTEXT_RESUME_RESULT: 'not-safe',
+    })
+    expect(unsafe).toContain('INITIALIZATION_STAGE=UNKNOWN')
+    expect(unsafe).toContain('INITIALIZATION_FAILURE_STAGE=UNKNOWN')
+    expect(unsafe).toContain('AUDIO_CONTEXT_RESUME_RESULT=UNKNOWN')
+    expect(unsafe).not.toContain('user transcript')
+    expect(unsafe).not.toContain('example.test')
+  })
+
+  it('keeps Cancel available before Start and reports the waiting stage without media initialization', () => {
+    expect(chromiumHtml).toContain('<button id="cancel" type="button">Cancel smoke</button>')
+    expect(chromiumRendererSource).not.toContain('getUserMedia')
+    expect(smokeRendererSource).toContain(`finish('CANCELLED', 'owner-cancel')`)
+    expect(smokeRendererSource).toContain(`setInitializationStage('WAITING_FOR_USER_START')`)
+  })
+
   it('keeps the accepted model and VAD configuration unchanged', () => {
     expect(smokeRendererSource).toContain('PRODUCTION_VAD_MODEL_ID')
     expect(smokeRendererSource).toContain('PRODUCTION_VAD_MODEL_REVISION')

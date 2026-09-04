@@ -30,6 +30,20 @@ const PLAYBACK_GAIN_MAX = 0.25
 const PLAYBACK_PROFILE = 'synthetic-compatibility'
 const PHASE_SETTLE_MS = PRODUCTION_VAD_DEFAULTS.minSilenceDurationMs + 300
 const PHASE_OBSERVATION_PADDING_MS = 350
+const AUDIO_CONTEXT_RESUME_TIMEOUT_MS = 5000
+const MICROPHONE_REQUEST_TIMEOUT_MS = 15000
+const PRODUCTION_VAD_INIT_TIMEOUT_MS = 30000
+
+type InitializationStage
+  = | 'WAITING_FOR_USER_START'
+    | 'AUDIO_CONTEXT_CREATED'
+    | 'AUDIO_CONTEXT_RESUMED'
+    | 'MICROPHONE_REQUESTING'
+    | 'MICROPHONE_READY'
+    | 'TRACK_INSPECTION_COMPLETE'
+    | 'PRODUCTION_VAD_LOADING'
+    | 'PRODUCTION_VAD_READY'
+    | 'PHASE_1_READY'
 
 type PhaseKey = Exclude<typeof LOCAL_DUPLEX_SMOKE_PHASES[number], 'PHASE_0_TRACK_INSPECTION'>
 type PhaseDefinition = readonly [PhaseKey, string, string, number, boolean]
@@ -64,6 +78,7 @@ const phaseState = {
   current: undefined as PhaseKey | undefined,
   cancelled: false,
   finished: false,
+  initializationStarted: false,
   completed: [] as PhaseKey[],
 }
 const phaseResults: Record<PhaseKey, PhaseResult> = Object.fromEntries(
@@ -87,6 +102,11 @@ let trackInspectionComplete = false
 let vadRuntimeReady = false
 let activeSpeech = false
 let phaseIsolationReady = true
+let initializationStage: InitializationStage = 'WAITING_FOR_USER_START'
+let initializationFailureStage: InitializationStage | 'none' = 'none'
+let audioContextStateAfterCreate: AudioContextState | 'UNKNOWN' = 'UNKNOWN'
+let audioContextStateAfterResume: AudioContextState | 'UNKNOWN' = 'UNKNOWN'
+let audioContextResumeResult: 'PASS' | 'FAIL' | 'TIMEOUT' | 'UNKNOWN' = 'UNKNOWN'
 
 const browserTransformersEnv = env as typeof env & {
   backends: { onnx: { wasm?: { wasmPaths?: string | { wasm?: string } } } }
@@ -103,6 +123,27 @@ if (chromiumRuntime?.ortWasmUrl && browserTransformersEnv.backends.onnx.wasm)
 
 function updateStatus(message: string) {
   elements.status.textContent = message
+}
+
+function setInitializationStage(stage: InitializationStage) {
+  initializationStage = stage
+  if (stage === 'WAITING_FOR_USER_START')
+    updateStatus('WAITING_FOR_USER_START: click Start diagnostic once.')
+  else
+    updateStatus(`INITIALIZATION_STAGE=${stage}`)
+}
+
+function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, failureCode: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(failureCode)), timeoutMs)
+    Promise.resolve(promise).then((value) => {
+      window.clearTimeout(timer)
+      resolve(value)
+    }, (error) => {
+      window.clearTimeout(timer)
+      reject(error)
+    })
+  })
 }
 
 function wait(milliseconds: number) {
@@ -335,6 +376,14 @@ function buildReport(status: string, failureCode?: string): Record<string, unkno
     ENVIRONMENT_INTERPRETABLE: environmentInterpretable,
     PHASE_ISOLATION: phaseIsolationReady && phaseState.completed.length === phaseDefinitions.length ? 'YES' : 'INCONCLUSIVE',
     PHASE_0_TRACK_INSPECTION: trackInspectionComplete ? 'YES' : 'UNKNOWN',
+    INITIALIZATION_STAGE: initializationStage,
+    INITIALIZATION_FAILURE_STAGE: initializationFailureStage,
+    AUDIO_CONTEXT_STATE_AFTER_CREATE: audioContextStateAfterCreate,
+    AUDIO_CONTEXT_STATE_AFTER_RESUME: audioContextStateAfterResume,
+    AUDIO_CONTEXT_RESUME_RESULT: audioContextResumeResult,
+    AUDIO_CONTEXT_RESUME_TIMEOUT_MS,
+    MICROPHONE_REQUEST_TIMEOUT_MS,
+    PRODUCTION_VAD_INIT_TIMEOUT_MS,
     ...trackSnapshot,
     VAD_THRESHOLD: PRODUCTION_VAD_DEFAULTS.threshold,
     VAD_EXIT_THRESHOLD: PRODUCTION_VAD_DEFAULTS.threshold * 0.3,
@@ -431,55 +480,100 @@ async function finish(status: 'PASS' | 'FAIL' | 'CANCELLED', failureCode?: strin
 }
 
 async function initialize() {
+  if (phaseState.initializationStarted || phaseState.finished)
+    return
+  phaseState.initializationStarted = true
   try {
-    updateStatus('PHASE_0: requesting microphone with production-equivalent AEC/NS/AGC constraints.')
-    microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS })
+    if (chromiumRuntime) {
+      setInitializationStage('AUDIO_CONTEXT_CREATED')
+      audioContext = new AudioContext({ sampleRate: PRODUCTION_VAD_DEFAULTS.sampleRate, latencyHint: 'interactive' })
+      audioContextStateAfterCreate = audioContext.state
+      const resumePromise = audioContext.resume()
+      try {
+        await withTimeout(resumePromise, AUDIO_CONTEXT_RESUME_TIMEOUT_MS, 'audio-context-resume-timeout')
+        audioContextStateAfterResume = audioContext.state
+        if (audioContext.state !== 'running')
+          throw new Error('audio-context-resume-timeout')
+        audioContextResumeResult = 'PASS'
+      }
+      catch (error) {
+        audioContextStateAfterResume = audioContext.state
+        audioContextResumeResult = error instanceof Error && error.message === 'audio-context-resume-timeout' ? 'TIMEOUT' : 'FAIL'
+        throw error instanceof Error && error.message === 'audio-context-resume-timeout'
+          ? error
+          : new Error('audio-context-resume-failed')
+      }
+      setInitializationStage('AUDIO_CONTEXT_RESUMED')
+    }
+
+    setInitializationStage('MICROPHONE_REQUESTING')
+    microphoneStream = await withTimeout(
+      navigator.mediaDevices.getUserMedia({ audio: PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS }),
+      MICROPHONE_REQUEST_TIMEOUT_MS,
+      'microphone-request-timeout',
+    )
     if (phaseState.finished) {
       await cleanup()
       return
     }
+    setInitializationStage('MICROPHONE_READY')
     microphoneTrack = microphoneStream.getAudioTracks()[0]
     if (!microphoneTrack)
       throw new Error('microphone-track-unavailable')
     inspectTrack()
-    audioContext = new AudioContext({ sampleRate: PRODUCTION_VAD_DEFAULTS.sampleRate, latencyHint: 'interactive' })
-    await audioContext.resume()
+    setInitializationStage('TRACK_INSPECTION_COMPLETE')
+
+    if (!chromiumRuntime) {
+      audioContext = new AudioContext({ sampleRate: PRODUCTION_VAD_DEFAULTS.sampleRate, latencyHint: 'interactive' })
+      audioContextStateAfterCreate = audioContext.state
+      await audioContext.resume()
+      audioContextStateAfterResume = audioContext.state
+      audioContextResumeResult = audioContext.state === 'running' ? 'PASS' : 'FAIL'
+    }
     if (phaseState.finished) {
       await cleanup()
       return
     }
-    playbackGain = audioContext.createGain()
+    const activeAudioContext = audioContext
+    if (!activeAudioContext)
+      throw new Error('playback-audio-context-unavailable')
+    playbackGain = activeAudioContext.createGain()
     playbackGain.gain.value = PLAYBACK_GAIN_MAX
-    playbackGain.connect(audioContext.destination)
+    playbackGain.connect(activeAudioContext.destination)
 
-    const vadConfig = resolveProductionVADConfig()
-    vad = await createVAD({
-      sampleRate: PRODUCTION_VAD_DEFAULTS.sampleRate,
-      newBufferSize: 512,
-      ...vadConfig,
-    })
-    vad.on('speech-start', () => recordVadEvent('start'))
-    vad.on('speech-end', () => recordVadEvent('end'))
-    vad.on('speech-cancel', () => {
-      activeSpeech = false
-    })
-    vadManager = createVADStates(vad, vadWorkletUrl, {
-      minChunkSize: 512,
-      audioContextOptions: {
+    setInitializationStage('PRODUCTION_VAD_LOADING')
+    await withTimeout((async () => {
+      const vadConfig = resolveProductionVADConfig()
+      vad = await createVAD({
         sampleRate: PRODUCTION_VAD_DEFAULTS.sampleRate,
-        latencyHint: 'interactive',
-      },
-    })
-    await vadManager.initialize()
-    await vadManager.start(microphoneStream)
+        newBufferSize: 512,
+        ...vadConfig,
+      })
+      vad.on('speech-start', () => recordVadEvent('start'))
+      vad.on('speech-end', () => recordVadEvent('end'))
+      vad.on('speech-cancel', () => {
+        activeSpeech = false
+      })
+      vadManager = createVADStates(vad, vadWorkletUrl, {
+        minChunkSize: 512,
+        audioContextOptions: {
+          sampleRate: PRODUCTION_VAD_DEFAULTS.sampleRate,
+          latencyHint: 'interactive',
+        },
+      })
+      await vadManager.initialize()
+      await vadManager.start(microphoneStream!)
+    })(), PRODUCTION_VAD_INIT_TIMEOUT_MS, 'production-vad-init-timeout')
     if (phaseState.finished) {
       await cleanup()
       return
     }
     vadRuntimeReady = true
+    setInitializationStage('PRODUCTION_VAD_READY')
     elements.phase.textContent = 'PHASE_0 — track inspection complete'
     elements.instruction.textContent = 'The four local observation phases will now run with a countdown before each window.'
     updateStatus('AIRI production VAD ready. No cloud or AIRI provider path is active.')
+    setInitializationStage('PHASE_1_READY')
     for (const definition of phaseDefinitions) {
       if (!await runPhase(definition))
         return
@@ -488,8 +582,16 @@ async function initialize() {
   }
   catch (error) {
     const failureCode = error instanceof Error && /^[\w-]+$/.test(error.message) ? error.message : 'local-initialization-failed'
+    initializationFailureStage = initializationStage
+    updateStatus(`Initialization failed at ${initializationStage}: ${failureCode}`)
     await finish('FAIL', failureCode)
   }
+}
+
+export function startLocalDuplexDiagnostic() {
+  if (phaseState.initializationStarted || phaseState.finished)
+    return
+  void initialize()
 }
 
 function handleCancel() {
@@ -503,4 +605,7 @@ function handleKeydown(event: KeyboardEvent) {
 
 elements.cancel.addEventListener('click', handleCancel)
 window.addEventListener('keydown', handleKeydown)
-void initialize()
+if (chromiumRuntime)
+  setInitializationStage('WAITING_FOR_USER_START')
+else
+  void initialize()

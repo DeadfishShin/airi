@@ -21,12 +21,12 @@
   <body>
     <h1>Local duplex / AEC / VAD diagnostic</h1>
     <p class="note">No ASR, TTS, LLM, provider, or chat path is used. Microphone audio stays in the AIRI production VAD graph and is never saved or displayed.</p>
-    <div id="phase">Preparing PHASE_1</div>
-    <div id="instruction">A Chromium local-only diagnostic will measure the four bounded observation phases.</div>
+    <div id="phase">Ready to start PHASE_1</div>
+    <div id="instruction">Click Start diagnostic once to request the microphone and begin the four local observation phases. Cancel remains available at any time.</div>
     <div id="countdown"></div>
-    <div id="status" aria-live="polite">Starting the system Chromium diagnostic host…</div>
+    <div id="status" aria-live="polite">WAITING_FOR_USER_START: click Start diagnostic once.</div>
+    <button id="start" type="button">Start diagnostic</button>
     <button id="cancel" type="button">Cancel smoke</button>
     <script type="module" src="/local-duplex-chromium.ts"></script>
   </body>
 </html>
-

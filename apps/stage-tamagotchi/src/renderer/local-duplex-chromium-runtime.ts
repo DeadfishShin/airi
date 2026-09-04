@@ -11,3 +11,9 @@ export function configureLocalDuplexChromiumRuntime(): LocalDuplexChromiumRuntim
   window.airiLocalDuplexChromium = runtime
   return runtime
 }
+
+// This module is evaluated before the Chromium renderer entry imports the
+// production VAD renderer. Configure the marker at module evaluation time so
+// that renderer initialization can remain explicitly click-gated.
+if (typeof window !== 'undefined')
+  configureLocalDuplexChromiumRuntime()

@@ -140,6 +140,22 @@ export function cancelPhaseState(state) {
   state.current = undefined
 }
 
+const safeInitializationStages = new Set([
+  'WAITING_FOR_USER_START',
+  'AUDIO_CONTEXT_CREATED',
+  'AUDIO_CONTEXT_RESUMED',
+  'MICROPHONE_REQUESTING',
+  'MICROPHONE_READY',
+  'TRACK_INSPECTION_COMPLETE',
+  'PRODUCTION_VAD_LOADING',
+  'PRODUCTION_VAD_READY',
+  'PHASE_1_READY',
+])
+
+const safeInitializationFailureStages = new Set(['none', ...safeInitializationStages])
+const safeAudioContextStates = new Set(['suspended', 'running', 'closed', 'interrupted', 'UNKNOWN'])
+const safeAudioContextResumeResults = new Set(['PASS', 'FAIL', 'TIMEOUT', 'UNKNOWN'])
+
 function safeReportValue(field, value) {
   if (typeof value === 'number')
     return Number.isFinite(value) ? String(value) : 'UNKNOWN'
@@ -155,6 +171,26 @@ function safeReportValue(field, value) {
     return typeof value === 'string' && /^(?:external-model-resource|external-onnx-wasm|external-renderer-resource|external-resource)$/.test(value) ? value : 'UNKNOWN'
   if (field === 'BLOCKED_REQUEST_RESOURCE_TYPE')
     return typeof value === 'string' && /^[a-z][a-z0-9-]{0,31}$/i.test(value) ? value : 'UNKNOWN'
+  if (field === 'INITIALIZATION_STAGE') {
+    if (typeof value === 'string' && safeInitializationStages.has(value))
+      return value
+    return 'UNKNOWN'
+  }
+  if (field === 'INITIALIZATION_FAILURE_STAGE') {
+    if (typeof value === 'string' && safeInitializationFailureStages.has(value))
+      return value
+    return 'UNKNOWN'
+  }
+  if (field === 'AUDIO_CONTEXT_STATE_AFTER_CREATE' || field === 'AUDIO_CONTEXT_STATE_AFTER_RESUME') {
+    if (typeof value === 'string' && safeAudioContextStates.has(value))
+      return value
+    return 'UNKNOWN'
+  }
+  if (field === 'AUDIO_CONTEXT_RESUME_RESULT') {
+    if (typeof value === 'string' && safeAudioContextResumeResults.has(value))
+      return value
+    return 'UNKNOWN'
+  }
   if (typeof value === 'string' && /^[\w.:+-]+$/.test(value))
     return value
   return 'UNKNOWN'
@@ -200,6 +236,14 @@ export function serializeLocalDuplexReport(report) {
     'ENVIRONMENT_INTERPRETABLE',
     'PHASE_ISOLATION',
     'PHASE_0_TRACK_INSPECTION',
+    'INITIALIZATION_STAGE',
+    'INITIALIZATION_FAILURE_STAGE',
+    'AUDIO_CONTEXT_STATE_AFTER_CREATE',
+    'AUDIO_CONTEXT_STATE_AFTER_RESUME',
+    'AUDIO_CONTEXT_RESUME_RESULT',
+    'AUDIO_CONTEXT_RESUME_TIMEOUT_MS',
+    'MICROPHONE_REQUEST_TIMEOUT_MS',
+    'PRODUCTION_VAD_INIT_TIMEOUT_MS',
     'TRACK_CONSTRAINTS_SUPPORTED',
     'TRACK_CAPABILITIES_SUPPORTED',
     'TRACK_SETTINGS_SUPPORTED',

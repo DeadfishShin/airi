@@ -1412,3 +1412,9 @@ Chromium renderer 在配置 `allowRemoteModels=false` 后，将 `onnx-community/
 该新路线的唯一候选字段是 `MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE`，报告明确使用 `HOST_RUNTIME=SYSTEM_CHROMIUM`、`PRODUCTION_ELECTRON_LEVEL2_EVIDENCE=PASS` 和 `EXACT_ELECTRON_LEVEL3_EXECUTED=NO`。只有 Owner 在当前 Mac 的系统 Chrome/WebRTC、扬声器/麦克风组合中完成 PHASE_1–4，且 quiet baseline 可解释、phase 隔离成功、playback-only 无 credible false trigger、user-only 与 playback 中讲话均被 production VAD 检测、cleanup 完成且无 external request 时，才可得到 `PASS`；否则为 `FAIL` 或 `INCONCLUSIVE`。该结果不等价于 exact Electron certification、Android certification、automatic barge-in 已实现或完整 ASR→LLM→TTS E2E。`CURRENT_DESIGN_DECISION`。
 
 当前 playback profile 仍是安全保守的全本地 `synthetic-compatibility`；因此 no-media preflight 不能授予 full Level-3。Electron Level-2 仍是已接受的 `PASS`（保留上述 runtime evidence，不要求 Owner 重做），Chromium Level-3 与 automatic barge-in 仍未执行；完成后必须停止 tracks、销毁 VAD、停止 playback、关闭/挂起 `AudioContext`、清理 timers/listeners 和临时浏览器 profile。`OPEN / NOT_YET_PROVEN`。
+
+### Chromium interactive 的 user activation 与初始化阶段
+
+Owner 已确认 Chrome 的系统麦克风权限和 localhost 页面权限均已允许；因此后续若页面停留在 `PHASE_0`，不能再把权限对话框当作唯一解释。Chromium interactive renderer 现在初始停在 `WAITING_FOR_USER_START`，只有 Owner 点击一次可见的 `Start diagnostic` 后，才在同一手势路径中创建并尝试恢复 `AudioContext`，再按阶段请求麦克风、检查 track、加载 production VAD，最后进入 `PHASE_1_READY`。`Start` 是 one-shot；`Cancel`/Esc 在开始前也能无媒体结束并清理。
+
+`AUDIO_CONTEXT` 恢复、麦克风请求和 production VAD 初始化均有 bounded timeout；报告保留 allowlisted 的 `INITIALIZATION_STAGE`、`INITIALIZATION_FAILURE_STAGE`、AudioContext state/result 和对应 failure code，避免把模糊的“requesting microphone”当作完整因果结论。no-media preflight 不请求麦克风、不播放扬声器、不执行 PHASE_1–4；它只证明 local wiring/readiness。该修复不改变 production VAD、PHASE_1–4、Level-2/Level-3 判定或正常 AIRI Electron 行为。Electron 既有 Level-2 `PASS` 继续有效，Chromium Level-3 仍 `OPEN / NOT_YET_PROVEN`，等待 Owner 重新运行单一 Chromium 命令。`SOURCE_PROVEN` + `CURRENT_DESIGN_DECISION`。
