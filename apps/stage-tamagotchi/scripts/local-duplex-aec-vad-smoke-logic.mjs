@@ -140,11 +140,21 @@ export function cancelPhaseState(state) {
   state.current = undefined
 }
 
-function safeReportValue(value) {
+function safeReportValue(field, value) {
   if (typeof value === 'number')
     return Number.isFinite(value) ? String(value) : 'UNKNOWN'
   if (typeof value === 'boolean')
     return value ? 'YES' : 'NO'
+  if (field === 'PRODUCTION_VAD_MODEL_ID')
+    return typeof value === 'string' && /^[A-Z0-9][\w.-]{0,63}\/[A-Z0-9][\w.-]{0,63}$/i.test(value) ? value : 'UNKNOWN'
+  if (field === 'BLOCKED_REQUEST_PROTOCOL')
+    return typeof value === 'string' && /^(?:http|https):$/.test(value) ? value : 'UNKNOWN'
+  if (field === 'BLOCKED_REQUEST_HOST')
+    return typeof value === 'string' && /^[a-z0-9.:[\]-]{1,128}$/i.test(value) ? value : 'UNKNOWN'
+  if (field === 'BLOCKED_REQUEST_CLASS')
+    return typeof value === 'string' && /^(?:external-model-resource|external-onnx-wasm|external-renderer-resource|external-resource)$/.test(value) ? value : 'UNKNOWN'
+  if (field === 'BLOCKED_REQUEST_RESOURCE_TYPE')
+    return typeof value === 'string' && /^[a-z][a-z0-9-]{0,31}$/i.test(value) ? value : 'UNKNOWN'
   if (typeof value === 'string' && /^[\w.:+-]+$/.test(value))
     return value
   return 'UNKNOWN'
@@ -159,6 +169,9 @@ export function serializeLocalDuplexReport(report) {
     'PRODUCTION_VAD_MODEL_ID',
     'PRODUCTION_VAD_MODEL_REVISION',
     'PRODUCTION_VAD_MODEL_DTYPE',
+    'PRODUCTION_VAD_BROWSER_INIT',
+    'PRODUCTION_VAD_SYNTHETIC_INFERENCE',
+    'ONNX_WASM_RESOLUTION',
     'PRODUCTION_VAD_ASSET',
     'PRODUCTION_VAD_AUDIO_PATH',
     'PRODUCTION_VAD_REMOTE_FALLBACK_ALLOWED',
@@ -209,6 +222,13 @@ export function serializeLocalDuplexReport(report) {
     'AEC_LEVEL_3_LOCAL_DEVICE_CANDIDATE',
     'PHASES_COMPLETED_COUNT',
     'CLEANUP_COMPLETED',
+    'RENDERER_FAILURE_CODE',
+    'NETWORK_GUARD_FAILURE',
+    'BLOCKED_REQUEST_COUNT',
+    'BLOCKED_REQUEST_CLASS',
+    'BLOCKED_REQUEST_PROTOCOL',
+    'BLOCKED_REQUEST_HOST',
+    'BLOCKED_REQUEST_RESOURCE_TYPE',
     'FAILURE_CODE',
   ]
 
@@ -216,7 +236,7 @@ export function serializeLocalDuplexReport(report) {
     '<<LOCAL_DUPLEX_AEC_VAD_REPORT>>',
     ...fieldOrder
       .filter(field => field in report)
-      .map(field => `${field}=${safeReportValue(report[field])}`),
+      .map(field => `${field}=${safeReportValue(field, report[field])}`),
     '<<END_LOCAL_DUPLEX_AEC_VAD_REPORT>>',
   ]
 

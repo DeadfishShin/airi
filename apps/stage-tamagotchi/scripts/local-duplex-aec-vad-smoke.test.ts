@@ -4,6 +4,10 @@ import { PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS } from '@proj-airi/stage-ui/com
 import { PRODUCTION_VAD_DEFAULTS, resolveProductionVADConfig } from '@proj-airi/stage-ui/workers/vad/config'
 import { describe, expect, it } from 'vitest'
 
+import {
+  classifyLocalDuplexBlockedRequest,
+  isSafeDiagnosticModelId,
+} from '../src/shared/local-duplex-diagnostic'
 // eslint-disable-next-line no-restricted-syntax
 import {
   cancelPhaseState,
@@ -31,6 +35,10 @@ describe('local duplex AEC/VAD smoke diagnostics', () => {
     expect(probeSource).toContain('AIRI_LOCAL_DUPLEX_DIAGNOSTIC_MODE: \'boot-probe\'')
     expect(probeSource).toContain('APP_USER_DATA_PATH: diagnosticUserDataPath')
     expect(probeSource).toContain('READY_FOR_OWNER_PHASE0')
+    expect(probeSource).toContain('PRODUCTION_VAD_BROWSER_INIT')
+    expect(probeSource).toContain('PRODUCTION_VAD_SYNTHETIC_INFERENCE')
+    expect(probeSource).toContain('BLOCKED_REQUEST_COUNT')
+    expect(probeSource).toContain('process.exitCode = 1')
     expect(probeSource).toContain('production-host-boot-timeout')
   })
 
@@ -65,16 +73,37 @@ describe('local duplex AEC/VAD smoke diagnostics', () => {
   it('keeps the production-host diagnostic renderer on the production VAD graph', () => {
     const bootSource = readFileSync(new URL('../src/renderer/local-duplex-diagnostic-boot.ts', import.meta.url), 'utf8')
     const rendererSource = readFileSync(new URL('./local-duplex-aec-vad-smoke-renderer.ts', import.meta.url), 'utf8')
+    const diagnosticWindowSource = readFileSync(new URL('../src/main/windows/local-duplex-diagnostic.ts', import.meta.url), 'utf8')
 
     expect(bootSource).toContain('createVAD')
     expect(bootSource).toContain('createVADStates')
     expect(bootSource).toContain('process.worklet?worker&url')
+    expect(bootSource).toContain('createVAD({')
+    expect(bootSource).toContain('processAudio(new Float32Array(512))')
+    expect(bootSource).toContain('allowRemoteModels = false')
+    expect(bootSource).toContain('wasmPaths = { wasm: ortWasmUrl }')
+    expect(bootSource).toContain('PRODUCTION_VAD_SYNTHETIC_INFERENCE')
     expect(rendererSource).toContain('LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL')
     expect(rendererSource).toContain('allowRemoteModels = false')
     expect(rendererSource).toContain('localModelPath =')
     expect(rendererSource).toContain('LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL}://production-vad/')
     expect(rendererSource).not.toContain('@ricky0123/vad-web')
     expect(rendererSource).not.toContain('ScriptProcessor')
+    expect(diagnosticWindowSource).toContain('classifyLocalDuplexBlockedRequest')
+    expect(diagnosticWindowSource).toContain('parsed.RENDERER_FAILURE_CODE')
+    expect(diagnosticWindowSource).toContain('NETWORK_GUARD_FAILURE')
+    expect(diagnosticWindowSource).not.toContain('parsed.FAILURE_CODE = \'external-network-blocked\'')
+  })
+
+  it('binds the browser ONNX runtime to a local wasm asset', () => {
+    const bootSource = readFileSync(new URL('../src/renderer/local-duplex-diagnostic-boot.ts', import.meta.url), 'utf8')
+    const onnxSource = readFileSync(new URL('../../../node_modules/.pnpm/@huggingface+transformers@3.8.1/node_modules/@huggingface/transformers/src/backends/onnx.js', import.meta.url), 'utf8')
+
+    expect(onnxSource).toContain('https://cdn.jsdelivr.net/npm/@huggingface/transformers@')
+    expect(onnxSource).toContain('/dist/')
+    expect(bootSource).toContain('onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url')
+    expect(bootSource).toContain('wasmPaths = { wasm: ortWasmUrl }')
+    expect(bootSource).toContain('allowRemoteModels = false')
   })
 
   it('keeps the production-equivalent microphone constraints and VAD defaults', () => {
@@ -162,6 +191,27 @@ describe('local duplex AEC/VAD smoke diagnostics', () => {
     expect(isAllowedLocalResource('wss://token-plan.cn-beijing.maas.aliyuncs.com/')).toBe(false)
   })
 
+  it('classifies blocked requests without retaining query, fragment, or content', () => {
+    expect(classifyLocalDuplexBlockedRequest(
+      'https://huggingface.co/onnx-community/silero-vad/resolve/ddc9a7e/onnx/model.onnx?token=secret#fragment',
+      'xhr',
+    )).toEqual({
+      protocol: 'https:',
+      host: 'huggingface.co',
+      requestClass: 'external-model-resource',
+      resourceType: 'xhr',
+    })
+    expect(classifyLocalDuplexBlockedRequest(
+      'https://cdn.example.test/onnxruntime/ort-wasm-simd-threaded.jsep.wasm?secret=value',
+      'script',
+    )).toMatchObject({
+      protocol: 'https:',
+      host: 'cdn.example.test',
+      requestClass: 'external-onnx-wasm',
+      resourceType: 'script',
+    })
+  })
+
   it('strips all cloud credential names without exposing values', () => {
     const environment: Record<string, string> = Object.fromEntries(LOCAL_DUPLEX_SMOKE_CREDENTIAL_NAMES.map(name => [name, 'redacted-test-value']))
     environment.LOCAL_ONLY = 'yes'
@@ -186,6 +236,20 @@ describe('local duplex AEC/VAD smoke diagnostics', () => {
     expect(serialized).not.toContain('PCM')
     expect(serialized).not.toContain('must never appear')
     expect(serialized).not.toContain('NaN')
+  })
+
+  it('serializes the production model identifier without allowing arbitrary paths', () => {
+    const serialized = serializeLocalDuplexReport({
+      PRODUCTION_VAD_MODEL_ID: 'onnx-community/silero-vad',
+      BLOCKED_REQUEST_HOST: 'huggingface.co',
+      BLOCKED_REQUEST_CLASS: 'external-model-resource',
+      BLOCKED_REQUEST_PROTOCOL: 'https:',
+    })
+    expect(isSafeDiagnosticModelId('onnx-community/silero-vad')).toBe(true)
+    expect(isSafeDiagnosticModelId('https://example.test/model')).toBe(false)
+    expect(serialized).toContain('PRODUCTION_VAD_MODEL_ID=onnx-community/silero-vad')
+    expect(serialized).toContain('BLOCKED_REQUEST_CLASS=external-model-resource')
+    expect(serialized).not.toContain('https://')
   })
 
   it('defines a cleanup contract in the bounded report', () => {

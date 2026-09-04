@@ -35,9 +35,22 @@ function safeOutput(record) {
     'WINDOW_CREATED',
     'DIAGNOSTIC_RENDERER_LOADED',
     'PRODUCTION_VAD_ALIGNMENT',
+    'PRODUCTION_VAD_BROWSER_INIT',
+    'PRODUCTION_VAD_SYNTHETIC_INFERENCE',
+    'PRODUCTION_VAD_MODEL_ID',
+    'PRODUCTION_VAD_MODEL_REVISION',
+    'PRODUCTION_VAD_REMOTE_FALLBACK_ALLOWED',
+    'ONNX_WASM_RESOLUTION',
     'MEDIA_REQUESTED',
     'READY_FOR_OWNER_PHASE0',
     'EXTERNAL_NETWORK_REQUEST_COUNT',
+    'BLOCKED_REQUEST_COUNT',
+    'BLOCKED_REQUEST_CLASS',
+    'BLOCKED_REQUEST_PROTOCOL',
+    'BLOCKED_REQUEST_HOST',
+    'BLOCKED_REQUEST_RESOURCE_TYPE',
+    'NETWORK_GUARD_FAILURE',
+    'RENDERER_FAILURE_CODE',
     'FAILURE_CODE',
   ]
   return fields
@@ -101,12 +114,16 @@ function finish(code, report) {
   settled = true
   clearTimeout(timeout)
   if (report) {
-    stdout.write('HOST_BOOT_PROBE_STATUS=PASS\n')
+    stdout.write(`HOST_BOOT_PROBE_STATUS=${code ? 'FAIL' : 'PASS'}\n`)
     stdout.write(`${safeOutput(report)}\n`)
+    if (code)
+      process.exitCode = 1
   }
   else if (code) {
     fail(code)
   }
+
+  stopChild()
 
   if (diagnosticUserDataPath) {
     void rm(diagnosticUserDataPath, { recursive: true, force: true })
@@ -125,11 +142,10 @@ function inspect(chunk) {
   try {
     const report = JSON.parse(line)
     if (report.READY_FOR_OWNER_PHASE0 !== 'YES') {
-      finish('renderer-readiness-negative')
+      finish('renderer-readiness-negative', report)
       return
     }
     finish(undefined, report)
-    stopChild()
   }
   catch {
     finish('boot-report-invalid')
