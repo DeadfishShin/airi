@@ -65,6 +65,23 @@ export function classifyPlaybackOnlyFalseTrigger({ credibleSpeechStartCount, obs
   return credibleSpeechStartCount > 0 ? 'YES' : 'NO'
 }
 
+export function classifyVadPipelineDiagnosis({
+  probabilitySampleCount,
+  aboveSpeechThresholdCount,
+  speechStartCount,
+  observed = true,
+}) {
+  if (!observed)
+    return 'NOT_OBSERVED'
+  if (probabilitySampleCount === 0)
+    return 'NO_VAD_FRAMES'
+  if (speechStartCount > 0)
+    return 'USER_SPEECH_DETECTED'
+  if (aboveSpeechThresholdCount > 0)
+    return 'PROBABILITY_ABOVE_THRESHOLD_BUT_NO_SPEECH_START'
+  return 'VAD_FRAMES_PRESENT_BUT_LOW_PROBABILITY'
+}
+
 export function classifyLevel3LocalDeviceVerdict({
   level2,
   playbackOnlyFalseTrigger,
@@ -155,6 +172,13 @@ const safeInitializationStages = new Set([
 const safeInitializationFailureStages = new Set(['none', ...safeInitializationStages])
 const safeAudioContextStates = new Set(['suspended', 'running', 'closed', 'interrupted', 'UNKNOWN'])
 const safeAudioContextResumeResults = new Set(['PASS', 'FAIL', 'TIMEOUT', 'UNKNOWN'])
+const safeVadPipelineDiagnoses = new Set([
+  'NOT_OBSERVED',
+  'NO_VAD_FRAMES',
+  'VAD_FRAMES_PRESENT_BUT_LOW_PROBABILITY',
+  'PROBABILITY_ABOVE_THRESHOLD_BUT_NO_SPEECH_START',
+  'USER_SPEECH_DETECTED',
+])
 
 function safeReportValue(field, value) {
   if (typeof value === 'number')
@@ -191,6 +215,11 @@ function safeReportValue(field, value) {
       return value
     return 'UNKNOWN'
   }
+  if (field.endsWith('_VAD_PIPELINE_DIAGNOSIS')) {
+    if (typeof value === 'string' && safeVadPipelineDiagnoses.has(value))
+      return value
+    return 'UNKNOWN'
+  }
   if (typeof value === 'string' && /^[\w.:+-]+$/.test(value))
     return value
   return 'UNKNOWN'
@@ -212,6 +241,7 @@ export function serializeLocalDuplexReport(report) {
     'LOCAL_MODEL_ASSET_REQUEST_COUNT',
     'LOCAL_WASM_ASSET_REQUEST_COUNT',
     'LOCAL_RENDERER_ASSET_REQUEST_COUNT',
+    'LOCAL_SPEECH_ASSET_REQUEST_COUNT',
     'CREDENTIAL_ENV_STRIPPED',
     'PRODUCTION_ELECTRON_LEVEL2_EVIDENCE',
     'EXACT_ELECTRON_LEVEL3_EXECUTED',
@@ -233,6 +263,8 @@ export function serializeLocalDuplexReport(report) {
     'PRODUCTION_VAD_ASSET',
     'PRODUCTION_VAD_AUDIO_PATH',
     'PRODUCTION_VAD_REMOTE_FALLBACK_ALLOWED',
+    'MEDIA_REQUESTED',
+    'READY_FOR_OWNER_PHASE0',
     'ENVIRONMENT_INTERPRETABLE',
     'PHASE_ISOLATION',
     'PHASE_0_TRACK_INSPECTION',
@@ -269,7 +301,15 @@ export function serializeLocalDuplexReport(report) {
     'VAD_SAMPLE_RATE',
     'PHASE_SETTLE_MS',
     'PLAYBACK_PROFILE',
+    'PLAYBACK_SOURCE',
+    'PLAYBACK_VOICE',
+    'PLAYBACK_RATE',
+    'PLAYBACK_DURATION_MS',
+    'PLAYBACK_LOCAL_ASSET',
+    'PLAYBACK_DECODE',
+    'PLAYBACK_GRAPH',
     'PLAYBACK_GAIN_MAX',
+    'PLAYBACK_SOURCE_NORMALIZED_PEAK',
     'PLAYBACK_START_COUNT',
     'PLAYBACK_END_COUNT',
     'QUIET_VAD_START_COUNT',
@@ -279,9 +319,35 @@ export function serializeLocalDuplexReport(report) {
     'USER_ONLY_VAD_START_COUNT',
     'USER_ONLY_VAD_END_COUNT',
     'USER_ONLY_FIRST_ACTIVITY_LATENCY_MS',
+    'QUIET_VAD_DEBUG_EVENT_COUNT',
+    'QUIET_VAD_PROBABILITY_SAMPLE_COUNT',
+    'QUIET_VAD_MAX_PROBABILITY',
+    'QUIET_VAD_MEAN_PROBABILITY',
+    'QUIET_VAD_ABOVE_THRESHOLD_COUNT',
+    'QUIET_VAD_ABOVE_EXIT_THRESHOLD_COUNT',
     'USER_DURING_PLAYBACK_VAD_START_COUNT',
     'USER_DURING_PLAYBACK_VAD_END_COUNT',
     'USER_DURING_PLAYBACK_FIRST_ACTIVITY_LATENCY_MS',
+    'PLAYBACK_ONLY_VAD_DEBUG_EVENT_COUNT',
+    'PLAYBACK_ONLY_VAD_PROBABILITY_SAMPLE_COUNT',
+    'PLAYBACK_ONLY_VAD_MAX_PROBABILITY',
+    'PLAYBACK_ONLY_VAD_MEAN_PROBABILITY',
+    'PLAYBACK_ONLY_VAD_ABOVE_THRESHOLD_COUNT',
+    'PLAYBACK_ONLY_VAD_ABOVE_EXIT_THRESHOLD_COUNT',
+    'USER_ONLY_VAD_DEBUG_EVENT_COUNT',
+    'USER_ONLY_VAD_PROBABILITY_SAMPLE_COUNT',
+    'USER_ONLY_VAD_MAX_PROBABILITY',
+    'USER_ONLY_VAD_MEAN_PROBABILITY',
+    'USER_ONLY_VAD_ABOVE_THRESHOLD_COUNT',
+    'USER_ONLY_VAD_ABOVE_EXIT_THRESHOLD_COUNT',
+    'USER_ONLY_VAD_PIPELINE_DIAGNOSIS',
+    'USER_DURING_PLAYBACK_VAD_DEBUG_EVENT_COUNT',
+    'USER_DURING_PLAYBACK_VAD_PROBABILITY_SAMPLE_COUNT',
+    'USER_DURING_PLAYBACK_VAD_MAX_PROBABILITY',
+    'USER_DURING_PLAYBACK_VAD_MEAN_PROBABILITY',
+    'USER_DURING_PLAYBACK_VAD_ABOVE_THRESHOLD_COUNT',
+    'USER_DURING_PLAYBACK_VAD_ABOVE_EXIT_THRESHOLD_COUNT',
+    'USER_DURING_PLAYBACK_VAD_PIPELINE_DIAGNOSIS',
     'PLAYBACK_ONLY_FALSE_TRIGGER',
     'USER_ONLY_DETECTED',
     'USER_DURING_PLAYBACK_DETECTED',

@@ -20,6 +20,7 @@ import { LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL } from '../src/shared/local-duplex-dia
 import {
   classifyLevel3LocalDeviceVerdict,
   classifyPlaybackOnlyFalseTrigger,
+  classifyVadPipelineDiagnosis,
   level2TrackVerdict,
   normalizeFiniteMetric,
   normalizeTrackBoolean,
@@ -27,7 +28,6 @@ import {
 
 const REPORT_MARKER = 'LOCAL_DUPLEX_AEC_VAD_REPORT_JSON:'
 const PLAYBACK_GAIN_MAX = 0.25
-const PLAYBACK_PROFILE = 'synthetic-compatibility'
 const PHASE_SETTLE_MS = PRODUCTION_VAD_DEFAULTS.minSilenceDurationMs + 300
 const PHASE_OBSERVATION_PADDING_MS = 350
 const AUDIO_CONTEXT_RESUME_TIMEOUT_MS = 5000
@@ -63,6 +63,12 @@ const elements = {
   cancel: document.getElementById('cancel') as HTMLButtonElement,
 }
 
+const chromiumRuntime = window.airiLocalDuplexChromium
+const PLAYBACK_PROFILE = chromiumRuntime ? 'macos-local-speech' : 'synthetic-compatibility'
+const PLAYBACK_SOURCE = chromiumRuntime ? 'macos-system-say' : 'legacy-deterministic-synthetic'
+const PLAYBACK_VOICE = chromiumRuntime ? 'Samantha' : 'none'
+const PLAYBACK_RATE = chromiumRuntime ? 180 : 'UNKNOWN'
+
 // The production-host main process uses this content-free handshake to prove that
 // the diagnostic renderer reached its pre-PHASE_0 boundary before media is requested.
 window.airiLocalDuplexDiagnostic?.notifyReady()
@@ -72,6 +78,12 @@ interface PhaseResult {
   ends: number
   firstStartAt?: number
   startedAt?: number
+  debugEventCount: number
+  probabilitySampleCount: number
+  probabilitySum: number
+  maxProbability?: number
+  aboveSpeechThresholdCount: number
+  aboveExitThresholdCount: number
 }
 
 const phaseState = {
@@ -82,11 +94,17 @@ const phaseState = {
   completed: [] as PhaseKey[],
 }
 const phaseResults: Record<PhaseKey, PhaseResult> = Object.fromEntries(
-  phaseDefinitions.map(([key]) => [key, { starts: 0, ends: 0 }]),
+  phaseDefinitions.map(([key]) => [key, {
+    starts: 0,
+    ends: 0,
+    debugEventCount: 0,
+    probabilitySampleCount: 0,
+    probabilitySum: 0,
+    aboveSpeechThresholdCount: 0,
+    aboveExitThresholdCount: 0,
+  }]),
 ) as Record<PhaseKey, PhaseResult>
 const waiters = new Set<{ resolve: () => void, timer: number }>()
-
-const chromiumRuntime = window.airiLocalDuplexChromium
 
 let audioContext: AudioContext | undefined
 let microphoneStream: MediaStream | undefined
@@ -107,6 +125,9 @@ let initializationFailureStage: InitializationStage | 'none' = 'none'
 let audioContextStateAfterCreate: AudioContextState | 'UNKNOWN' = 'UNKNOWN'
 let audioContextStateAfterResume: AudioContextState | 'UNKNOWN' = 'UNKNOWN'
 let audioContextResumeResult: 'PASS' | 'FAIL' | 'TIMEOUT' | 'UNKNOWN' = 'UNKNOWN'
+let playbackBuffer: AudioBuffer | undefined
+let playbackDurationMs: number | 'UNKNOWN' = 'UNKNOWN'
+let playbackSourceNormalizedPeak: number | 'UNKNOWN' = 'UNKNOWN'
 
 const browserTransformersEnv = env as typeof env & {
   backends: { onnx: { wasm?: { wasmPaths?: string | { wasm?: string } } } }
@@ -229,6 +250,35 @@ function recordVadEvent(kind: 'start' | 'end') {
   }
 }
 
+function recordVadProbability(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value))
+    return
+  const phase = phaseState.current
+  if (!phase)
+    return
+  const result = phaseResults[phase]
+  const exitThreshold = PRODUCTION_VAD_DEFAULTS.threshold * 0.3
+  result.probabilitySampleCount++
+  result.probabilitySum += value
+  result.maxProbability = Math.max(result.maxProbability ?? Number.NEGATIVE_INFINITY, value)
+  if (value > PRODUCTION_VAD_DEFAULTS.threshold)
+    result.aboveSpeechThresholdCount++
+  if (value >= exitThreshold)
+    result.aboveExitThresholdCount++
+}
+
+function recordVadDebug(data: unknown) {
+  const phase = phaseState.current
+  if (!phase)
+    return
+  phaseResults[phase].debugEventCount++
+  recordVadProbability(vadProbabilityData(data))
+}
+
+function vadProbabilityData(data: unknown) {
+  return data && typeof data === 'object' ? (data as Record<string, unknown>).probability : undefined
+}
+
 function createLocalPlaybackBuffer(durationSeconds: number) {
   if (!audioContext)
     throw new Error('playback-audio-context-unavailable')
@@ -247,11 +297,41 @@ function createLocalPlaybackBuffer(durationSeconds: number) {
   return buffer
 }
 
+async function loadLocalSpeechPlayback() {
+  if (!chromiumRuntime)
+    return
+  const activeAudioContext = audioContext
+  if (!activeAudioContext)
+    throw new Error('playback-audio-context-unavailable')
+  const response = await fetch(chromiumRuntime.playbackAssetUrl)
+  if (!response.ok)
+    throw new Error('local-speech-playback-asset-unavailable')
+  const bytes = await response.arrayBuffer()
+  const decoded = await activeAudioContext.decodeAudioData(bytes)
+  if (!Number.isFinite(decoded.duration) || decoded.duration <= 0 || decoded.numberOfChannels < 1)
+    throw new Error('local-speech-playback-asset-invalid')
+  let peak = 0
+  for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
+    const samples = decoded.getChannelData(channel)
+    for (const sample of samples) {
+      if (Number.isFinite(sample))
+        peak = Math.max(peak, Math.abs(sample))
+    }
+  }
+  if (peak <= 0.1)
+    throw new Error('local-speech-playback-asset-too-quiet')
+  playbackBuffer = decoded
+  playbackDurationMs = Math.round(decoded.duration * 1000)
+  playbackSourceNormalizedPeak = Math.min(1, peak)
+}
+
 function startLocalPlayback(durationSeconds: number) {
   if (!audioContext || !playbackGain)
     throw new Error('playback-audio-system-unavailable')
+  if (chromiumRuntime && !playbackBuffer)
+    throw new Error('local-speech-playback-buffer-unavailable')
   const source = audioContext.createBufferSource()
-  source.buffer = createLocalPlaybackBuffer(durationSeconds)
+  source.buffer = playbackBuffer ?? createLocalPlaybackBuffer(durationSeconds)
   source.connect(playbackGain)
   source.onended = () => {
     playbackEndCount++
@@ -333,6 +413,31 @@ function phaseLatency(key: PhaseKey) {
   return normalizeFiniteMetric(result.firstStartAt - result.startedAt)
 }
 
+function phaseProbabilityMetric(key: PhaseKey, field: keyof PhaseResult) {
+  const result = phaseResults[key]
+  if (!result || !phaseState.completed.includes(key))
+    return 'UNKNOWN'
+  const value = result[field]
+  return field === 'maxProbability' ? normalizeFiniteMetric(value) : value
+}
+
+function phaseMeanProbability(key: PhaseKey) {
+  const result = phaseResults[key]
+  if (!result || !phaseState.completed.includes(key) || result.probabilitySampleCount === 0)
+    return 'UNKNOWN'
+  return normalizeFiniteMetric(result.probabilitySum / result.probabilitySampleCount)
+}
+
+function phaseVadDiagnosis(key: PhaseKey) {
+  const result = phaseResults[key]
+  return classifyVadPipelineDiagnosis({
+    probabilitySampleCount: result.probabilitySampleCount,
+    aboveSpeechThresholdCount: result.aboveSpeechThresholdCount,
+    speechStartCount: result.starts,
+    observed: phaseState.completed.includes(key),
+  })
+}
+
 function detected(key: PhaseKey) {
   return phaseMetric(key, 'starts')! > 0 ? 'YES' : 'NO'
 }
@@ -393,6 +498,12 @@ function buildReport(status: string, failureCode?: string): Record<string, unkno
     VAD_SAMPLE_RATE: PRODUCTION_VAD_DEFAULTS.sampleRate,
     PHASE_SETTLE_MS,
     PLAYBACK_PROFILE,
+    PLAYBACK_SOURCE,
+    PLAYBACK_VOICE,
+    PLAYBACK_RATE,
+    PLAYBACK_DURATION_MS: playbackDurationMs,
+    PLAYBACK_LOCAL_ASSET: chromiumRuntime ? 'YES' : 'NO',
+    PLAYBACK_SOURCE_NORMALIZED_PEAK: playbackSourceNormalizedPeak,
     PLAYBACK_GAIN_MAX,
     PLAYBACK_START_COUNT: playbackStartCount,
     PLAYBACK_END_COUNT: playbackEndCount,
@@ -403,9 +514,35 @@ function buildReport(status: string, failureCode?: string): Record<string, unkno
     USER_ONLY_VAD_START_COUNT: phaseMetric('PHASE_3_USER_SPEECH_CONTROL', 'starts'),
     USER_ONLY_VAD_END_COUNT: phaseMetric('PHASE_3_USER_SPEECH_CONTROL', 'ends'),
     USER_ONLY_FIRST_ACTIVITY_LATENCY_MS: phaseLatency('PHASE_3_USER_SPEECH_CONTROL'),
+    QUIET_VAD_DEBUG_EVENT_COUNT: phaseProbabilityMetric('PHASE_1_QUIET_BASELINE', 'debugEventCount'),
+    QUIET_VAD_PROBABILITY_SAMPLE_COUNT: phaseProbabilityMetric('PHASE_1_QUIET_BASELINE', 'probabilitySampleCount'),
+    QUIET_VAD_MAX_PROBABILITY: phaseProbabilityMetric('PHASE_1_QUIET_BASELINE', 'maxProbability'),
+    QUIET_VAD_MEAN_PROBABILITY: phaseMeanProbability('PHASE_1_QUIET_BASELINE'),
+    QUIET_VAD_ABOVE_THRESHOLD_COUNT: phaseProbabilityMetric('PHASE_1_QUIET_BASELINE', 'aboveSpeechThresholdCount'),
+    QUIET_VAD_ABOVE_EXIT_THRESHOLD_COUNT: phaseProbabilityMetric('PHASE_1_QUIET_BASELINE', 'aboveExitThresholdCount'),
     USER_DURING_PLAYBACK_VAD_START_COUNT: phaseMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'starts'),
     USER_DURING_PLAYBACK_VAD_END_COUNT: phaseMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'ends'),
     USER_DURING_PLAYBACK_FIRST_ACTIVITY_LATENCY_MS: phaseLatency('PHASE_4_USER_SPEECH_DURING_PLAYBACK'),
+    PLAYBACK_ONLY_VAD_DEBUG_EVENT_COUNT: phaseProbabilityMetric('PHASE_2_PLAYBACK_ONLY', 'debugEventCount'),
+    PLAYBACK_ONLY_VAD_PROBABILITY_SAMPLE_COUNT: phaseProbabilityMetric('PHASE_2_PLAYBACK_ONLY', 'probabilitySampleCount'),
+    PLAYBACK_ONLY_VAD_MAX_PROBABILITY: phaseProbabilityMetric('PHASE_2_PLAYBACK_ONLY', 'maxProbability'),
+    PLAYBACK_ONLY_VAD_MEAN_PROBABILITY: phaseMeanProbability('PHASE_2_PLAYBACK_ONLY'),
+    PLAYBACK_ONLY_VAD_ABOVE_THRESHOLD_COUNT: phaseProbabilityMetric('PHASE_2_PLAYBACK_ONLY', 'aboveSpeechThresholdCount'),
+    PLAYBACK_ONLY_VAD_ABOVE_EXIT_THRESHOLD_COUNT: phaseProbabilityMetric('PHASE_2_PLAYBACK_ONLY', 'aboveExitThresholdCount'),
+    USER_ONLY_VAD_DEBUG_EVENT_COUNT: phaseProbabilityMetric('PHASE_3_USER_SPEECH_CONTROL', 'debugEventCount'),
+    USER_ONLY_VAD_PROBABILITY_SAMPLE_COUNT: phaseProbabilityMetric('PHASE_3_USER_SPEECH_CONTROL', 'probabilitySampleCount'),
+    USER_ONLY_VAD_MAX_PROBABILITY: phaseProbabilityMetric('PHASE_3_USER_SPEECH_CONTROL', 'maxProbability'),
+    USER_ONLY_VAD_MEAN_PROBABILITY: phaseMeanProbability('PHASE_3_USER_SPEECH_CONTROL'),
+    USER_ONLY_VAD_ABOVE_THRESHOLD_COUNT: phaseProbabilityMetric('PHASE_3_USER_SPEECH_CONTROL', 'aboveSpeechThresholdCount'),
+    USER_ONLY_VAD_ABOVE_EXIT_THRESHOLD_COUNT: phaseProbabilityMetric('PHASE_3_USER_SPEECH_CONTROL', 'aboveExitThresholdCount'),
+    USER_ONLY_VAD_PIPELINE_DIAGNOSIS: phaseVadDiagnosis('PHASE_3_USER_SPEECH_CONTROL'),
+    USER_DURING_PLAYBACK_VAD_DEBUG_EVENT_COUNT: phaseProbabilityMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'debugEventCount'),
+    USER_DURING_PLAYBACK_VAD_PROBABILITY_SAMPLE_COUNT: phaseProbabilityMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'probabilitySampleCount'),
+    USER_DURING_PLAYBACK_VAD_MAX_PROBABILITY: phaseProbabilityMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'maxProbability'),
+    USER_DURING_PLAYBACK_VAD_MEAN_PROBABILITY: phaseMeanProbability('PHASE_4_USER_SPEECH_DURING_PLAYBACK'),
+    USER_DURING_PLAYBACK_VAD_ABOVE_THRESHOLD_COUNT: phaseProbabilityMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'aboveSpeechThresholdCount'),
+    USER_DURING_PLAYBACK_VAD_ABOVE_EXIT_THRESHOLD_COUNT: phaseProbabilityMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'aboveExitThresholdCount'),
+    USER_DURING_PLAYBACK_VAD_PIPELINE_DIAGNOSIS: phaseVadDiagnosis('PHASE_4_USER_SPEECH_DURING_PLAYBACK'),
     PLAYBACK_ONLY_FALSE_TRIGGER: playbackOnlyFalseTrigger,
     USER_ONLY_DETECTED: userOnlyDetected,
     USER_DURING_PLAYBACK_DETECTED: userDuringPlaybackDetected,
@@ -540,6 +677,7 @@ async function initialize() {
     playbackGain = activeAudioContext.createGain()
     playbackGain.gain.value = PLAYBACK_GAIN_MAX
     playbackGain.connect(activeAudioContext.destination)
+    await loadLocalSpeechPlayback()
 
     setInitializationStage('PRODUCTION_VAD_LOADING')
     await withTimeout((async () => {
@@ -551,6 +689,7 @@ async function initialize() {
       })
       vad.on('speech-start', () => recordVadEvent('start'))
       vad.on('speech-end', () => recordVadEvent('end'))
+      vad.on('debug', ({ data }) => recordVadDebug(data))
       vad.on('speech-cancel', () => {
         activeSpeech = false
       })

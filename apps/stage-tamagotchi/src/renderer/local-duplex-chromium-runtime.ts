@@ -6,6 +6,7 @@ export function configureLocalDuplexChromiumRuntime(): LocalDuplexChromiumRuntim
   const runtime: LocalDuplexChromiumRuntime = {
     modelBaseUrl: `${window.location.origin}/production-vad/`,
     ortWasmUrl: new URL(ortWasmUrl, import.meta.url).href,
+    playbackAssetUrl: `${window.location.origin}/local-speech.wav`,
     reportEndpoint: '/__report',
   }
   window.airiLocalDuplexChromium = runtime

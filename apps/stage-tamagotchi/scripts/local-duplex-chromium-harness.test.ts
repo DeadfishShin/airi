@@ -5,7 +5,7 @@ import { PRODUCTION_VAD_DEFAULTS, resolveProductionVADConfig } from '@proj-airi/
 import { describe, expect, it } from 'vitest'
 
 // eslint-disable-next-line no-restricted-syntax
-import { serializeLocalDuplexReport } from './local-duplex-aec-vad-smoke-logic.mjs'
+import { classifyVadPipelineDiagnosis, serializeLocalDuplexReport } from './local-duplex-aec-vad-smoke-logic.mjs'
 // eslint-disable-next-line no-restricted-syntax
 import {
   CHROMIUM_CSP,
@@ -75,6 +75,39 @@ describe('system Chromium local duplex harness', () => {
     expect(chromiumRuntimeSource).toContain(['$', '{window.location.origin}/production-vad/'].join(''))
     expect(chromiumRuntimeSource).toContain('ortWasmUrl')
     expect(chromiumRuntimeSource).not.toContain('cdn.jsdelivr.net')
+  })
+
+  it('requires the macOS local speech profile and serves it from a temporary local asset', () => {
+    expect(chromiumHarnessSource).toContain('\'/usr/bin/say\'')
+    expect(chromiumHarnessSource).toContain('\'/usr/bin/afconvert\'')
+    expect(chromiumHarnessSource).toContain('const LOCAL_SPEECH_ASSET = \'/local-speech.wav\'')
+    expect(chromiumHarnessSource).toContain('local-speech-asset-generation-failed')
+    expect(chromiumHarnessSource).toContain('speechAssetDirectory')
+    expect(smokeRendererSource).toContain('const PLAYBACK_PROFILE = chromiumRuntime ? \'macos-local-speech\' : \'synthetic-compatibility\'')
+    expect(smokeRendererSource).toContain('decodeAudioData(bytes)')
+    expect(smokeRendererSource).toContain('PLAYBACK_SOURCE_NORMALIZED_PEAK')
+  })
+
+  it('collects production VAD probability aggregates without audio payloads', () => {
+    expect(smokeRendererSource).toContain('vad.on(\'debug\'')
+    expect(smokeRendererSource).toContain('recordVadProbability')
+    expect(smokeRendererSource).toContain('aboveSpeechThresholdCount')
+    expect(smokeRendererSource).toContain('aboveExitThresholdCount')
+    expect(classifyVadPipelineDiagnosis({ probabilitySampleCount: 0, aboveSpeechThresholdCount: 0, speechStartCount: 0 })).toBe('NO_VAD_FRAMES')
+    expect(classifyVadPipelineDiagnosis({ probabilitySampleCount: 8, aboveSpeechThresholdCount: 0, speechStartCount: 0 })).toBe('VAD_FRAMES_PRESENT_BUT_LOW_PROBABILITY')
+    expect(classifyVadPipelineDiagnosis({ probabilitySampleCount: 8, aboveSpeechThresholdCount: 2, speechStartCount: 0 })).toBe('PROBABILITY_ABOVE_THRESHOLD_BUT_NO_SPEECH_START')
+    expect(classifyVadPipelineDiagnosis({ probabilitySampleCount: 8, aboveSpeechThresholdCount: 2, speechStartCount: 1 })).toBe('USER_SPEECH_DETECTED')
+    expect(classifyVadPipelineDiagnosis({ probabilitySampleCount: 0, aboveSpeechThresholdCount: 0, speechStartCount: 0, observed: false })).toBe('NOT_OBSERVED')
+  })
+
+  it('preflight decodes and builds the same local playback graph without starting it', () => {
+    const bootSource = readFileSync(new URL('../src/renderer/local-duplex-chromium-boot.ts', import.meta.url), 'utf8')
+    expect(bootSource).toContain('runtime.playbackAssetUrl')
+    expect(bootSource).toContain('decodeAudioData(bytes)')
+    expect(bootSource).toContain('createBufferSource()')
+    expect(bootSource).toContain('PLAYBACK_DECODE: \'PASS\'')
+    expect(bootSource).toContain('PLAYBACK_GRAPH: \'PASS\'')
+    expect(chromiumHarnessSource).toContain('localSpeechAssetRequestCount > 0')
   })
 
   it('reuses the production VAD, AudioWorklet, and microphone authorities', () => {

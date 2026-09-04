@@ -51,6 +51,55 @@ async function sendBootReport(report: Record<string, string>) {
   }
 }
 
+function normalizedAudioPeak(audioBuffer: AudioBuffer) {
+  let peak = 0
+  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+    const samples = audioBuffer.getChannelData(channel)
+    for (const sample of samples) {
+      if (Number.isFinite(sample))
+        peak = Math.max(peak, Math.abs(sample))
+    }
+  }
+  return Math.min(1, peak)
+}
+
+async function probeLocalSpeechPlayback() {
+  const response = await fetch(runtime.playbackAssetUrl)
+  if (!response.ok)
+    throw new Error('local-speech-playback-asset-fetch-failed')
+  const bytes = await response.arrayBuffer()
+  const audioContext = new AudioContext({ sampleRate: PRODUCTION_VAD_DEFAULTS.sampleRate, latencyHint: 'interactive' })
+  try {
+    const audioBuffer = await audioContext.decodeAudioData(bytes)
+    if (!Number.isFinite(audioBuffer.duration) || audioBuffer.duration <= 0 || audioBuffer.numberOfChannels < 1)
+      throw new Error('local-speech-playback-asset-invalid')
+
+    const gain = audioContext.createGain()
+    gain.gain.value = 0.25
+    const source = audioContext.createBufferSource()
+    source.buffer = audioBuffer
+    source.connect(gain)
+    gain.connect(audioContext.destination)
+    source.disconnect()
+    gain.disconnect()
+    return {
+      PLAYBACK_PROFILE: 'macos-local-speech',
+      PLAYBACK_SOURCE: 'macos-system-say',
+      PLAYBACK_VOICE: 'Samantha',
+      PLAYBACK_RATE: '180',
+      PLAYBACK_DURATION_MS: String(Math.round(audioBuffer.duration * 1000)),
+      PLAYBACK_LOCAL_ASSET: 'YES',
+      PLAYBACK_SOURCE_NORMALIZED_PEAK: String(Math.round(normalizedAudioPeak(audioBuffer) * 100) / 100),
+      PLAYBACK_DECODE: 'PASS',
+      PLAYBACK_GRAPH: 'PASS',
+    }
+  }
+  finally {
+    if (audioContext.state !== 'closed')
+      await audioContext.close()
+  }
+}
+
 async function initializeProductionVAD() {
   const baseReport = {
     PRODUCTION_VAD_MODEL_ID,
@@ -81,6 +130,7 @@ async function initializeProductionVAD() {
       wasmCompile = 'FAIL'
       throw new Error('onnx-wasm-local-asset-compile-failed')
     }
+    const playback = await probeLocalSpeechPlayback()
     const vad = await createVAD({
       sampleRate: PRODUCTION_VAD_DEFAULTS.sampleRate,
       newBufferSize: 512,
@@ -89,6 +139,7 @@ async function initializeProductionVAD() {
     await vad.processAudio(new Float32Array(512))
     await sendBootReport({
       ...baseReport,
+      ...playback,
       PRODUCTION_VAD_WASM_FETCH: 'PASS',
       PRODUCTION_VAD_WASM_COMPILE: 'PASS',
       PRODUCTION_VAD_WASM_VALIDATE: 'PASS',
@@ -100,6 +151,13 @@ async function initializeProductionVAD() {
   catch (error) {
     await sendBootReport({
       ...baseReport,
+      PLAYBACK_PROFILE: 'macos-local-speech',
+      PLAYBACK_SOURCE: 'macos-system-say',
+      PLAYBACK_VOICE: 'Samantha',
+      PLAYBACK_RATE: '180',
+      PLAYBACK_LOCAL_ASSET: 'UNKNOWN',
+      PLAYBACK_DECODE: 'FAIL',
+      PLAYBACK_GRAPH: 'FAIL',
       PRODUCTION_VAD_WASM_FETCH: wasmFetch,
       PRODUCTION_VAD_WASM_COMPILE: wasmCompile,
       PRODUCTION_VAD_WASM_VALIDATE: wasmValidate,

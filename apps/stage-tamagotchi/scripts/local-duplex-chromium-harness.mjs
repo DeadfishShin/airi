@@ -1,13 +1,16 @@
 import process, { argv, env, stdout } from 'node:process'
 
 import { Buffer } from 'node:buffer'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+
+import { errorMessageFrom } from '@moeru/std'
 
 // eslint-disable-next-line no-restricted-syntax
 import {
@@ -22,6 +25,12 @@ import {
   discoverSystemChromium,
   isLoopbackAddress,
   LOCAL_SERVER_BIND_ADDRESS,
+  LOCAL_SPEECH_PLAYBACK_PHRASE,
+  LOCAL_SPEECH_PLAYBACK_PROFILE,
+  LOCAL_SPEECH_PLAYBACK_RATE,
+  LOCAL_SPEECH_PLAYBACK_SOURCE,
+  LOCAL_SPEECH_PLAYBACK_VOICE,
+  PLAYBACK_GAIN_MAX,
 } from './local-duplex-chromium-harness-logic.mjs'
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url))
@@ -30,8 +39,10 @@ const RENDERER_ROOT = resolve(APP_ROOT, 'out/renderer')
 const MODEL_ROOT = resolve(SCRIPT_DIRECTORY, 'assets/production-vad')
 const INTERACTIVE_PAGE = '/local-duplex-chromium.html'
 const PREFLIGHT_PAGE = '/local-duplex-chromium-boot.html'
+const LOCAL_SPEECH_ASSET = '/local-speech.wav'
 const MAX_REPORT_BYTES = 128 * 1024
 const INTERACTIVE_TIMEOUT_MS = 180000
+const execFileAsync = promisify(execFile)
 
 const chromiumCandidates = [
   { name: 'Google-Chrome', path: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' },
@@ -49,11 +60,101 @@ function contentTypeFor(pathname) {
     return 'text/css; charset=utf-8'
   if (pathname.endsWith('.wasm'))
     return 'application/wasm'
+  if (pathname.endsWith('.wav'))
+    return 'audio/wav'
   if (pathname.endsWith('.onnx'))
     return 'application/octet-stream'
   if (pathname.endsWith('.json'))
     return 'application/json; charset=utf-8'
   return 'application/octet-stream'
+}
+
+function readWavePcmMetadata(filePath) {
+  const bytes = readFileSync(filePath)
+  if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE')
+    throw new Error('local-speech-wave-invalid')
+
+  let offset = 12
+  let sampleRate
+  let channels
+  let bitsPerSample
+  let dataOffset
+  let dataSize
+  while (offset + 8 <= bytes.length) {
+    const chunkId = bytes.toString('ascii', offset, offset + 4)
+    const chunkSize = bytes.readUInt32LE(offset + 4)
+    const chunkOffset = offset + 8
+    if (chunkOffset + chunkSize > bytes.length)
+      throw new Error('local-speech-wave-invalid')
+    if (chunkId === 'fmt ' && chunkSize >= 16) {
+      channels = bytes.readUInt16LE(chunkOffset + 2)
+      sampleRate = bytes.readUInt32LE(chunkOffset + 4)
+      bitsPerSample = bytes.readUInt16LE(chunkOffset + 14)
+    }
+    if (chunkId === 'data') {
+      dataOffset = chunkOffset
+      dataSize = chunkSize
+    }
+    offset = chunkOffset + chunkSize + (chunkSize % 2)
+  }
+
+  if (!sampleRate || !channels || bitsPerSample !== 16 || dataOffset === undefined || dataSize === undefined)
+    throw new Error('local-speech-wave-format-unsupported')
+
+  let peak = 0
+  for (let index = dataOffset; index + 1 < dataOffset + dataSize; index += 2)
+    peak = Math.max(peak, Math.abs(bytes.readInt16LE(index) / 32768))
+  if (peak <= 0.1)
+    throw new Error('local-speech-wave-too-quiet')
+
+  return {
+    durationMs: Math.round(dataSize / (channels * (bitsPerSample / 8) * sampleRate) * 1000),
+    normalizedPeak: Math.round(Math.min(1, peak) * 100) / 100,
+  }
+}
+
+async function generateLocalSpeechAsset(directory) {
+  if (process.platform !== 'darwin' || !existsSync('/usr/bin/say') || !existsSync('/usr/bin/afconvert'))
+    throw new Error('macos-local-speech-unavailable')
+
+  const aiffPath = join(directory, 'local-speech.aiff')
+  const wavPath = join(directory, 'local-speech.wav')
+  try {
+    await execFileAsync('/usr/bin/say', [
+      '-v',
+      LOCAL_SPEECH_PLAYBACK_VOICE,
+      '-r',
+      String(LOCAL_SPEECH_PLAYBACK_RATE),
+      '-o',
+      aiffPath,
+      LOCAL_SPEECH_PLAYBACK_PHRASE,
+    ], { maxBuffer: 16 * 1024 })
+    await execFileAsync('/usr/bin/afconvert', [
+      '-f',
+      'WAVE',
+      '-d',
+      'LEI16@24000',
+      aiffPath,
+      wavPath,
+    ], { maxBuffer: 16 * 1024 })
+    const metadata = readWavePcmMetadata(wavPath)
+    return {
+      path: wavPath,
+      metadata: {
+        PLAYBACK_PROFILE: LOCAL_SPEECH_PLAYBACK_PROFILE,
+        PLAYBACK_SOURCE: LOCAL_SPEECH_PLAYBACK_SOURCE,
+        PLAYBACK_VOICE: LOCAL_SPEECH_PLAYBACK_VOICE,
+        PLAYBACK_RATE: String(LOCAL_SPEECH_PLAYBACK_RATE),
+        PLAYBACK_DURATION_MS: String(metadata.durationMs),
+        PLAYBACK_LOCAL_ASSET: 'YES',
+        PLAYBACK_SOURCE_NORMALIZED_PEAK: String(metadata.normalizedPeak),
+        PLAYBACK_GAIN_MAX: String(PLAYBACK_GAIN_MAX),
+      },
+    }
+  }
+  catch {
+    throw new Error('local-speech-asset-generation-failed')
+  }
 }
 
 function safeAssetPath(root, pathname) {
@@ -128,7 +229,7 @@ function writeFileResponse(response, filePath, pathname) {
   return true
 }
 
-function addHostFields(report, { browser, address, externalAssetReferenceCount, localAssetRequestCount, localModelAssetRequestCount, localWasmAssetRequestCount, localRendererAssetRequestCount, externalNetworkRequestCount, credentialEnvStripped }) {
+function addHostFields(report, { browser, address, externalAssetReferenceCount, localAssetRequestCount, localModelAssetRequestCount, localWasmAssetRequestCount, localRendererAssetRequestCount, localSpeechAssetRequestCount, externalNetworkRequestCount, credentialEnvStripped, playbackMetadata }) {
   return {
     ...report,
     HOST_RUNTIME: CHROMIUM_HOST_RUNTIME,
@@ -143,6 +244,7 @@ function addHostFields(report, { browser, address, externalAssetReferenceCount, 
     LOCAL_MODEL_ASSET_REQUEST_COUNT: localModelAssetRequestCount,
     LOCAL_WASM_ASSET_REQUEST_COUNT: localWasmAssetRequestCount,
     LOCAL_RENDERER_ASSET_REQUEST_COUNT: localRendererAssetRequestCount,
+    LOCAL_SPEECH_ASSET_REQUEST_COUNT: localSpeechAssetRequestCount,
     EXTERNAL_NETWORK_REQUEST_COUNT: externalNetworkRequestCount,
     CREDENTIAL_ENV_STRIPPED: credentialEnvStripped ? 'YES' : 'NO',
     PRODUCTION_ELECTRON_LEVEL2_EVIDENCE: 'PASS',
@@ -151,6 +253,7 @@ function addHostFields(report, { browser, address, externalAssetReferenceCount, 
     MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE: report.AEC_LEVEL_3_LOCAL_DEVICE_CANDIDATE,
     NETWORK_GUARD_FAILURE: externalNetworkRequestCount > 0 ? 'YES' : 'NO',
     ...(address ? { LOCAL_SERVER_PORT: address.port } : {}),
+    ...(playbackMetadata || {}),
   }
 }
 
@@ -169,7 +272,12 @@ function printInteractiveReport(report, context) {
 function printPreflightReport(report, context) {
   const vadReady = report.PRODUCTION_VAD_BROWSER_INIT === 'PASS'
     && report.PRODUCTION_VAD_SYNTHETIC_INFERENCE === 'PASS'
+  const playbackReady = report.PLAYBACK_PROFILE === 'macos-local-speech'
+    && report.PLAYBACK_DECODE === 'PASS'
+    && report.PLAYBACK_GRAPH === 'PASS'
+    && context.localSpeechAssetRequestCount > 0
   const passed = vadReady
+    && playbackReady
     && context.externalNetworkRequestCount === 0
     && context.credentialEnvStripped
     && context.blockedRequestCount === 0
@@ -182,7 +290,7 @@ function printPreflightReport(report, context) {
     PRODUCTION_VAD_ASSET: 'vendored-local-offline',
     PRODUCTION_VAD_AUDIO_PATH: 'AudioWorklet-production',
     MEDIA_REQUESTED: 'NO',
-    READY_FOR_OWNER_PHASE0: 'YES',
+    READY_FOR_OWNER_PHASE0: passed ? 'YES' : 'NO',
     PREFLIGHT_LOCAL_SERVER: 'PASS',
     PREFLIGHT_CHROMIUM_HOST: 'PASS',
     PREFLIGHT_ROOT_HTML: 'PASS',
@@ -197,7 +305,7 @@ function printPreflightReport(report, context) {
   return passed
 }
 
-function createLocalServer({ interactiveHtml, preflightHtml }) {
+function createLocalServer({ interactiveHtml, preflightHtml, localSpeechAssetPath, playbackMetadata }) {
   let localAssetRequestCount = 0
   let externalNetworkRequestCount = 0
   let blockedRequestCount = 0
@@ -205,6 +313,7 @@ function createLocalServer({ interactiveHtml, preflightHtml }) {
   let localModelAssetRequestCount = 0
   let localWasmAssetRequestCount = 0
   let localRendererAssetRequestCount = 0
+  let localSpeechAssetRequestCount = 0
   let lastReport
   let lastReportKind
   let address
@@ -283,6 +392,13 @@ function createLocalServer({ interactiveHtml, preflightHtml }) {
       return
     }
 
+    if (pathname === LOCAL_SPEECH_ASSET) {
+      localAssetRequestCount++
+      localSpeechAssetRequestCount++
+      writeFileResponse(response, localSpeechAssetPath, pathname)
+      return
+    }
+
     let root
     let relativePath
     if (pathname.startsWith('/production-vad/')) {
@@ -323,12 +439,14 @@ function createLocalServer({ interactiveHtml, preflightHtml }) {
       localModelAssetRequestCount,
       localWasmAssetRequestCount,
       localRendererAssetRequestCount,
+      localSpeechAssetRequestCount,
       externalNetworkRequestCount,
       blockedRequestCount,
       blockedRequestClasses: [...blockedRequestClasses],
       lastReport,
       lastReportKind,
       address,
+      playbackMetadata,
     }),
     setAddress: (value) => { address = value },
     externalAssetReferenceCount: countExternalAssetReferences(interactiveHtml) + countExternalAssetReferences(preflightHtml),
@@ -388,8 +506,25 @@ async function run() {
   const credentialEnvStripped = stripCredentialEnvironment(credentialEnvironment)
   const interactiveHtml = readFileSync(join(RENDERER_ROOT, INTERACTIVE_PAGE.slice(1)), 'utf8')
   const preflightHtml = readFileSync(join(RENDERER_ROOT, PREFLIGHT_PAGE.slice(1)), 'utf8')
-  const harness = createLocalServer({ interactiveHtml, preflightHtml })
   const profileDirectory = await mkdtemp(join(tmpdir(), 'airi-local-duplex-chromium-'))
+  const speechAssetDirectory = await mkdtemp(join(tmpdir(), 'airi-local-duplex-speech-'))
+  let localSpeechAsset
+  try {
+    localSpeechAsset = await generateLocalSpeechAsset(speechAssetDirectory)
+  }
+  catch (error) {
+    await rm(speechAssetDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    await rm(profileDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    stdout.write(`CHROMIUM_${preflight ? 'NO_MEDIA_PREFLIGHT' : 'SMOKE'}=FAIL\nFAILURE_CODE=${errorMessageFrom(error) ?? 'local-speech-asset-generation-failed'}\n`)
+    process.exitCode = 1
+    return
+  }
+  const harness = createLocalServer({
+    interactiveHtml,
+    preflightHtml,
+    localSpeechAssetPath: localSpeechAsset.path,
+    playbackMetadata: localSpeechAsset.metadata,
+  })
   let child
   let timeout
   let settled = false
@@ -466,6 +601,8 @@ async function run() {
       localModelAssetRequestCount: stats.localModelAssetRequestCount,
       localWasmAssetRequestCount: stats.localWasmAssetRequestCount,
       localRendererAssetRequestCount: stats.localRendererAssetRequestCount,
+      localSpeechAssetRequestCount: stats.localSpeechAssetRequestCount,
+      playbackMetadata: localSpeechAsset.metadata,
     }
 
     if (result.kind === 'preflight') {
@@ -493,6 +630,7 @@ async function run() {
   finally {
     clearTimeout(timeout)
     await new Promise(resolveClose => harness.server.close(() => resolveClose()))
+    await rm(speechAssetDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
     await rm(profileDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }
 }

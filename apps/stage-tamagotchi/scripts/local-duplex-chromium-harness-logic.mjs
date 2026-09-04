@@ -2,6 +2,12 @@ import { existsSync } from 'node:fs'
 
 export const CHROMIUM_HOST_RUNTIME = 'SYSTEM_CHROMIUM'
 export const LOCAL_SERVER_BIND_ADDRESS = '127.0.0.1'
+export const LOCAL_SPEECH_PLAYBACK_PROFILE = 'macos-local-speech'
+export const LOCAL_SPEECH_PLAYBACK_SOURCE = 'macos-system-say'
+export const LOCAL_SPEECH_PLAYBACK_VOICE = 'Samantha'
+export const LOCAL_SPEECH_PLAYBACK_RATE = 180
+export const LOCAL_SPEECH_PLAYBACK_PHRASE = 'This is a local duplex audio diagnostic.'
+export const PLAYBACK_GAIN_MAX = 0.25
 export const CHROMIUM_CSP = [
   'default-src \'self\'',
   'base-uri \'none\'',

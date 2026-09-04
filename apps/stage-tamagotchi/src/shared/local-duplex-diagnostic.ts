@@ -6,6 +6,7 @@ export const LOCAL_DUPLEX_DIAGNOSTIC_VAD_BOOT_REPORT_MARKER = 'AIRI_LOCAL_DUPLEX
 export interface LocalDuplexChromiumRuntime {
   modelBaseUrl: string
   ortWasmUrl: string
+  playbackAssetUrl: string
   reportEndpoint: string
 }
 
