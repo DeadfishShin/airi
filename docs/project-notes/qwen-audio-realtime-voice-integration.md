@@ -1428,3 +1428,13 @@ Owner 已真实完成一次完整的 Chromium PHASE_1–4：quiet baseline 与 p
 Chromium interactive path 不再以 `synthetic-compatibility` 作为最终 Level-3 playback authority。harness 现在要求 macOS `/usr/bin/say` 使用固定诊断句和固定 `Samantha`/rate `180` 生成临时 AIFF，再由 `/usr/bin/afconvert` 转为本地 WAV；临时文件只在 harness 生命周期内存在，经过本地 server 提供给 Chromium，并由 app-local `GainNode` 以不超过 `0.25` 的 gain 播放。若本机不能生成或解码该真实 speech waveform，harness fail closed。no-media preflight 会验证生成、local asset serving、browser decode 和 WebAudio graph，但不请求麦克风、不播放扬声器、不冒充真人检测结果。`PLAYBACK_PROFILE=macos-local-speech` 只有在这条实际生成的 speech waveform 路径成立时才会出现。`SOURCE_PROVEN`。
 
 下一次 Owner 仍需执行单一 Chromium 命令完成真实 PHASE_1–4；当前 Level-3 仍 OPEN，automatic Option-B barge-in 继续 HOLD。新 probability diagnosis 与 local speech profile 只补齐下一轮证据，不代表本轮已修复用户语音检测，也不代表 Level-3 runtime PASS。`OPEN / NOT_YET_PROVEN`。
+
+### Chromium PHASE_3→PHASE_4 transition failure semantics
+
+Owner 最近一次有效的 Chromium run 已执行到 PHASE_3，但在进入 PHASE_4 前没有最终 report；这不是 Chrome crash、权限问题、Electron 问题或 network failure，也不能据此推断 PHASE_3 的 speech detection/probability 结果。源码确认的根因是旧的 `settlePhase()` 在 `activeSpeech` 仍为 true 时返回 false，随后 phase loop 直接退出，没有调用 `finish()`，因而同时缺少 bounded failure code、cleanup 和 report。
+
+修复后的 phase transition 使用显式 `WAITING_FOR_VAD_QUIESCENCE` 状态：停止 phase playback 后等待真实 production VAD 静默边界，等待上限为 `PHASE_SETTLE_TIMEOUT_MS = minSilenceDurationMs + 2000`，当前为 `3200 ms`。该上限以 production `minSilenceDurationMs=1200` 为基础加入有限 scheduling margin；它不是 recorder-backed `flushDelayMs=1200`，也不是把 `activeSpeech` 强行改成 false。若 late `speech-end` 在上限内到达，transition 继续；若仍 active，则走 `finish('FAIL', 'phase-settle-timeout')`，执行 cleanup 并输出 bounded report。Owner Cancel/Esc 仍走 `CANCELLED`，不改写为 FAIL；当前 production `VAD` 没有适合 phase boundary 的公开 reset API，因此没有新增强制 reset。
+
+报告现在保留 `PHASE_TRANSITION_STATUS`、`PHASE_TRANSITION_FROM`、`PHASE_TRANSITION_TO`、`VAD_ACTIVE_AT_TRANSITION_START`、`VAD_QUIESCENCE_WAIT_MS`、`VAD_QUIESCENCE_RESULT`、`VAD_LATE_SPEECH_END_COUNT`、`PHASE_SETTLE_TIMEOUT_MS` 及 P3/P4 的 late-end bounded counters；这些字段只包含 allowlisted 状态、计数和有限时间，不包含 transcript、PCM 或 waveform。任意 phase transition failure 都必须到达 terminal `finish()`；P3→P4 超时不再静默停住。`SOURCE_PROVEN`。
+
+本次 Owner run 的 PHASE_3 已执行、PHASE_4 未执行、最终 report 未产生，因此 Level-3 仍为 `OPEN / NOT_YET_PROVEN`，不能补写 P3 检测结论。下一次 Owner run 应继续使用 `macos-local-speech`（`/usr/bin/say + /usr/bin/afconvert`）并检查 phase transition 字段；无论成功、取消还是 settle timeout，都必须看到 bounded terminal report。`OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。

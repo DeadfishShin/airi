@@ -27,6 +27,17 @@ const HOST_BOOT_REPORT_MARKER = 'AIRI_LOCAL_DUPLEX_PRODUCTION_HOST_BOOT_REPORT:'
 const BOOT_TIMEOUT_MS = 15000
 
 const allowedLocalProtocols = new Set(['file:', 'data:', 'blob:', 'about:', 'devtools:', `${LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL}:`])
+const safePhaseTransitionStatuses = new Set(['IDLE', 'WAITING_FOR_VAD_QUIESCENCE', 'READY_FOR_NEXT_PHASE', 'FAILED', 'CANCELLED'])
+const safePhaseQuiescenceResults = new Set(['NOT_STARTED', 'PASS', 'TIMEOUT', 'CANCELLED'])
+const safePhaseTransitionPhases = new Set([
+  'PHASE_0_TRACK_INSPECTION',
+  'PHASE_1_QUIET_BASELINE',
+  'PHASE_2_PLAYBACK_ONLY',
+  'PHASE_3_USER_SPEECH_CONTROL',
+  'PHASE_4_USER_SPEECH_DURING_PLAYBACK',
+  'COMPLETE',
+  'UNKNOWN',
+])
 
 export function isAllowedLocalDuplexResource(rawUrl: string) {
   let url: URL
@@ -63,6 +74,12 @@ function safeReportValue(field: string, value: unknown) {
     return typeof value === 'string' && /^(?:external-model-resource|external-onnx-wasm|external-renderer-resource|external-resource)$/.test(value) ? value : 'UNKNOWN'
   if (field === 'BLOCKED_REQUEST_RESOURCE_TYPE')
     return typeof value === 'string' && /^[a-z][a-z0-9-]{0,31}$/i.test(value) ? value : 'UNKNOWN'
+  if (field === 'PHASE_TRANSITION_STATUS')
+    return typeof value === 'string' && safePhaseTransitionStatuses.has(value) ? value : 'UNKNOWN'
+  if (field === 'PHASE_TRANSITION_FROM' || field === 'PHASE_TRANSITION_TO')
+    return typeof value === 'string' && safePhaseTransitionPhases.has(value) ? value : 'UNKNOWN'
+  if (field === 'VAD_QUIESCENCE_RESULT')
+    return typeof value === 'string' && safePhaseQuiescenceResults.has(value) ? value : 'UNKNOWN'
   if (typeof value === 'string' && /^[\w.:+-]+$/.test(value))
     return value
   return 'UNKNOWN'
@@ -110,6 +127,16 @@ function serializeDiagnosticReport(report: Record<string, unknown>) {
     'VAD_MIN_SPEECH_DURATION_MS',
     'VAD_SAMPLE_RATE',
     'PHASE_SETTLE_MS',
+    'PHASE_SETTLE_TIMEOUT_MS',
+    'PHASE_TRANSITION_STATUS',
+    'PHASE_TRANSITION_FROM',
+    'PHASE_TRANSITION_TO',
+    'VAD_ACTIVE_AT_TRANSITION_START',
+    'VAD_QUIESCENCE_WAIT_MS',
+    'VAD_QUIESCENCE_RESULT',
+    'VAD_LATE_SPEECH_END_COUNT',
+    'VAD_RESET_API_AVAILABLE',
+    'VAD_RESET_API_USED',
     'PLAYBACK_PROFILE',
     'PLAYBACK_GAIN_MAX',
     'PLAYBACK_START_COUNT',
@@ -121,9 +148,13 @@ function serializeDiagnosticReport(report: Record<string, unknown>) {
     'USER_ONLY_VAD_START_COUNT',
     'USER_ONLY_VAD_END_COUNT',
     'USER_ONLY_FIRST_ACTIVITY_LATENCY_MS',
+    'USER_ONLY_VAD_ACTIVE_AT_PHASE_END',
+    'USER_ONLY_VAD_LATE_END_AFTER_PHASE_COUNT',
     'USER_DURING_PLAYBACK_VAD_START_COUNT',
     'USER_DURING_PLAYBACK_VAD_END_COUNT',
     'USER_DURING_PLAYBACK_FIRST_ACTIVITY_LATENCY_MS',
+    'USER_DURING_PLAYBACK_VAD_ACTIVE_AT_PHASE_END',
+    'USER_DURING_PLAYBACK_VAD_LATE_END_AFTER_PHASE_COUNT',
     'PLAYBACK_ONLY_FALSE_TRIGGER',
     'USER_ONLY_DETECTED',
     'USER_DURING_PLAYBACK_DETECTED',

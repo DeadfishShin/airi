@@ -12,6 +12,7 @@ import {
 import {
   cancelPhaseState,
   classifyLevel3LocalDeviceVerdict,
+  classifyPhaseQuiescence,
   classifyPlaybackOnlyFalseTrigger,
   completePhase,
   createPhaseState,
@@ -139,6 +140,50 @@ describe('local duplex AEC/VAD smoke diagnostics', () => {
     expect(completePhase(state, 'PHASE_2_PLAYBACK_ONLY')).toBe(false)
   })
 
+  it('turns phase quiescence outcomes into explicit terminal-safe decisions', () => {
+    expect(classifyPhaseQuiescence({ activeSpeech: false, cancelled: false })).toBe('PASS')
+    // A late speech-end before the deadline leaves the detector idle and lets
+    // the next phase proceed without adding a product-level delay.
+    expect(classifyPhaseQuiescence({ activeSpeech: false, cancelled: false })).toBe('PASS')
+    expect(classifyPhaseQuiescence({ activeSpeech: true, cancelled: false })).toBe('TIMEOUT')
+    expect(classifyPhaseQuiescence({ activeSpeech: true, cancelled: true })).toBe('CANCELLED')
+  })
+
+  it('regresses the former P3 to P4 silent-return path as a bounded failure', () => {
+    const rendererSource = readFileSync(new URL('./local-duplex-aec-vad-smoke-renderer.ts', import.meta.url), 'utf8')
+    expect(rendererSource).toContain('PHASE_TRANSITION_STATUS')
+    expect(rendererSource).toContain('PHASE_SETTLE_TIMEOUT_MS')
+    expect(rendererSource).toContain('phaseTransitionFailureCode = \'phase-settle-timeout\'')
+    expect(rendererSource).toContain('await finish(\'FAIL\', phaseTransitionFailureCode || \'phase-transition-failed\')')
+    expect(rendererSource).toContain('settlePhase(previousPhase, \'COMPLETE\')')
+    expect(rendererSource).not.toContain('if (!await runPhase(definition))\n        return')
+  })
+
+  it('preserves a completed P4 pass terminal path and cancellation semantics', () => {
+    const rendererSource = readFileSync(new URL('./local-duplex-aec-vad-smoke-renderer.ts', import.meta.url), 'utf8')
+    expect(rendererSource).toContain('await finish(\'PASS\')')
+    expect(rendererSource).toContain('await finish(\'CANCELLED\', \'owner-cancel\')')
+    expect(rendererSource).toContain('VAD_RESET_API_AVAILABLE: \'NO\'')
+    expect(rendererSource).toContain('VAD_RESET_API_USED: \'NO\'')
+  })
+
+  it('routes phase transition telemetry through the production-host serializer', () => {
+    const hostSource = readFileSync(new URL('../src/main/windows/local-duplex-diagnostic.ts', import.meta.url), 'utf8')
+    for (const field of [
+      'PHASE_TRANSITION_STATUS',
+      'PHASE_TRANSITION_FROM',
+      'PHASE_TRANSITION_TO',
+      'VAD_ACTIVE_AT_TRANSITION_START',
+      'VAD_QUIESCENCE_WAIT_MS',
+      'VAD_QUIESCENCE_RESULT',
+      'VAD_LATE_SPEECH_END_COUNT',
+      'USER_ONLY_VAD_ACTIVE_AT_PHASE_END',
+      'USER_ONLY_VAD_LATE_END_AFTER_PHASE_COUNT',
+    ]) {
+      expect(hostSource).toContain(`'${field}'`)
+    }
+  })
+
   it('requires effective track settings for Level 2', () => {
     expect(level2TrackVerdict(true)).toBe('YES')
     expect(level2TrackVerdict(false)).toBe('NO')
@@ -250,6 +295,26 @@ describe('local duplex AEC/VAD smoke diagnostics', () => {
     expect(serialized).toContain('PRODUCTION_VAD_MODEL_ID=onnx-community/silero-vad')
     expect(serialized).toContain('BLOCKED_REQUEST_CLASS=external-model-resource')
     expect(serialized).not.toContain('https://')
+  })
+
+  it('serializes bounded phase transition telemetry without content', () => {
+    const report = serializeLocalDuplexReport({
+      PHASE_TRANSITION_STATUS: 'FAILED',
+      PHASE_TRANSITION_FROM: 'PHASE_3_USER_SPEECH_CONTROL',
+      PHASE_TRANSITION_TO: 'PHASE_4_USER_SPEECH_DURING_PLAYBACK',
+      VAD_ACTIVE_AT_TRANSITION_START: true,
+      VAD_QUIESCENCE_WAIT_MS: 3200,
+      VAD_QUIESCENCE_RESULT: 'TIMEOUT',
+      VAD_LATE_SPEECH_END_COUNT: 0,
+      USER_ONLY_VAD_ACTIVE_AT_PHASE_END: 'YES',
+      USER_ONLY_VAD_LATE_END_AFTER_PHASE_COUNT: 1,
+      transcript: 'must not appear',
+    })
+    expect(report).toContain('PHASE_TRANSITION_STATUS=FAILED')
+    expect(report).toContain('PHASE_TRANSITION_FROM=PHASE_3_USER_SPEECH_CONTROL')
+    expect(report).toContain('PHASE_TRANSITION_TO=PHASE_4_USER_SPEECH_DURING_PLAYBACK')
+    expect(report).toContain('VAD_QUIESCENCE_RESULT=TIMEOUT')
+    expect(report).not.toContain('must not appear')
   })
 
   it('defines a cleanup contract in the bounded report', () => {

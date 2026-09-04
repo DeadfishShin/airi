@@ -19,6 +19,7 @@ import { LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL } from '../src/shared/local-duplex-dia
 // eslint-disable-next-line no-restricted-syntax
 import {
   classifyLevel3LocalDeviceVerdict,
+  classifyPhaseQuiescence,
   classifyPlaybackOnlyFalseTrigger,
   classifyVadPipelineDiagnosis,
   level2TrackVerdict,
@@ -29,6 +30,11 @@ import {
 const REPORT_MARKER = 'LOCAL_DUPLEX_AEC_VAD_REPORT_JSON:'
 const PLAYBACK_GAIN_MAX = 0.25
 const PHASE_SETTLE_MS = PRODUCTION_VAD_DEFAULTS.minSilenceDurationMs + 300
+// The production VAD needs 1200 ms of silence before it can emit speech-end.
+// Add a bounded 2000 ms scheduling margin, rather than waiting forever or
+// imposing a fixed delay after provider/model completion.
+const PHASE_SETTLE_TIMEOUT_MS = PRODUCTION_VAD_DEFAULTS.minSilenceDurationMs + 2000
+const PHASE_SETTLE_POLL_MS = 50
 const PHASE_OBSERVATION_PADDING_MS = 350
 const AUDIO_CONTEXT_RESUME_TIMEOUT_MS = 5000
 const MICROPHONE_REQUEST_TIMEOUT_MS = 15000
@@ -47,6 +53,9 @@ type InitializationStage
 
 type PhaseKey = Exclude<typeof LOCAL_DUPLEX_SMOKE_PHASES[number], 'PHASE_0_TRACK_INSPECTION'>
 type PhaseDefinition = readonly [PhaseKey, string, string, number, boolean]
+type PhaseTransitionPhase = PhaseKey | 'PHASE_0_TRACK_INSPECTION' | 'COMPLETE'
+type PhaseTransitionStatus = 'IDLE' | 'WAITING_FOR_VAD_QUIESCENCE' | 'READY_FOR_NEXT_PHASE' | 'FAILED' | 'CANCELLED'
+type PhaseQuiescenceResult = 'NOT_STARTED' | 'PASS' | 'TIMEOUT' | 'CANCELLED'
 
 const phaseDefinitions: readonly PhaseDefinition[] = [
   ['PHASE_1_QUIET_BASELINE', 'PHASE_1 — quiet baseline', 'Please remain quiet while the microphone baseline is measured.', 3500, false],
@@ -128,6 +137,20 @@ let audioContextResumeResult: 'PASS' | 'FAIL' | 'TIMEOUT' | 'UNKNOWN' = 'UNKNOWN
 let playbackBuffer: AudioBuffer | undefined
 let playbackDurationMs: number | 'UNKNOWN' = 'UNKNOWN'
 let playbackSourceNormalizedPeak: number | 'UNKNOWN' = 'UNKNOWN'
+let phaseTransitionStatus: PhaseTransitionStatus = 'IDLE'
+let phaseTransitionFrom: PhaseTransitionPhase | 'UNKNOWN' = 'UNKNOWN'
+let phaseTransitionTo: PhaseTransitionPhase | 'UNKNOWN' = 'UNKNOWN'
+let vadActiveAtTransitionStart = false
+let vadQuiescenceWaitMs: number | 'UNKNOWN' = 0
+let vadQuiescenceResult: PhaseQuiescenceResult = 'NOT_STARTED'
+let vadLateSpeechEndCount = 0
+let phaseTransitionFailureCode: 'phase-settle-timeout' | 'phase-transition-failed' | undefined
+const phaseLateSpeechEndCounts: Record<PhaseKey, number> = Object.fromEntries(
+  phaseDefinitions.map(([key]) => [key, 0]),
+) as Record<PhaseKey, number>
+const phaseActiveAtEnd: Record<PhaseKey, boolean | undefined> = Object.fromEntries(
+  phaseDefinitions.map(([key]) => [key, undefined]),
+) as Record<PhaseKey, boolean | undefined>
 
 const browserTransformersEnv = env as typeof env & {
   backends: { onnx: { wasm?: { wasmPaths?: string | { wasm?: string } } } }
@@ -237,6 +260,11 @@ function inspectTrack() {
 
 function recordVadEvent(kind: 'start' | 'end') {
   activeSpeech = kind === 'start'
+  if (kind === 'end' && phaseTransitionStatus === 'WAITING_FOR_VAD_QUIESCENCE') {
+    vadLateSpeechEndCount++
+    if (phaseTransitionFrom !== 'UNKNOWN' && phaseTransitionFrom !== 'COMPLETE' && phaseTransitionFrom !== 'PHASE_0_TRACK_INSPECTION')
+      phaseLateSpeechEndCounts[phaseTransitionFrom]++
+  }
   const phase = phaseState.current
   if (!phase)
     return
@@ -371,22 +399,58 @@ async function countdown(label: string, instruction: string) {
   return !phaseState.cancelled
 }
 
-async function settlePhase() {
+async function settlePhase(from: PhaseTransitionPhase, to: PhaseTransitionPhase) {
   stopLocalPlayback()
   phaseState.current = undefined
-  updateStatus('Settling the production VAD state before the next observation window.')
+  phaseTransitionStatus = 'WAITING_FOR_VAD_QUIESCENCE'
+  phaseTransitionFrom = from
+  phaseTransitionTo = to
+  vadActiveAtTransitionStart = activeSpeech
+  vadQuiescenceWaitMs = 0
+  vadQuiescenceResult = 'NOT_STARTED'
+  vadLateSpeechEndCount = 0
+  phaseTransitionFailureCode = undefined
+  updateStatus('WAITING_FOR_VAD_QUIESCENCE: allowing the production VAD to reach a real silent boundary.')
+  const startedAt = performance.now()
   await wait(PHASE_SETTLE_MS)
-  const settled = !activeSpeech && !phaseState.cancelled
-  if (!settled)
+  while (true) {
+    if (!activeSpeech || phaseState.cancelled)
+      break
+    const elapsed = performance.now() - startedAt
+    if (elapsed >= PHASE_SETTLE_TIMEOUT_MS)
+      break
+    await wait(Math.min(PHASE_SETTLE_POLL_MS, PHASE_SETTLE_TIMEOUT_MS - elapsed))
+  }
+  const elapsed = Math.min(PHASE_SETTLE_TIMEOUT_MS, Math.max(0, performance.now() - startedAt))
+  vadQuiescenceWaitMs = normalizeFiniteMetric(elapsed)
+  const quiescence = classifyPhaseQuiescence({
+    activeSpeech,
+    cancelled: phaseState.cancelled,
+  })
+  if (quiescence === 'CANCELLED') {
+    phaseTransitionStatus = 'CANCELLED'
+    vadQuiescenceResult = 'CANCELLED'
+    return false
+  }
+  if (quiescence === 'TIMEOUT') {
+    phaseTransitionStatus = 'FAILED'
+    vadQuiescenceResult = 'TIMEOUT'
     phaseIsolationReady = false
-  return settled
+    phaseTransitionFailureCode = 'phase-settle-timeout'
+    updateStatus(`Phase transition failed: VAD remained active after ${PHASE_SETTLE_TIMEOUT_MS} ms.`)
+    return false
+  }
+  phaseTransitionStatus = 'READY_FOR_NEXT_PHASE'
+  vadQuiescenceResult = 'PASS'
+  updateStatus('VAD quiescence confirmed. Preparing the next observation window.')
+  return true
 }
 
-async function runPhase([key, label, instruction, durationMs, withPlayback]: PhaseDefinition) {
-  if (!await settlePhase())
-    return false
+async function runPhase([key, label, instruction, durationMs, withPlayback]: PhaseDefinition, from: PhaseTransitionPhase): Promise<'PASS' | 'CANCELLED' | 'FAIL'> {
+  if (!await settlePhase(from, key))
+    return phaseState.cancelled ? 'CANCELLED' : 'FAIL'
   if (!await countdown(label, instruction))
-    return false
+    return 'CANCELLED'
   phaseState.current = key
   phaseResults[key].startedAt = performance.now()
   updateStatus('Observation window running. Only production VAD event counts are collected.')
@@ -394,12 +458,13 @@ async function runPhase([key, label, instruction, durationMs, withPlayback]: Pha
     startLocalPlayback(Math.min(3.8, Math.max(1.5, durationMs / 1000 - 0.3)))
   await wait(durationMs)
   stopLocalPlayback()
+  phaseActiveAtEnd[key] = activeSpeech
   phaseState.current = undefined
   phaseState.completed.push(key)
   elements.countdown.textContent = 'END'
   updateStatus('Phase complete. Preparing the next bounded observation window.')
   await wait(PHASE_OBSERVATION_PADDING_MS)
-  return !phaseState.cancelled
+  return phaseState.cancelled ? 'CANCELLED' : 'PASS'
 }
 
 function phaseMetric(key: PhaseKey, field: keyof PhaseResult) {
@@ -497,6 +562,16 @@ function buildReport(status: string, failureCode?: string): Record<string, unkno
     VAD_MIN_SPEECH_DURATION_MS: PRODUCTION_VAD_DEFAULTS.minSpeechDurationMs,
     VAD_SAMPLE_RATE: PRODUCTION_VAD_DEFAULTS.sampleRate,
     PHASE_SETTLE_MS,
+    PHASE_SETTLE_TIMEOUT_MS,
+    PHASE_TRANSITION_STATUS: phaseTransitionStatus,
+    PHASE_TRANSITION_FROM: phaseTransitionFrom,
+    PHASE_TRANSITION_TO: phaseTransitionTo,
+    VAD_ACTIVE_AT_TRANSITION_START: vadActiveAtTransitionStart,
+    VAD_QUIESCENCE_WAIT_MS: vadQuiescenceWaitMs,
+    VAD_QUIESCENCE_RESULT: vadQuiescenceResult,
+    VAD_LATE_SPEECH_END_COUNT: vadLateSpeechEndCount,
+    VAD_RESET_API_AVAILABLE: 'NO',
+    VAD_RESET_API_USED: 'NO',
     PLAYBACK_PROFILE,
     PLAYBACK_SOURCE,
     PLAYBACK_VOICE,
@@ -514,6 +589,8 @@ function buildReport(status: string, failureCode?: string): Record<string, unkno
     USER_ONLY_VAD_START_COUNT: phaseMetric('PHASE_3_USER_SPEECH_CONTROL', 'starts'),
     USER_ONLY_VAD_END_COUNT: phaseMetric('PHASE_3_USER_SPEECH_CONTROL', 'ends'),
     USER_ONLY_FIRST_ACTIVITY_LATENCY_MS: phaseLatency('PHASE_3_USER_SPEECH_CONTROL'),
+    USER_ONLY_VAD_ACTIVE_AT_PHASE_END: phaseActiveAtEnd.PHASE_3_USER_SPEECH_CONTROL === undefined ? 'UNKNOWN' : phaseActiveAtEnd.PHASE_3_USER_SPEECH_CONTROL ? 'YES' : 'NO',
+    USER_ONLY_VAD_LATE_END_AFTER_PHASE_COUNT: phaseLateSpeechEndCounts.PHASE_3_USER_SPEECH_CONTROL,
     QUIET_VAD_DEBUG_EVENT_COUNT: phaseProbabilityMetric('PHASE_1_QUIET_BASELINE', 'debugEventCount'),
     QUIET_VAD_PROBABILITY_SAMPLE_COUNT: phaseProbabilityMetric('PHASE_1_QUIET_BASELINE', 'probabilitySampleCount'),
     QUIET_VAD_MAX_PROBABILITY: phaseProbabilityMetric('PHASE_1_QUIET_BASELINE', 'maxProbability'),
@@ -523,6 +600,8 @@ function buildReport(status: string, failureCode?: string): Record<string, unkno
     USER_DURING_PLAYBACK_VAD_START_COUNT: phaseMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'starts'),
     USER_DURING_PLAYBACK_VAD_END_COUNT: phaseMetric('PHASE_4_USER_SPEECH_DURING_PLAYBACK', 'ends'),
     USER_DURING_PLAYBACK_FIRST_ACTIVITY_LATENCY_MS: phaseLatency('PHASE_4_USER_SPEECH_DURING_PLAYBACK'),
+    USER_DURING_PLAYBACK_VAD_ACTIVE_AT_PHASE_END: phaseActiveAtEnd.PHASE_4_USER_SPEECH_DURING_PLAYBACK === undefined ? 'UNKNOWN' : phaseActiveAtEnd.PHASE_4_USER_SPEECH_DURING_PLAYBACK ? 'YES' : 'NO',
+    USER_DURING_PLAYBACK_VAD_LATE_END_AFTER_PHASE_COUNT: phaseLateSpeechEndCounts.PHASE_4_USER_SPEECH_DURING_PLAYBACK,
     PLAYBACK_ONLY_VAD_DEBUG_EVENT_COUNT: phaseProbabilityMetric('PHASE_2_PLAYBACK_ONLY', 'debugEventCount'),
     PLAYBACK_ONLY_VAD_PROBABILITY_SAMPLE_COUNT: phaseProbabilityMetric('PHASE_2_PLAYBACK_ONLY', 'probabilitySampleCount'),
     PLAYBACK_ONLY_VAD_MAX_PROBABILITY: phaseProbabilityMetric('PHASE_2_PLAYBACK_ONLY', 'maxProbability'),
@@ -713,9 +792,29 @@ async function initialize() {
     elements.instruction.textContent = 'The four local observation phases will now run with a countdown before each window.'
     updateStatus('AIRI production VAD ready. No cloud or AIRI provider path is active.')
     setInitializationStage('PHASE_1_READY')
+    let previousPhase: PhaseTransitionPhase = 'PHASE_0_TRACK_INSPECTION'
     for (const definition of phaseDefinitions) {
-      if (!await runPhase(definition))
+      const phaseResult = await runPhase(definition, previousPhase)
+      if (phaseResult === 'CANCELLED') {
+        await finish('CANCELLED', 'owner-cancel')
         return
+      }
+      if (phaseResult === 'FAIL') {
+        updateStatus(`Phase transition failed: ${phaseTransitionFailureCode || 'phase-transition-failed'}`)
+        await finish('FAIL', phaseTransitionFailureCode || 'phase-transition-failed')
+        return
+      }
+      previousPhase = definition[0]
+    }
+    const finalTransitionResult = await settlePhase(previousPhase, 'COMPLETE')
+    if (!finalTransitionResult) {
+      if (phaseState.cancelled) {
+        await finish('CANCELLED', 'owner-cancel')
+        return
+      }
+      updateStatus(`Phase transition failed: ${phaseTransitionFailureCode || 'phase-transition-failed'}`)
+      await finish('FAIL', phaseTransitionFailureCode || 'phase-transition-failed')
+      return
     }
     await finish('PASS')
   }

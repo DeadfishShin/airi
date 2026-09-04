@@ -157,6 +157,14 @@ export function cancelPhaseState(state) {
   state.current = undefined
 }
 
+export function classifyPhaseQuiescence({ activeSpeech, cancelled }) {
+  if (cancelled)
+    return 'CANCELLED'
+  if (activeSpeech)
+    return 'TIMEOUT'
+  return 'PASS'
+}
+
 const safeInitializationStages = new Set([
   'WAITING_FOR_USER_START',
   'AUDIO_CONTEXT_CREATED',
@@ -172,6 +180,9 @@ const safeInitializationStages = new Set([
 const safeInitializationFailureStages = new Set(['none', ...safeInitializationStages])
 const safeAudioContextStates = new Set(['suspended', 'running', 'closed', 'interrupted', 'UNKNOWN'])
 const safeAudioContextResumeResults = new Set(['PASS', 'FAIL', 'TIMEOUT', 'UNKNOWN'])
+const safePhaseTransitionStatuses = new Set(['IDLE', 'WAITING_FOR_VAD_QUIESCENCE', 'READY_FOR_NEXT_PHASE', 'FAILED', 'CANCELLED'])
+const safePhaseQuiescenceResults = new Set(['NOT_STARTED', 'PASS', 'TIMEOUT', 'CANCELLED'])
+const safePhaseTransitionPhases = new Set([...LOCAL_DUPLEX_SMOKE_PHASES, 'COMPLETE', 'UNKNOWN'])
 const safeVadPipelineDiagnoses = new Set([
   'NOT_OBSERVED',
   'NO_VAD_FRAMES',
@@ -212,6 +223,21 @@ function safeReportValue(field, value) {
   }
   if (field === 'AUDIO_CONTEXT_RESUME_RESULT') {
     if (typeof value === 'string' && safeAudioContextResumeResults.has(value))
+      return value
+    return 'UNKNOWN'
+  }
+  if (field === 'PHASE_TRANSITION_STATUS') {
+    if (typeof value === 'string' && safePhaseTransitionStatuses.has(value))
+      return value
+    return 'UNKNOWN'
+  }
+  if (field === 'PHASE_TRANSITION_FROM' || field === 'PHASE_TRANSITION_TO') {
+    if (typeof value === 'string' && safePhaseTransitionPhases.has(value))
+      return value
+    return 'UNKNOWN'
+  }
+  if (field === 'VAD_QUIESCENCE_RESULT') {
+    if (typeof value === 'string' && safePhaseQuiescenceResults.has(value))
       return value
     return 'UNKNOWN'
   }
@@ -300,6 +326,16 @@ export function serializeLocalDuplexReport(report) {
     'VAD_MIN_SPEECH_DURATION_MS',
     'VAD_SAMPLE_RATE',
     'PHASE_SETTLE_MS',
+    'PHASE_SETTLE_TIMEOUT_MS',
+    'PHASE_TRANSITION_STATUS',
+    'PHASE_TRANSITION_FROM',
+    'PHASE_TRANSITION_TO',
+    'VAD_ACTIVE_AT_TRANSITION_START',
+    'VAD_QUIESCENCE_WAIT_MS',
+    'VAD_QUIESCENCE_RESULT',
+    'VAD_LATE_SPEECH_END_COUNT',
+    'VAD_RESET_API_AVAILABLE',
+    'VAD_RESET_API_USED',
     'PLAYBACK_PROFILE',
     'PLAYBACK_SOURCE',
     'PLAYBACK_VOICE',
@@ -341,6 +377,8 @@ export function serializeLocalDuplexReport(report) {
     'USER_ONLY_VAD_ABOVE_THRESHOLD_COUNT',
     'USER_ONLY_VAD_ABOVE_EXIT_THRESHOLD_COUNT',
     'USER_ONLY_VAD_PIPELINE_DIAGNOSIS',
+    'USER_ONLY_VAD_ACTIVE_AT_PHASE_END',
+    'USER_ONLY_VAD_LATE_END_AFTER_PHASE_COUNT',
     'USER_DURING_PLAYBACK_VAD_DEBUG_EVENT_COUNT',
     'USER_DURING_PLAYBACK_VAD_PROBABILITY_SAMPLE_COUNT',
     'USER_DURING_PLAYBACK_VAD_MAX_PROBABILITY',
@@ -348,6 +386,8 @@ export function serializeLocalDuplexReport(report) {
     'USER_DURING_PLAYBACK_VAD_ABOVE_THRESHOLD_COUNT',
     'USER_DURING_PLAYBACK_VAD_ABOVE_EXIT_THRESHOLD_COUNT',
     'USER_DURING_PLAYBACK_VAD_PIPELINE_DIAGNOSIS',
+    'USER_DURING_PLAYBACK_VAD_ACTIVE_AT_PHASE_END',
+    'USER_DURING_PLAYBACK_VAD_LATE_END_AFTER_PHASE_COUNT',
     'PLAYBACK_ONLY_FALSE_TRIGGER',
     'USER_ONLY_DETECTED',
     'USER_DURING_PLAYBACK_DETECTED',
