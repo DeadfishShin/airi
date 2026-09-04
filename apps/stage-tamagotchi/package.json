@@ -22,6 +22,8 @@
     "dev:xwayland": "install-electron && electron-vite dev -- --ozone-platform=x11",
     "smoke:realtime-voice-local-duplex": "install-electron && AIRI_LOCAL_DUPLEX_DIAGNOSTIC_MODE=interactive electron-vite build && AIRI_LOCAL_DUPLEX_DIAGNOSTIC_MODE=interactive electron-vite preview --skipBuild",
     "smoke:realtime-voice-local-duplex:preflight": "install-electron && node scripts/local-duplex-production-host-boot-probe.mjs",
+    "smoke:realtime-voice-local-duplex:chromium": "AIRI_LOCAL_DUPLEX_CHROMIUM_BUILD=1 electron-vite build && node scripts/local-duplex-chromium-harness.mjs",
+    "smoke:realtime-voice-local-duplex:chromium:preflight": "AIRI_LOCAL_DUPLEX_CHROMIUM_BUILD=1 electron-vite build && node scripts/local-duplex-chromium-harness.mjs --preflight",
     "build": "electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "pnpm run build && electron-builder --dir",

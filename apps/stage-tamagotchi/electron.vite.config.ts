@@ -22,7 +22,8 @@ import { defineConfig } from 'electron-vite'
 const stageUIAssetsRoot = resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src', 'assets'))
 const sharedCacheDir = resolve(join(import.meta.dirname, '..', '..', '.cache'))
 const localDuplexDiagnosticMode = env.AIRI_LOCAL_DUPLEX_DIAGNOSTIC_MODE
-const isLocalDuplexDiagnostic = localDuplexDiagnosticMode === 'interactive' || localDuplexDiagnosticMode === 'boot-probe'
+const isLocalDuplexChromiumBuild = env.AIRI_LOCAL_DUPLEX_CHROMIUM_BUILD === '1'
+const isLocalDuplexDiagnostic = isLocalDuplexChromiumBuild || localDuplexDiagnosticMode === 'interactive' || localDuplexDiagnosticMode === 'boot-probe'
 const normalRendererPlugins: Plugin[] = [
   Info(),
 
@@ -188,15 +189,20 @@ export default defineConfig({
     build: {
       rolldownOptions: {
         input: {
-          ...(isLocalDuplexDiagnostic
+          ...(isLocalDuplexChromiumBuild
             ? {
-                'local-duplex-diagnostic': resolve(join(import.meta.dirname, 'src', 'renderer', 'local-duplex-diagnostic.html')),
-                'local-duplex-diagnostic-boot': resolve(join(import.meta.dirname, 'src', 'renderer', 'local-duplex-diagnostic-boot.html')),
+                'local-duplex-chromium': resolve(join(import.meta.dirname, 'src', 'renderer', 'local-duplex-chromium.html')),
+                'local-duplex-chromium-boot': resolve(join(import.meta.dirname, 'src', 'renderer', 'local-duplex-chromium-boot.html')),
               }
-            : {
-                'main': resolve(join(import.meta.dirname, 'src', 'renderer', 'index.html')),
-                'beat-sync': resolve(join(import.meta.dirname, 'src', 'renderer', 'beat-sync.html')),
-              }),
+            : isLocalDuplexDiagnostic
+              ? {
+                  'local-duplex-diagnostic': resolve(join(import.meta.dirname, 'src', 'renderer', 'local-duplex-diagnostic.html')),
+                  'local-duplex-diagnostic-boot': resolve(join(import.meta.dirname, 'src', 'renderer', 'local-duplex-diagnostic-boot.html')),
+                }
+              : {
+                  'main': resolve(join(import.meta.dirname, 'src', 'renderer', 'index.html')),
+                  'beat-sync': resolve(join(import.meta.dirname, 'src', 'renderer', 'beat-sync.html')),
+                }),
         },
       },
     },

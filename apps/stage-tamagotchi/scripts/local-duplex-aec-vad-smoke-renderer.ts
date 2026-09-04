@@ -71,6 +71,8 @@ const phaseResults: Record<PhaseKey, PhaseResult> = Object.fromEntries(
 ) as Record<PhaseKey, PhaseResult>
 const waiters = new Set<{ resolve: () => void, timer: number }>()
 
+const chromiumRuntime = window.airiLocalDuplexChromium
+
 let audioContext: AudioContext | undefined
 let microphoneStream: MediaStream | undefined
 let microphoneTrack: MediaStreamTrack | undefined
@@ -87,18 +89,17 @@ let activeSpeech = false
 let phaseIsolationReady = true
 
 const browserTransformersEnv = env as typeof env & {
-  backends: { onnx: { wasm?: { wasmPaths?: string } } }
+  backends: { onnx: { wasm?: { wasmPaths?: string | { wasm?: string } } } }
 }
 
 browserTransformersEnv.allowRemoteModels = false
 browserTransformersEnv.allowLocalModels = true
-browserTransformersEnv.localModelPath = `${LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL}://production-vad/`
+browserTransformersEnv.localModelPath = chromiumRuntime?.modelBaseUrl ?? `${LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL}://production-vad/`
 browserTransformersEnv.useBrowserCache = false
 browserTransformersEnv.useFSCache = false
 browserTransformersEnv.useCustomCache = false
-// The production Electron build includes the ONNX Runtime wasm asset next to
-// this renderer bundle. Leave its URL resolution to Transformers.js/Vite so
-// the diagnostic host does not need a second wasm server or path convention.
+if (chromiumRuntime?.ortWasmUrl && browserTransformersEnv.backends.onnx.wasm)
+  browserTransformersEnv.backends.onnx.wasm.wasmPaths = { wasm: chromiumRuntime.ortWasmUrl }
 
 function updateStatus(message: string) {
   elements.status.textContent = message
@@ -408,6 +409,19 @@ async function finish(status: 'PASS' | 'FAIL' | 'CANCELLED', failureCode?: strin
   const report = buildReport(status, failureCode)
   report.CLEANUP_COMPLETED = 'YES'
   console.info(`${REPORT_MARKER}${JSON.stringify(report)}`)
+  if (chromiumRuntime) {
+    try {
+      await fetch(chromiumRuntime.reportEndpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(report),
+        keepalive: true,
+      })
+    }
+    catch {
+      // The local Chromium host owns the bounded report timeout.
+    }
+  }
   elements.phase.textContent = status === 'PASS' ? 'Smoke complete' : status === 'CANCELLED' ? 'Smoke cancelled' : 'Smoke failed'
   elements.instruction.textContent = 'A bounded report was sent to the terminal. You may close this window.'
   elements.countdown.textContent = ''

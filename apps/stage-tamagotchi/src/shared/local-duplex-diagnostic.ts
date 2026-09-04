@@ -3,6 +3,12 @@ export const LOCAL_DUPLEX_DIAGNOSTIC_READY_CHANNEL = 'airi:local-duplex:diagnost
 export const LOCAL_DUPLEX_DIAGNOSTIC_PROTOCOL = 'airi-local-duplex'
 export const LOCAL_DUPLEX_DIAGNOSTIC_VAD_BOOT_REPORT_MARKER = 'AIRI_LOCAL_DUPLEX_PRODUCTION_VAD_BOOT_REPORT:'
 
+export interface LocalDuplexChromiumRuntime {
+  modelBaseUrl: string
+  ortWasmUrl: string
+  reportEndpoint: string
+}
+
 export const LOCAL_DUPLEX_DIAGNOSTIC_BLOCKED_REQUEST_MAX = 8
 
 export type LocalDuplexDiagnosticBlockedRequestClass
@@ -91,5 +97,6 @@ export function stripLocalDuplexDiagnosticCredentials(environment: Record<string
 declare global {
   interface Window {
     airiLocalDuplexDiagnostic?: LocalDuplexDiagnosticAPI
+    airiLocalDuplexChromium?: LocalDuplexChromiumRuntime
   }
 }

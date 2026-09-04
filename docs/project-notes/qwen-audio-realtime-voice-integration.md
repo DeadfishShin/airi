@@ -1392,3 +1392,23 @@ Owner 随后已真实完成 production Electron host、diagnostic renderer 与 P
 修复后的 boot-probe 在实际 `STAGE_TAMAGOTCHI_PRODUCTION_ELECTRON` host 内设置 `allowRemoteModels=false`，将 ONNX Runtime wasm 显式绑定到构建时本地 asset，并用 vendored `onnx-community/silero-vad`、revision `ddc9a7e80d6758f6fc795a1e8a04b798eb929d3a` 完成一次合成数值推理。当前 no-media probe 结果为 `PRODUCTION_VAD_BROWSER_INIT=PASS`、`PRODUCTION_VAD_SYNTHETIC_INFERENCE=PASS`、`BLOCKED_REQUEST_COUNT=0`、`EXTERNAL_NETWORK_REQUEST_COUNT=0`、`MEDIA_REQUESTED=NO`。`PRODUCTION_VAD_MODEL_ID` 使用受限的 model-id pattern，因此可安全报告为 `onnx-community/silero-vad`；这不开放任意 URL 或用户内容。`SOURCE_PROVEN` + `CURRENT_DESIGN_DECISION`。
 
 这次修复只证明 browser VAD 的本地资源初始化与模型推理契约，不改变 production VAD 阈值、AudioWorklet、麦克风 constraints 或 PHASE_0–4 协议。Codex 未请求麦克风、未播放扬声器、未执行 Owner PHASE_1–4，也没有 ASR/TTS/LLM/chat 或模型 API 调用。Owner 仍需重新运行原有单一命令完成本机 PHASE_1–4；在此之前不得把 `AEC_LEVEL_3_LOCAL_DEVICE_CANDIDATE` 写成 runtime PASS。`CURRENT_DESIGN_DECISION`。
+
+## 36. System Chromium Level-3 local harness
+
+Owner 已决定不再把 Electron interactive diagnostic host 作为 Level-3 测试承载。此前 Electron production host 的一次 PHASE_0 证据仍然有效：`AEC_SETTING=YES`、`AEC_LEVEL_2_PASS=YES`、麦克风报告 `sampleRate=48000`、`channelCount=1`；该证据不需要重做。随后反复出现的 Electron interactive VAD/媒体承载问题只记为 host/tooling blocker，未完成的 PHASE_1–4 不能记为 Level-3 FAIL。`OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。
+
+Level-3 的 Owner 路线改为一条命令启动系统已安装的 Google Chrome（无则尝试系统 Chromium）的 localhost harness：
+
+```text
+pnpm --filter @proj-airi/stage-tamagotchi smoke:realtime-voice-local-duplex:chromium
+```
+
+该命令自动构建 diagnostic renderer、绑定 `127.0.0.1` 随机空闲端口并启动系统浏览器；不会要求复制 URL、启动第二个 server 或手工准备模型。服务端只提供本 harness 的 HTML、构建产物、vendored VAD model 和本地 ONNX Runtime wasm。响应带有 local-only CSP、`cross-origin-embedder-policy=require-corp`、`cross-origin-opener-policy=same-origin` 与 `cross-origin-resource-policy=same-origin`；没有 external asset reference，`connect-src` 不允许任意 `https:`，并且服务端拒绝非 loopback client。`SOURCE_PROVEN` + `CURRENT_DESIGN_DECISION`。
+
+Chromium renderer 在配置 `allowRemoteModels=false` 后，将 `onnx-community/silero-vad` 的 pinned revision `ddc9a7e80d6758f6fc795a1e8a04b798eb929d3a`、`fp32`、vendored `onnx/model.onnx` 和构建时本地 `onnxruntime-web` wasm 显式绑定到 loopback URL。它仍复用 AIRI production `createVAD`、`createVADStates`、production `process.worklet`、`resolveProductionVADConfig` 和 `PRODUCTION_MICROPHONE_AUDIO_CONSTRAINTS`；没有 `@ricky0123/vad-web`、`MicVAD` 或 `ScriptProcessor` compatibility path。`PRODUCTION_VAD_ALIGNMENT=YES` 仅表示 detector/model/config/AudioWorklet graph 已对齐 production authority，不表示 AEC 或 Level-3 已通过。`SOURCE_PROVEN`。
+
+`smoke:realtime-voice-local-duplex:chromium:preflight` 会用同一套 local server、system Chromium 和 built renderer，在不调用 `getUserMedia`、不播放 speaker、不开启 PHASE_1–4 的情况下，实际获取 root HTML、renderer assets、local model、local wasm，并完成一次 browser `createVAD` synthetic inference。当前 preflight 已通过：`PRODUCTION_VAD_BROWSER_INIT=PASS`、`PRODUCTION_VAD_SYNTHETIC_INFERENCE=PASS`、`EXTERNAL_NETWORK_REQUEST_COUNT=0`、`MEDIA_REQUESTED=NO`。这只是 no-media wiring/readiness 证据，不是 Owner runtime PASS。`SOURCE_PROVEN`。
+
+该新路线的唯一候选字段是 `MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE`，报告明确使用 `HOST_RUNTIME=SYSTEM_CHROMIUM`、`PRODUCTION_ELECTRON_LEVEL2_EVIDENCE=PASS` 和 `EXACT_ELECTRON_LEVEL3_EXECUTED=NO`。只有 Owner 在当前 Mac 的系统 Chrome/WebRTC、扬声器/麦克风组合中完成 PHASE_1–4，且 quiet baseline 可解释、phase 隔离成功、playback-only 无 credible false trigger、user-only 与 playback 中讲话均被 production VAD 检测、cleanup 完成且无 external request 时，才可得到 `PASS`；否则为 `FAIL` 或 `INCONCLUSIVE`。该结果不等价于 exact Electron certification、Android certification、automatic barge-in 已实现或完整 ASR→LLM→TTS E2E。`CURRENT_DESIGN_DECISION`。
+
+当前 playback profile 仍是安全保守的全本地 `synthetic-compatibility`；因此 no-media preflight 不能授予 full Level-3。Electron Level-2 仍是已接受的 `PASS`（保留上述 runtime evidence，不要求 Owner 重做），Chromium Level-3 与 automatic barge-in 仍未执行；完成后必须停止 tracks、销毁 VAD、停止 playback、关闭/挂起 `AudioContext`、清理 timers/listeners 和临时浏览器 profile。`OPEN / NOT_YET_PROVEN`。
