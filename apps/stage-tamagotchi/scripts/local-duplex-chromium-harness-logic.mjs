@@ -1,5 +1,8 @@
 import { existsSync } from 'node:fs'
 
+// eslint-disable-next-line no-restricted-syntax
+import { classifyLevel3CandidateVerdict } from './local-duplex-aec-vad-smoke-logic.mjs'
+
 export const CHROMIUM_HOST_RUNTIME = 'SYSTEM_CHROMIUM'
 export const LOCAL_SERVER_BIND_ADDRESS = '127.0.0.1'
 export const LOCAL_SPEECH_PLAYBACK_PROFILE = 'macos-local-speech'
@@ -43,6 +46,8 @@ export function discoverSystemChromium(candidates, fileExists = existsSync) {
 }
 
 export function classifyChromiumCandidateVerdict({
+  level2,
+  productionElectronLevel2Evidence,
   environmentInterpretable,
   phaseIsolation,
   playbackProfile,
@@ -53,29 +58,21 @@ export function classifyChromiumCandidateVerdict({
   cleanupCompleted,
   externalNetworkRequestCount,
 }) {
-  const prerequisites = [
+  return classifyLevel3CandidateVerdict({
+    level2,
+    productionElectronLevel2Evidence,
     environmentInterpretable,
     phaseIsolation,
+    playbackProfile,
     playbackOnlyFalseTrigger,
     userOnlyDetected,
     userDuringPlaybackDetected,
     productionVadAlignment,
     cleanupCompleted,
-  ]
-  if (prerequisites.some(value => value === 'UNKNOWN' || value === 'INCONCLUSIVE'))
-    return 'INCONCLUSIVE'
-  if (externalNetworkRequestCount !== 0 || playbackProfile !== 'macos-local-speech')
-    return 'INCONCLUSIVE'
-  if (playbackOnlyFalseTrigger !== 'NO')
-    return 'FAIL'
-  return [
-    environmentInterpretable,
-    phaseIsolation,
-    userOnlyDetected,
-    userDuringPlaybackDetected,
-    productionVadAlignment,
-    cleanupCompleted,
-  ].every(value => value === 'YES')
-    ? 'PASS'
-    : 'FAIL'
+    externalNetworkRequestCount,
+  })
+}
+
+export function chromiumInteractiveExitCode({ smokeStatus, candidateVerdict }) {
+  return smokeStatus === 'PASS' && candidateVerdict === 'PASS' ? 0 : 1
 }

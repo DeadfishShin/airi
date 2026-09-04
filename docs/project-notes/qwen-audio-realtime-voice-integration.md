@@ -1438,3 +1438,19 @@ Owner 最近一次有效的 Chromium run 已执行到 PHASE_3，但在进入 PHA
 报告现在保留 `PHASE_TRANSITION_STATUS`、`PHASE_TRANSITION_FROM`、`PHASE_TRANSITION_TO`、`VAD_ACTIVE_AT_TRANSITION_START`、`VAD_QUIESCENCE_WAIT_MS`、`VAD_QUIESCENCE_RESULT`、`VAD_LATE_SPEECH_END_COUNT`、`PHASE_SETTLE_TIMEOUT_MS` 及 P3/P4 的 late-end bounded counters；这些字段只包含 allowlisted 状态、计数和有限时间，不包含 transcript、PCM 或 waveform。任意 phase transition failure 都必须到达 terminal `finish()`；P3→P4 超时不再静默停住。`SOURCE_PROVEN`。
 
 本次 Owner run 的 PHASE_3 已执行、PHASE_4 未执行、最终 report 未产生，因此 Level-3 仍为 `OPEN / NOT_YET_PROVEN`，不能补写 P3 检测结论。下一次 Owner run 应继续使用 `macos-local-speech`（`/usr/bin/say + /usr/bin/afconvert`）并检查 phase transition 字段；无论成功、取消还是 settle timeout，都必须看到 bounded terminal report。`OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。
+
+### Chromium Level-3 candidate verdict wiring closure
+
+Owner 随后已完成一次有效的 system Chromium PHASE_1–4 runtime。该次 evidence 满足本机 candidate gate：`SMOKE_STATUS=PASS`、`HOST_RUNTIME=SYSTEM_CHROMIUM`、`PRODUCTION_VAD_ALIGNMENT=YES`、`ENVIRONMENT_INTERPRETABLE=YES`、`PHASE_ISOLATION=YES`、`CLEANUP_COMPLETED=YES`、`EXTERNAL_NETWORK_REQUEST_COUNT=0`，并使用正式 `PLAYBACK_PROFILE=macos-local-speech` / `PLAYBACK_SOURCE=macos-system-say`。quiet 与 playback-only control 均为零 false trigger；user-only 与 user-during-playback 各产生一个 production VAD `speech-start`，因此两类用户讲话检测均为 `YES`。最终 PHASE_4 quiescence 也通过：`VAD_ACTIVE_AT_TRANSITION_START=YES`、`VAD_QUIESCENCE_RESULT=PASS`、`VAD_LATE_SPEECH_END_COUNT=1`。Owner 备注的 `intermittent-rain-drip-on-awning` 只作为环境注记；由于 control phases 的 max probability 均为 `0` 且 `ENVIRONMENT_INTERPRETABLE=YES`，不构成 blocker。该证据属于 `OWNER_RUNTIME_EVIDENCE`，不包含音频或语音内容。
+
+当次终端显示的 `MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE=INCONCLUSIVE` 已由源码定位为 verdict wiring defect，而不是 AEC/VAD/runtime 失败：renderer 调用 classifier 时没有 host-owned `externalNetworkRequestCount`，因此只能保守产生 renderer-local `INCONCLUSIVE`；Node Chromium harness 才拥有 authoritative network counter，却错误地直接复制了 renderer legacy 字段。修复后，renderer 只报告 `RENDERER_LEVEL3_VERDICT`，最终字段由 host 在拥有全部 bounded evidence（包括 Chromium `AEC_LEVEL_2_PASS`、已接受的 production Electron Level-2 evidence、playback/profile、两类 user detection、phase/environment/cleanup 和 host network count）后通过 shared pure classifier 独立计算；报告增加 `LEVEL3_VERDICT_AUTHORITY=CHROMIUM_HOST`。这保留了 raw runtime evidence，没有修改 counts、probabilities、thresholds、phase results 或 playback metadata。
+
+因此 Controller 接受：
+
+```text
+MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE=PASS
+PRODUCTION_ELECTRON_LEVEL2_EVIDENCE=PASS
+EXACT_ELECTRON_LEVEL3_EXECUTED=NO
+```
+
+该 PASS 仅表示当前 Mac + system Chromium/WebRTC + production AIRI VAD + local speech playback 已证明 playback-only 无 credible speech false trigger，用户单独讲话及播放期间讲话均可检测；不等价于 exact Electron Level-3 certification、Android certification、automatic barge-in 已实现或完整 realtime voice E2E 已完成。它只释放下一项独立的 **Option-B automatic barge-in source implementation**，本次 closure 不实现 barge-in。`SOURCE_PROVEN` + `OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。

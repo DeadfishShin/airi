@@ -5,11 +5,12 @@ import { PRODUCTION_VAD_DEFAULTS, resolveProductionVADConfig } from '@proj-airi/
 import { describe, expect, it } from 'vitest'
 
 // eslint-disable-next-line no-restricted-syntax
-import { classifyVadPipelineDiagnosis, serializeLocalDuplexReport } from './local-duplex-aec-vad-smoke-logic.mjs'
+import { classifyLevel3LocalDeviceVerdict, classifyVadPipelineDiagnosis, serializeLocalDuplexReport } from './local-duplex-aec-vad-smoke-logic.mjs'
 // eslint-disable-next-line no-restricted-syntax
 import {
   CHROMIUM_CSP,
   CHROMIUM_HOST_RUNTIME,
+  chromiumInteractiveExitCode,
   classifyChromiumCandidateVerdict,
   countExternalAssetReferences,
   discoverSystemChromium,
@@ -239,6 +240,8 @@ else
 
   it('classifies Chromium Level3 only from complete bounded phase evidence', () => {
     const complete = {
+      level2: 'YES',
+      productionElectronLevel2Evidence: 'YES',
       environmentInterpretable: 'YES',
       phaseIsolation: 'YES',
       playbackProfile: 'macos-local-speech',
@@ -253,6 +256,64 @@ else
     expect(classifyChromiumCandidateVerdict({ ...complete, playbackProfile: 'synthetic-compatibility' })).toBe('INCONCLUSIVE')
     expect(classifyChromiumCandidateVerdict({ ...complete, playbackOnlyFalseTrigger: 'YES' })).toBe('FAIL')
     expect(classifyChromiumCandidateVerdict({ ...complete, environmentInterpretable: 'INCONCLUSIVE' })).toBe('INCONCLUSIVE')
+  })
+
+  it('recomputes the final host verdict with host-only network authority', () => {
+    const retainedOwnerFixture = {
+      level2: 'YES',
+      productionElectronLevel2Evidence: 'YES',
+      environmentInterpretable: 'YES',
+      phaseIsolation: 'YES',
+      playbackProfile: 'macos-local-speech',
+      playbackOnlyFalseTrigger: 'NO',
+      userOnlyDetected: 'YES',
+      userDuringPlaybackDetected: 'YES',
+      productionVadAlignment: 'YES',
+      cleanupCompleted: 'YES',
+      externalNetworkRequestCount: 0,
+      userOnlyFirstActivityLatencyMs: 699.03,
+      userDuringPlaybackFirstActivityLatencyMs: 2069.17,
+    } as const
+
+    expect(classifyChromiumCandidateVerdict(retainedOwnerFixture)).toBe('PASS')
+    expect(classifyChromiumCandidateVerdict({ ...retainedOwnerFixture, productionElectronLevel2Evidence: 'PASS' })).toBe('PASS')
+    expect(classifyLevel3LocalDeviceVerdict({ ...retainedOwnerFixture })).toBe('PASS')
+    expect(classifyLevel3LocalDeviceVerdict({ ...retainedOwnerFixture, externalNetworkRequestCount: undefined })).toBe('INCONCLUSIVE')
+    expect(classifyChromiumCandidateVerdict({ ...retainedOwnerFixture, externalNetworkRequestCount: undefined })).toBe('INCONCLUSIVE')
+    expect(chromiumHarnessSource).toContain('RENDERER_LEVEL3_VERDICT')
+    expect(chromiumHarnessSource).toContain('LEVEL3_VERDICT_AUTHORITY: \'CHROMIUM_HOST\'')
+    expect(chromiumHarnessSource).toContain('classifyChromiumCandidateVerdict({')
+  })
+
+  it('keeps all negative and unknown Level3 evidence fail-closed', () => {
+    const complete = {
+      level2: 'YES',
+      productionElectronLevel2Evidence: 'YES',
+      environmentInterpretable: 'YES',
+      phaseIsolation: 'YES',
+      playbackProfile: 'macos-local-speech',
+      playbackOnlyFalseTrigger: 'NO',
+      userOnlyDetected: 'YES',
+      userDuringPlaybackDetected: 'YES',
+      productionVadAlignment: 'YES',
+      cleanupCompleted: 'YES',
+      externalNetworkRequestCount: 0,
+    } as const
+
+    expect(classifyChromiumCandidateVerdict({ ...complete, externalNetworkRequestCount: 1 })).not.toBe('PASS')
+    expect(classifyChromiumCandidateVerdict({ ...complete, playbackProfile: 'synthetic-compatibility' })).not.toBe('PASS')
+    expect(classifyChromiumCandidateVerdict({ ...complete, playbackOnlyFalseTrigger: 'YES' })).toBe('FAIL')
+    expect(classifyChromiumCandidateVerdict({ ...complete, userOnlyDetected: 'NO' })).toBe('FAIL')
+    expect(classifyChromiumCandidateVerdict({ ...complete, userDuringPlaybackDetected: 'NO' })).toBe('FAIL')
+    expect(classifyChromiumCandidateVerdict({ ...complete, productionVadAlignment: 'NO' })).toBe('FAIL')
+    expect(classifyChromiumCandidateVerdict({ ...complete, phaseIsolation: 'NO' })).toBe('FAIL')
+    expect(classifyChromiumCandidateVerdict({ ...complete, environmentInterpretable: 'NO' })).toBe('FAIL')
+    expect(classifyChromiumCandidateVerdict({ ...complete, cleanupCompleted: 'NO' })).toBe('FAIL')
+    expect(classifyChromiumCandidateVerdict({ ...complete, level2: 'UNKNOWN' })).toBe('INCONCLUSIVE')
+    expect(classifyChromiumCandidateVerdict({ ...complete, productionElectronLevel2Evidence: 'UNKNOWN' })).toBe('INCONCLUSIVE')
+    expect(chromiumInteractiveExitCode({ smokeStatus: 'PASS', candidateVerdict: 'PASS' })).toBe(0)
+    expect(chromiumInteractiveExitCode({ smokeStatus: 'PASS', candidateVerdict: 'INCONCLUSIVE' })).toBe(1)
+    expect(chromiumInteractiveExitCode({ smokeStatus: 'FAIL', candidateVerdict: 'PASS' })).toBe(1)
   })
 
   it('serializes only bounded content-free report fields', () => {

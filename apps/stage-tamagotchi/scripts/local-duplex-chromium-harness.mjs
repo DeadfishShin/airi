@@ -21,6 +21,8 @@ import {
 import {
   CHROMIUM_CSP,
   CHROMIUM_HOST_RUNTIME,
+  chromiumInteractiveExitCode,
+  classifyChromiumCandidateVerdict,
   countExternalAssetReferences,
   discoverSystemChromium,
   isLoopbackAddress,
@@ -250,7 +252,21 @@ function addHostFields(report, { browser, address, externalAssetReferenceCount, 
     PRODUCTION_ELECTRON_LEVEL2_EVIDENCE: 'PASS',
     EXACT_ELECTRON_LEVEL3_EXECUTED: 'NO',
     OWNER_LEVEL3_AUTHORITY: 'MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE',
-    MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE: report.AEC_LEVEL_3_LOCAL_DEVICE_CANDIDATE,
+    LEVEL3_VERDICT_AUTHORITY: 'CHROMIUM_HOST',
+    RENDERER_LEVEL3_VERDICT: report.AEC_LEVEL_3_LOCAL_DEVICE_CANDIDATE || 'UNKNOWN',
+    MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE: classifyChromiumCandidateVerdict({
+      level2: report.AEC_LEVEL_2_PASS || 'UNKNOWN',
+      productionElectronLevel2Evidence: 'PASS',
+      environmentInterpretable: report.ENVIRONMENT_INTERPRETABLE || 'UNKNOWN',
+      phaseIsolation: report.PHASE_ISOLATION || 'UNKNOWN',
+      playbackProfile: report.PLAYBACK_PROFILE || 'UNKNOWN',
+      playbackOnlyFalseTrigger: report.PLAYBACK_ONLY_FALSE_TRIGGER || 'UNKNOWN',
+      userOnlyDetected: report.USER_ONLY_DETECTED || 'UNKNOWN',
+      userDuringPlaybackDetected: report.USER_DURING_PLAYBACK_DETECTED || 'UNKNOWN',
+      productionVadAlignment: report.PRODUCTION_VAD_ALIGNMENT || 'UNKNOWN',
+      cleanupCompleted: report.CLEANUP_COMPLETED || 'UNKNOWN',
+      externalNetworkRequestCount,
+    }),
     NETWORK_GUARD_FAILURE: externalNetworkRequestCount > 0 ? 'YES' : 'NO',
     ...(address ? { LOCAL_SERVER_PORT: address.port } : {}),
     ...(playbackMetadata || {}),
@@ -613,8 +629,10 @@ async function run() {
     else {
       const report = addHostFields(result.report, context)
       printInteractiveReport(report, context)
-      if (report.SMOKE_STATUS !== 'PASS' || report.MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE !== 'PASS')
-        process.exitCode = 1
+      process.exitCode = chromiumInteractiveExitCode({
+        smokeStatus: report.SMOKE_STATUS,
+        candidateVerdict: report.MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE,
+      })
     }
     stopChild()
   }

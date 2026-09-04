@@ -82,8 +82,9 @@ export function classifyVadPipelineDiagnosis({
   return 'VAD_FRAMES_PRESENT_BUT_LOW_PROBABILITY'
 }
 
-export function classifyLevel3LocalDeviceVerdict({
+export function classifyLevel3CandidateVerdict({
   level2,
+  productionElectronLevel2Evidence,
   playbackOnlyFalseTrigger,
   userOnlyDetected,
   userDuringPlaybackDetected,
@@ -94,8 +95,12 @@ export function classifyLevel3LocalDeviceVerdict({
   cleanupCompleted = 'UNKNOWN',
   externalNetworkRequestCount = undefined,
 }) {
+  const normalizedProductionElectronLevel2Evidence = productionElectronLevel2Evidence === 'PASS'
+    ? 'YES'
+    : productionElectronLevel2Evidence
   const requiredFlags = [
     level2,
+    ...(normalizedProductionElectronLevel2Evidence === undefined ? [] : [normalizedProductionElectronLevel2Evidence]),
     playbackOnlyFalseTrigger,
     userOnlyDetected,
     userDuringPlaybackDetected,
@@ -121,6 +126,12 @@ export function classifyLevel3LocalDeviceVerdict({
   }
 
   return 'INCONCLUSIVE'
+}
+
+// Renderer-local callers retain the legacy name, but share the host classifier
+// implementation. The renderer intentionally omits host-only network authority.
+export function classifyLevel3LocalDeviceVerdict(input) {
+  return classifyLevel3CandidateVerdict(input)
 }
 
 export function normalizeFiniteMetric(value) {
@@ -272,6 +283,8 @@ export function serializeLocalDuplexReport(report) {
     'PRODUCTION_ELECTRON_LEVEL2_EVIDENCE',
     'EXACT_ELECTRON_LEVEL3_EXECUTED',
     'OWNER_LEVEL3_AUTHORITY',
+    'LEVEL3_VERDICT_AUTHORITY',
+    'RENDERER_LEVEL3_VERDICT',
     'MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE',
     'EXTERNAL_NETWORK_REQUEST_COUNT',
     'VAD_RUNTIME',
