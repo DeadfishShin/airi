@@ -13,12 +13,14 @@
 | Token Plan real audible runtime | PASS | `REAL_RUNTIME_PROVEN` |
 | Token Plan real LLM→TTS overlap | PASS | `REAL_RUNTIME_PROVEN` |
 | Token Plan model catalog UI | PASS | `SOURCE_PROVEN` + Owner UI 验收 |
-| Full ASR→LLM→TTS voice E2E | PENDING | `OPEN` |
-| Barge-in | PENDING | `OPEN` |
+| Full ASR→LLM→TTS voice E2E | PASS | `REAL_RUNTIME_PROVEN`（bounded integrated macOS Electron run） |
+| Option-B automatic barge-in integrated runtime | PASS | `REAL_RUNTIME_PROVEN`（single + consecutive double interruption） |
 | AEC | PENDING | `OPEN` |
 | Android | NOT STARTED | `OPEN` |
+| Integrated ASR credential blocker | CLEARED | `OWNER_RUNTIME_EVIDENCE`（bounded PAYG authorization only） |
+| Token Plan custom-app calls | HOLD | `HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS` |
 
-“PASS”只表示本文对应的实验边界已被证明。尚未完成的 E2E、barge-in、AEC、Android 不得从这些 PASS 推导出来。
+“PASS”只表示本文对应的实验边界已被证明。尚未完成的 broader multi-turn E2E、AEC、跨设备验证和 Android 不得从这些 PASS 推导出来。
 
 ## 1. 文档目的与适用范围
 
@@ -911,23 +913,19 @@ local playback state
 
 ## 29. Known Remaining Work
 
-以下未完成，不得写成已完成：
+以下仍未完成，不得写成已完成：
 
-1. Full real microphone `Streaming ASR → LLM → Token Plan Streaming TTS` 同一轮完整 E2E。
-2. recorder-backed transcript buffer policy/latency 优化；这不是 Qwen streaming ASR sentence-end 的 blocker。
-3. Streaming ASR bounded user-turn endpoint policy 的自然停顿调参与真实验证；当前已实现 V1：以最新 local VAD activity end 为锚的 500 ms grace，并跨 provider session 聚合 final，见 Section 34。
-4. Barge-in。
-5. VAD 与更完整的 speaking/echo coordination。
-6. AEC / self-voice rejection。
-7. Multi-turn realtime stability。
-8. Android port。
-9. Token Plan full voice catalog / voice selection UX。
-10. Token Plan Personal 对 AIRI custom application API use 的 provider explicit confirmation；在确认前保持 `HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS`。
-11. Token Plan `qwen-audio-3.0-realtime-plus` 的 AIRI-specific runtime entitlement、credential 和 endpoint mapping。
-12. ARCH_C' transcript-first seam 的 AIRI adapter 设计验证；协议 seam 已获官方支持，但不代表 Token Plan entitlement 或 policy 已通过。
-13. 在不触发 vendor inference 的前提下，server endpointing 与 transcript-only 组合是否有官方配置；当前为 `NOT_YET_PROVEN`。
+1. recorder-backed transcript buffer policy/latency 优化；这不是 Qwen streaming ASR sentence-end 的 blocker。
+2. Streaming ASR bounded user-turn endpoint policy 的自然停顿调参与更广泛真实验证；当前已实现 V1：以最新 local VAD activity end 为锚的 500 ms grace，并跨 provider session 聚合 final，见 Section 34。
+3. VAD 与更完整的 speaking/echo coordination、AEC / self-voice rejection。
+4. Multi-turn realtime stability 与跨设备验证。
+5. Android port。
+6. Token Plan full voice catalog / voice selection UX，以及 Token Plan Personal 对 AIRI custom application API use 的 provider explicit confirmation；在确认前保持 `HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS`。
+7. Token Plan `qwen-audio-3.0-realtime-plus` 的 AIRI-specific runtime entitlement、credential 和 endpoint mapping。
+8. ARCH_C' transcript-first seam 的 AIRI adapter 设计验证；协议 seam 已获官方支持，但不代表 Token Plan entitlement 或 policy 已通过。
+9. 在不触发 vendor inference 的前提下，server endpointing 与 transcript-only 组合是否有官方配置；当前为 `NOT_YET_PROVEN`。
 
-当前 Token Plan real TTS 与 LLM→TTS overlap 已有独立短句/长文本 PASS；这不等于第 1 项完整 ASR→LLM→TTS 已 PASS。
+本节之前的“完整 E2E / Barge-in pending”是历史状态；当前已接受的 bounded integrated macOS Electron runtime 见 Section 37。该接受不扩张为跨设备或 Android 认证。
 
 ## 30. Chronological Incident / Commit Table
 
@@ -1464,3 +1462,35 @@ EXACT_ELECTRON_LEVEL3_EXECUTED=NO
 当前 VAD 的 `speechPadMs=360` 已在 production `VAD` 内存态 segment 中保留前导音频：`speech-start` 先创建 segment，`createLeadingSpeechAudio()` 将 bounded previous buffers 与首个输入块一起排入 provider stream；因此本 slice 不新增数秒麦克风缓存或持久化 pre-roll。VAD `speechActivityEnd` 仍交给既有 streaming voice endpoint controller，以最新 local activity end 为锚点等待 `500ms` grace，sentence final 仍不直接决定 chat turn。
 
 新增的 barge-in telemetry 仅包含 bounded counters/epoch（local VAD active、trigger、duplicate suppression、TTS cancel、generation invalidate、remote ASR authorization、stale output suppression），不包含 transcript、prompt、LLM text、PCM 或音频。Voice disable、会话/角色切换和 unmount 会停止 mic/VAD/ASR 并清理 pending barge-in state。此提交只完成 source contract 与 deterministic regressions；Codex 未运行真人 microphone/speaker，也未调用 ASR、TTS、LLM 或 chat。exact Electron Level-3 仍 deferred，下一步是 Owner 在 integrated AIRI runtime 中验证 barge-in，而不是在此处推断 runtime PASS。`SOURCE_PROVEN` + `CURRENT_DESIGN_DECISION`。
+
+## 37. Integrated AIRI Electron Option-B acceptance record
+
+Owner 随后在实际 AIRI macOS Electron integrated runtime 中完成了本阶段的有界真实验证。Owner 临时授权既有 PAYG DashScope credential 仅用于本次集成测试；Electron main-process 成功提供运行时 credential，Hearing provider 为 `Qwen Audio realtime ASR`，model 为 `qwen-audio-3.0-asr-flash-streaming`。一次最小真实麦克风 ASR 测试成功得到预期的短诊断语音结果；为遵守隐私边界，本文不保存或回显该 transcript、API key、Workspace ID 或其他 credential value。该授权只解除本次 integrated ASR credential blocker，不恢复全局 PAYG fallback；`TOKEN_PLAN_CUSTOM_APP=HOLD` 保持不变。`OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。
+
+本次 integrated phase evidence 如下：
+
+| Phase | Bounded evidence | Result |
+| --- | --- | --- |
+| Phase 1 — playback-only control | Assistant TTS 正常完整播放；无意外中断、ghost transcription 或凭空 user turn | PASS |
+| Phase 2 — normal post-playback speech | 用户语音进入对话；AIRI 生成回复并由 TTS 正常播放 | PASS |
+| Phase 3 — single automatic barge-in | 播放中用户开口；旧 TTS 很快取消；新 utterance 形成 user turn 并得到最新回答；旧语音未恢复 | PASS |
+| Phase 4 — consecutive double barge-in | 两次连续打断均成功；只有最新 user turn 保持 authority；两个旧 assistant response 均未恢复；无 duplicate/empty/abnormal turn | PASS |
+| Final quiet-tail | 最终回复结束后 mic 保持 enabled、Owner 静默约 20 秒；无 spontaneous transcription/user turn、stale TTS resume 或 spontaneous generation | PASS |
+
+因此当前控制状态正式为：
+
+```text
+PRODUCTION_ELECTRON_LEVEL2=PASS
+MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE=PASS
+MACOS_ELECTRON_LEVEL3_INTEGRATED=PASS
+AIRI_OPTION_B_AUTOMATIC_BARGE_IN_SOURCE=PASS
+AIRI_OPTION_B_AUTOMATIC_BARGE_IN_INTEGRATED_RUNTIME=PASS
+CONSECUTIVE_BARGE_IN_STALE_OUTPUT_SUPPRESSION=PASS
+PAYG_QWEN_REALTIME_ASR_BOUNDED_INTEGRATED_TEST=PASS
+INTEGRATED_ASR_CREDENTIAL_BLOCKER=CLEARED
+TOKEN_PLAN_CUSTOM_APP=HOLD
+```
+
+该 integrated Electron Level-3 PASS 的 authority 是实际 AIRI production Electron runtime，而不是已经退役的 standalone Electron Level-3 harness。它由 playback-only 无 speech false positive/user turn、播放期间真实用户语音被检测、旧 TTS 被及时取消、stale output 未恢复以及 quiet-tail 无幽灵事件共同支持。此前的 `MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE=PASS` 继续保留，但不与 integrated Electron 结果混为同一 host authority。
+
+本次接受不改变 production VAD 参数、麦克风 constraints、ASR/TTS/LLM routing、provider selection、fallback policy、endpointing 或 barge-in semantics，也不把 PAYG 测试授权推广为默认计费路径。没有新增 provider call；没有记录 raw microphone audio、PCM/base64、transcript、prompt、LLM confidential payload 或 credential。这里的 integrated PASS 仅属于实际 AIRI Electron runtime；此前退役的 standalone Electron diagnostic harness 不恢复为 authority。Android 与跨设备认证仍不在本节结论内。`OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。
