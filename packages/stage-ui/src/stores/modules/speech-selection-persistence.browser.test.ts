@@ -107,6 +107,27 @@ describe('qwen model and voice persistence closure', () => {
     expect(speech.activeSpeechVoice?.id).toBe(QWEN3_TTS_REALTIME_DEFAULT_VOICE)
     expect(listQwen3TtsRealtimeVoices(instruct).some(voice => voice.id === 'Shanghai - Jada')).toBe(false)
   })
+
+  it('does not resurrect an incompatible voice after switching back to Flash', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const speech = useSpeechStore()
+    const flash = QWEN3_TTS_REALTIME_MODEL_CATALOG[0].id
+    const instruct = QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id
+    speech.activeSpeechProvider = QWEN3_TTS_REALTIME_PROVIDER_ID
+    speech.activeSpeechModel = flash
+    await speech.loadVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID, flash)
+    speech.activeSpeechVoiceId = 'Jada'
+    await nextTick()
+
+    speech.activeSpeechModel = instruct
+    await speech.loadVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID, instruct)
+    expect(speech.activeSpeechVoiceId).toBe(QWEN3_TTS_REALTIME_DEFAULT_VOICE)
+
+    speech.activeSpeechModel = flash
+    await speech.loadVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID, flash)
+    expect(speech.activeSpeechVoiceId).toBe(QWEN3_TTS_REALTIME_DEFAULT_VOICE)
+  })
 })
 
 describe('qwen speech cross-window synchronization', () => {
