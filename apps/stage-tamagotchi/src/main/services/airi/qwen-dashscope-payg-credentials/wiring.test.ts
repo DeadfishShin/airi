@@ -8,7 +8,7 @@ const ttsSource = readFileSync(new URL('../qwen-tts-realtime/index.ts', import.m
 
 describe('Qwen PAYG credential authority wiring', () => {
   it('creates the secure main-process service from Electron userData', () => {
-    expect(mainSource).toContain('setupDashScopePaygCredentials()')
+    expect(mainSource).toContain('setupDashScopePaygCredentials({ lifecycle: dependsOn.lifecycle })')
     expect(mainSource).toContain("services:qwen-dashscope-payg-credentials")
     expect(mainSource).toContain('qwenDashScopePaygCredentials')
   })
