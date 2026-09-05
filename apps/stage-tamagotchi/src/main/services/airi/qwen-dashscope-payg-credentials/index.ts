@@ -1,9 +1,13 @@
+import type { Buffer } from 'node:buffer'
+
 import type { createContext } from '@moeru/eventa/adapters/electron/main'
 import type {
   QwenDashScopePaygPublicProfile,
   QwenDashScopePaygSavePayload,
 } from '@proj-airi/stage-ui/libs/providers/qwen-dashscope-payg-ipc'
 import type { Lifecycle } from 'injeca'
+
+import type { DashScopePaygCredentialStoreOptions, QwenDashScopePaygRuntimeProfile } from './store'
 
 import { defineInvokeHandler } from '@moeru/eventa'
 import { createContext as createElectronContext } from '@moeru/eventa/adapters/electron/main'
@@ -14,7 +18,7 @@ import {
 } from '@proj-airi/stage-ui/libs/providers/qwen-dashscope-payg-ipc'
 import { app, ipcMain, safeStorage } from 'electron'
 
-import { createDashScopePaygCredentialStore, type DashScopePaygCredentialStoreOptions, type QwenDashScopePaygRuntimeProfile } from './store'
+import { createDashScopePaygCredentialStore } from './store'
 
 type DashScopePaygMainEventContext = ReturnType<typeof createContext>['context']
 

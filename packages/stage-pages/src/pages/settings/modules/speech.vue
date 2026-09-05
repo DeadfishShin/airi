@@ -32,6 +32,7 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 
 import DashScopePaygCredentialSettings from '../providers/speech/DashScopePaygCredentialSettings.vue'
+
 import { ensureQwenTtsModelCatalog } from './speech-model-catalog'
 
 const { t } = useI18n()

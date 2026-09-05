@@ -4,6 +4,7 @@ import type {
   QwenDashScopeRegion,
 } from '@proj-airi/stage-ui/libs/providers/qwen-dashscope-payg-ipc'
 
+import { Buffer } from 'node:buffer'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 

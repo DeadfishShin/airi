@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(new URL('./DashScopePaygCredentialSettings.vue', import.meta.url), 'utf8')
 
-describe('DashScope PAYG settings surface', () => {
+describe('dashScope PAYG settings surface', () => {
   it('offers save, replace, clear, and region controls without local secret persistence', () => {
     expect(source).toContain('Save securely')
     expect(source).toContain('Replace credential')

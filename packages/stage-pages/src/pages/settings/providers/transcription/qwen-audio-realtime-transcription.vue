@@ -17,6 +17,8 @@ import { computed, onMounted, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
+import DashScopePaygCredentialSettings from '../speech/DashScopePaygCredentialSettings.vue'
+
 const providerId = 'qwen-audio-realtime-transcription'
 const { t } = useI18n()
 const router = useRouter()
@@ -70,6 +72,7 @@ onMounted(() => {
         :description="t('settings.pages.providers.common.section.basic.description')"
       >
         <QwenHearingSettings />
+        <DashScopePaygCredentialSettings />
       </ProviderBasicSettings>
     </ProviderSettingsContainer>
   </ProviderSettingsLayout>

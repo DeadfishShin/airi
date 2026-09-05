@@ -2,8 +2,8 @@ import type { Eventa } from '@moeru/eventa'
 import type { createContext, ElectronMainEmitOptions } from '@moeru/eventa/adapters/electron/main'
 import type { Lifecycle } from 'injeca'
 
-import type { QwenTtsRealtimeSocketFactory, QwenTtsRealtimeTelemetry } from './protocol'
 import type { QwenDashScopePaygRuntimeProfile } from '../qwen-dashscope-payg-credentials/store'
+import type { QwenTtsRealtimeSocketFactory, QwenTtsRealtimeTelemetry } from './protocol'
 
 import {
   defineInvokeHandler,

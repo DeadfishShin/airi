@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,7 +18,7 @@ function createStore(encryptionAvailable = true) {
     encryptString: (value: string) => Buffer.from(`encrypted:${value}`, 'utf8'),
     decryptString: (value: Buffer) => value.toString('utf8').replace(/^encrypted:/, ''),
   }
-  return { filePath, store: createDashScopePaygCredentialStore({ filePath, secureStorage }) }
+  return { filePath, secureStorage, store: createDashScopePaygCredentialStore({ filePath, secureStorage }) }
 }
 
 afterEach(() => {
@@ -28,7 +29,7 @@ afterEach(() => {
   }
 })
 
-describe('Qwen DashScope PAYG credential store', () => {
+describe('qwen DashScope PAYG credential store', () => {
   it('saves a shared profile without putting the API key in the persisted JSON', () => {
     const { filePath, store } = createStore()
 
@@ -62,6 +63,40 @@ describe('Qwen DashScope PAYG credential store', () => {
     store.save({ apiKey: '', workspaceId: 'workspace-new', region: 'beijing' })
 
     expect(store.getRuntimeProfile()).toEqual({ apiKey: 'unit-test-secret', workspaceId: 'workspace-new', region: 'beijing' })
+  })
+
+  it('restores the encrypted profile after restart and exposes only public fields', () => {
+    const { filePath, secureStorage, store } = createStore()
+    store.save({ apiKey: 'unit-test-secret', workspaceId: 'saved-workspace', region: 'singapore' })
+    const restarted = createDashScopePaygCredentialStore({ filePath, secureStorage })
+
+    expect(restarted.getRuntimeProfile()).toEqual({ apiKey: 'unit-test-secret', workspaceId: 'saved-workspace', region: 'singapore' })
+    expect(restarted.getPublicProfile()).toEqual({
+      hasApiKey: true,
+      workspaceId: 'saved-workspace',
+      workspaceIdValid: true,
+      region: 'singapore',
+      regionConfigured: true,
+      ready: true,
+    })
+    expect(JSON.stringify(restarted.getPublicProfile())).not.toContain('unit-test-secret')
+  })
+
+  it('does not return backend error details when ciphertext decryption fails', () => {
+    const { filePath, secureStorage, store } = createStore()
+    store.save({ apiKey: 'unit-test-secret', workspaceId: 'saved-workspace', region: 'beijing' })
+    const restarted = createDashScopePaygCredentialStore({
+      filePath,
+      secureStorage: { ...secureStorage, decryptString: () => { throw new Error('unit-test-sensitive-backend-detail') } },
+    })
+    expect(restarted.getPublicProfile().hasApiKey).toBe(false)
+    expect(() => restarted.getRuntimeProfile()).toThrow('Qwen DashScope PAYG credential is invalid.')
+  })
+
+  it('rejects an empty initial API key without persisting a profile', () => {
+    const { filePath, store } = createStore()
+    expect(() => store.save({ apiKey: '', workspaceId: 'saved-workspace', region: 'beijing' })).toThrow('API key is missing')
+    expect(() => readFileSync(filePath)).toThrow()
   })
 
   it('clears the ciphertext and fails closed for later runtime sessions', () => {
