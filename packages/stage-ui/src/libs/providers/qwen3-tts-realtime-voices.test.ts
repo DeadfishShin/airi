@@ -48,23 +48,45 @@ const officialRealtimeVoiceIds = [
   'Emilien',
   'Andre',
   'Radio Gol',
-  'Shanghai - Jada',
-  'Beijing - Dylan',
-  'Nanjing - Li',
-  'Shaanxi - Marcus',
-  'Southern Min - Roy',
-  'Tianjin - Peter',
-  'Sichuan - Sunny',
-  'Sichuan - Eric',
-  'Cantonese - Rocky',
-  'Cantonese - Kiki',
+  'Jada',
+  'Dylan',
+  'Li',
+  'Marcus',
+  'Roy',
+  'Peter',
+  'Sunny',
+  'Eric',
+  'Rocky',
+  'Kiki',
 ]
+
+const dialectVoiceIdNames = [
+  ['Jada', 'Shanghai - Jada'],
+  ['Dylan', 'Beijing - Dylan'],
+  ['Li', 'Nanjing - Li'],
+  ['Marcus', 'Shaanxi - Marcus'],
+  ['Roy', 'Southern Min - Roy'],
+  ['Peter', 'Tianjin - Peter'],
+  ['Sunny', 'Sichuan - Sunny'],
+  ['Eric', 'Sichuan - Eric'],
+  ['Rocky', 'Cantonese - Rocky'],
+  ['Kiki', 'Cantonese - Kiki'],
+] as const
 
 describe('qwen3 realtime voice authority', () => {
   it('matches the official in-scope system voice ids without aliases or duplicates', () => {
     expect(QWEN3_TTS_REALTIME_VOICE_CATALOG.map(voice => voice.id)).toEqual(officialRealtimeVoiceIds)
     expect(new Set(QWEN3_TTS_REALTIME_VOICE_CATALOG.map(voice => voice.id)).size).toBe(48)
     expect(QWEN3_TTS_REALTIME_VOICE_CATALOG.every(voice => voice.compatibleModels.length > 0)).toBe(true)
+  })
+
+  it('keeps provider voice ids separate from official display names', () => {
+    for (const [id, name] of dialectVoiceIdNames) {
+      const voice = QWEN3_TTS_REALTIME_VOICE_CATALOG.find(candidate => candidate.id === id)
+      expect(voice?.id).toBe(id)
+      expect(voice?.name).toBe(name)
+      expect(QWEN3_TTS_REALTIME_VOICE_CATALOG.map(candidate => candidate.id)).not.toContain(name)
+    }
   })
 
   it('keeps compatibility per model and preserves Cherry as the default', () => {
@@ -89,8 +111,10 @@ describe('qwen3 realtime voice authority', () => {
     expect(normalizeQwen3TtsRealtimeVoice('unknown-voice', flash)).toBe('Cherry')
     expect(normalizeQwen3TtsRealtimeVoice('Jennifer', instruct)).toBe('Cherry')
     expect(normalizeQwen3TtsRealtimeVoice('Serena', instruct)).toBe('Serena')
+    expect(normalizeQwen3TtsRealtimeVoice('Shanghai - Jada', flash)).toBe('Cherry')
 
-    const jada = QWEN3_TTS_REALTIME_VOICE_CATALOG.find(voice => voice.id === 'Shanghai - Jada')
+    const jada = QWEN3_TTS_REALTIME_VOICE_CATALOG.find(voice => voice.id === 'Jada')
+    expect(jada?.name).toBe('Shanghai - Jada')
     expect(jada?.languages[0]).toEqual({ code: 'zh', title: 'Shanghainese' })
     expect(jada?.languageNotes).toContain('Shanghainese')
   })
