@@ -6,10 +6,13 @@ import { isElectronWindow, isStageTamagotchi } from '@proj-airi/stage-shared'
 import { z } from 'zod'
 
 import {
-  QWEN3_TTS_REALTIME_MODEL,
   QWEN3_TTS_REALTIME_PROVIDER_ID,
   QWEN3_TTS_REALTIME_VOICE_ID,
 } from '../../qwen-tts-realtime-ipc'
+import {
+  QWEN3_TTS_REALTIME_MODEL_CATALOG,
+  qwen3TtsRealtimeModelInfo,
+} from '../../qwen3-tts-realtime-models'
 import { defineProvider } from '../registry'
 
 const qwen3TtsRealtimeConfigSchema = z.object({})
@@ -23,20 +26,13 @@ function isQwen3TtsRealtimeAvailable() {
     && window.platform === 'darwin'
 }
 
-const qwen3TtsRealtimeModels: ModelInfo[] = [{
-  id: QWEN3_TTS_REALTIME_MODEL,
-  name: 'Qwen3 TTS Flash Realtime',
-  provider: QWEN3_TTS_REALTIME_PROVIDER_ID,
-  description: 'Incremental text-to-speech through Alibaba Cloud Model Studio.',
-  contextLength: 0,
-  deprecated: false,
-}]
+const qwen3TtsRealtimeModels: ModelInfo[] = QWEN3_TTS_REALTIME_MODEL_CATALOG.map(model => qwen3TtsRealtimeModelInfo(model))
 
 const qwen3TtsRealtimeVoices: VoiceInfo[] = [{
   id: QWEN3_TTS_REALTIME_VOICE_ID,
   name: QWEN3_TTS_REALTIME_VOICE_ID,
   provider: QWEN3_TTS_REALTIME_PROVIDER_ID,
-  compatibleModels: [QWEN3_TTS_REALTIME_MODEL],
+  compatibleModels: QWEN3_TTS_REALTIME_MODEL_CATALOG.map(model => model.id),
   description: 'Official Mandarin-capable Qwen3 realtime preset voice.',
   languages: [{ code: 'zh', title: 'Chinese' }],
   gender: 'female',
@@ -74,4 +70,15 @@ export const providerQwen3TtsRealtime = defineProvider<Qwen3TtsRealtimeConfig>({
   },
 })
 
-export { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID }
+export {
+  isQwen3TtsRealtimeModel,
+  normalizeQwen3TtsRealtimeModel,
+  QWEN3_TTS_REALTIME_DEFAULT_MODEL,
+  QWEN3_TTS_REALTIME_MODEL_CATALOG,
+} from '../../qwen3-tts-realtime-models'
+
+export {
+  QWEN3_TTS_REALTIME_MODEL,
+  QWEN3_TTS_REALTIME_PROVIDER_ID,
+  QWEN3_TTS_REALTIME_VOICE_ID,
+} from '../../qwen-tts-realtime-ipc'

@@ -4,10 +4,8 @@ import {
   QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
   QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
 } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-ipc'
-import {
-  QWEN3_TTS_REALTIME_MODEL,
-  QWEN3_TTS_REALTIME_PROVIDER_ID,
-} from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_MODEL_CATALOG } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ensureQwenTtsModelCatalog, shouldEnsureQwenTtsModelCatalog } from './speech-model-catalog'
@@ -19,7 +17,7 @@ function createCatalogStore() {
     models = [{
       id: providerId === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID
         ? QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL
-        : QWEN3_TTS_REALTIME_MODEL,
+        : QWEN3_TTS_REALTIME_MODEL_CATALOG[0].id,
     }]
   })
 
@@ -60,7 +58,7 @@ describe('speech settings Qwen model catalog lifecycle', () => {
 
     await ensureQwenTtsModelCatalog(store, QWEN3_TTS_REALTIME_PROVIDER_ID)
 
-    expect(store.getModelsForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID)).toEqual([{ id: QWEN3_TTS_REALTIME_MODEL }])
+    expect(store.getModelsForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID)).toEqual([{ id: QWEN3_TTS_REALTIME_MODEL_CATALOG[0].id }])
     expect(shouldEnsureQwenTtsModelCatalog('another-provider', 0)).toBe(false)
   })
 
