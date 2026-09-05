@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { VoiceType } from '@proj-airi/stage-ui/composables'
+import type { Qwen3TtsStreamingPreviewAudioContext } from '@proj-airi/stage-ui/libs/speech/qwen-tts-streaming-preview'
 import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 
 import { errorMessageFrom } from '@moeru/std'
@@ -14,6 +15,9 @@ import {
 import { useAnalytics } from '@proj-airi/stage-ui/composables'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/providers/official'
 import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import { normalizeQwen3TtsRealtimeModel } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
+import { normalizeQwen3TtsRealtimeVoice } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-voices'
+import { createQwen3TtsStreamingPreviewController, QWEN3_TTS_PREVIEW_MAX_TEXT_CHARS, validateQwen3TtsPreviewText } from '@proj-airi/stage-ui/libs/speech/qwen-tts-streaming-preview'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores'
 import { useSpeechStore } from '@proj-airi/stage-ui/stores/modules/speech'
 import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
@@ -32,6 +36,7 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 
 import DashScopePaygCredentialSettings from '../providers/speech/DashScopePaygCredentialSettings.vue'
+import Qwen3RealtimeStreamingPreview from '../providers/speech/Qwen3RealtimeStreamingPreview.vue'
 
 import { ensureQwenTtsModelCatalog } from './speech-model-catalog'
 
@@ -76,10 +81,59 @@ const isGenerating = ref(false)
 const audioUrl = ref('')
 const audioPlayer = ref<HTMLAudioElement | null>(null)
 const errorMessage = ref('')
+const qwenPreviewState = ref<'idle' | 'starting' | 'active' | 'completed' | 'cancelled' | 'failed'>('idle')
 let lastOfficialTtsExposureKey = ''
+let qwenPreviewAnalyticsContext: {
+  model: string
+  voice: string
+  voiceType: VoiceType
+  startedAt: number
+} | undefined
 
 const STREAMING_MODEL_OPTION_PREFIX = 'streaming:'
 const isQwenRealtimeProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)
+
+function sanitizeQwenPreviewError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+  if (message.includes('preview text is required'))
+    return 'Preview text is required.'
+  if (message.includes('characters or fewer'))
+    return `Preview text must be ${QWEN3_TTS_PREVIEW_MAX_TEXT_CHARS} characters or fewer.`
+  if (message.includes('credential') || message.includes('api key') || message.includes('workspace') || message.includes('region'))
+    return 'Qwen3 realtime preview is unavailable because secure PAYG settings are not configured.'
+  return 'Qwen3 realtime voice preview failed. Please try again.'
+}
+
+const qwenStreamingPreview = createQwen3TtsStreamingPreviewController({
+  createAudioContext: () => new AudioContext() as unknown as Qwen3TtsStreamingPreviewAudioContext,
+  onStateChange: (state) => {
+    qwenPreviewState.value = state
+    isGenerating.value = state === 'starting' || state === 'active'
+  },
+  onError: (error) => {
+    errorMessage.value = sanitizeQwenPreviewError(error)
+  },
+  onComplete: (snapshot) => {
+    const context = qwenPreviewAnalyticsContext
+    if (!context || context.model !== snapshot.model || context.voice !== snapshot.voice)
+      return
+
+    trackOfficialTtsPreviewSucceeded({
+      tts_provider_id: QWEN3_TTS_REALTIME_PROVIDER_ID,
+      tts_model_id: context.model,
+      ...voiceAnalyticsPayload(context.voice, QWEN3_TTS_REALTIME_PROVIDER_ID),
+      source: 'manual_preview',
+      duration_ms: Math.round(performance.now() - context.startedAt),
+    })
+    trackVoicePreviewPlayed({
+      tts_provider_id: QWEN3_TTS_REALTIME_PROVIDER_ID,
+      tts_model_id: context.model,
+      ...voiceAnalyticsPayload(context.voice, QWEN3_TTS_REALTIME_PROVIDER_ID),
+      source: 'manual_preview',
+    })
+    qwenPreviewAnalyticsContext = undefined
+  },
+})
 
 const selectableSpeechSources = computed(() => {
   const configuredSources = moduleSpeechProvidersMetadata.value
@@ -418,11 +472,69 @@ watch(activeSpeechModel, async (model) => {
 })
 
 watch([activeSpeechProvider, activeSpeechModel, activeSpeechVoiceId], ([provider, model, voiceId]) => {
+  if (qwenPreviewState.value === 'starting' || qwenPreviewState.value === 'active')
+    qwenStreamingPreview.cancel('speech-selection-changed')
   void airiCardStore.updateActiveCardSpeech({ provider, model, voice_id: voiceId })
 })
 
+function startQwenStreamingPreview() {
+  let text: string
+  try {
+    text = validateQwen3TtsPreviewText(testText.value)
+  }
+  catch (error) {
+    errorMessage.value = sanitizeQwenPreviewError(error)
+    return
+  }
+
+  const model = normalizeQwen3TtsRealtimeModel(activeSpeechModel.value)
+  const voiceId = normalizeQwen3TtsRealtimeVoice(activeSpeechVoiceId.value, model)
+  const voice = availableVoices.value[QWEN3_TTS_REALTIME_PROVIDER_ID]?.find(candidate => candidate.id === voiceId)
+  if (!voice) {
+    errorMessage.value = 'Qwen3 realtime preview is not ready because no compatible voice is selected.'
+    return
+  }
+
+  // Persisted stale voice state is normalized locally before any preview
+  // session is opened; the main process remains the final trust boundary.
+  if (activeSpeechVoiceId.value !== voiceId || activeSpeechVoice.value?.id !== voiceId) {
+    activeSpeechVoiceId.value = voiceId
+    activeSpeechVoice.value = voice
+  }
+
+  const previewModel = model
+  const previewVoice = voice
+  const previewAnalytics = voiceAnalyticsPayload(previewVoice.id, QWEN3_TTS_REALTIME_PROVIDER_ID)
+  qwenPreviewAnalyticsContext = {
+    model: previewModel,
+    voice: previewVoice.id,
+    voiceType: previewAnalytics.voice_type,
+    startedAt: performance.now(),
+  }
+  errorMessage.value = ''
+  trackOfficialTtsPreviewStarted({
+    tts_provider_id: QWEN3_TTS_REALTIME_PROVIDER_ID,
+    tts_model_id: previewModel,
+    ...previewAnalytics,
+    source: 'manual_preview',
+  })
+
+  try {
+    qwenStreamingPreview.start({ model: previewModel, voice: previewVoice.id, text })
+  }
+  catch (error) {
+    qwenPreviewAnalyticsContext = undefined
+    errorMessage.value = sanitizeQwenPreviewError(error)
+  }
+}
+
 // Function to generate speech
 async function generateTestSpeech() {
+  if (isQwenRealtimeProvider.value) {
+    startQwenStreamingPreview()
+    return
+  }
+
   if (!testText.value.trim() && !useSSML.value)
     return
 
@@ -556,6 +668,12 @@ async function generateTestSpeech() {
 
 // Function to stop audio playback
 function stopTestAudio() {
+  if (isQwenRealtimeProvider.value) {
+    qwenPreviewAnalyticsContext = undefined
+    qwenStreamingPreview.cancel('preview-stopped')
+    return
+  }
+
   if (audioPlayer.value) {
     audioPlayer.value.pause()
     audioPlayer.value.currentTime = 0
@@ -570,6 +688,8 @@ function stopTestAudio() {
 
 // Clean up when component is unmounted
 onUnmounted(() => {
+  qwenPreviewAnalyticsContext = undefined
+  qwenStreamingPreview.cancel('settings-unmounted')
   if (audioUrl.value) {
     URL.revokeObjectURL(audioUrl.value)
   }
@@ -941,14 +1061,17 @@ function handleDeleteProvider(providerId: string) {
           </div>
         </h2>
         <div flex="~ col gap-4">
-          <Alert v-if="isQwenRealtimeProvider" type="info">
-            <template #title>
-              {{ t('settings.pages.providers.provider.qwen3-tts-realtime.preview.title') }}
-            </template>
-            <template #content>
-              {{ t('settings.pages.providers.provider.qwen3-tts-realtime.preview.description') }}
-            </template>
-          </Alert>
+          <Qwen3RealtimeStreamingPreview
+            v-if="isQwenRealtimeProvider"
+            v-model:text="testText"
+            :model="normalizeQwen3TtsRealtimeModel(activeSpeechModel)"
+            :voice="activeSpeechVoiceId"
+            :max-chars="QWEN3_TTS_PREVIEW_MAX_TEXT_CHARS"
+            :busy="isGenerating"
+            :error="errorMessage"
+            @preview="generateTestSpeech"
+            @stop="stopTestAudio"
+          />
           <template v-else>
             <FieldCheckbox
               v-model="useSSML"
