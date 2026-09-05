@@ -5,6 +5,7 @@ import { nextTick } from 'vue'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, providerOfficialSpeech } from '../../libs/providers/providers/official'
 import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID } from '../../libs/providers/qwen-audio-tts-token-plan-ipc'
 import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_MODEL_CATALOG } from '../../libs/providers/qwen3-tts-realtime-models'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
 import { toSignedPercent, useSpeechStore } from './speech'
@@ -566,6 +567,17 @@ describe('qwen realtime speech selection', () => {
     expect(speechStore.activeSpeechModel).toBe('default')
     expect(speechStore.activeSpeechVoiceId).toBe('3')
     expect(speechStore.activeSpeechVoice).toBeUndefined()
+  })
+
+  it('preserves a valid non-default Qwen3 model selection', async () => {
+    const { speechStore } = await prepareQwenCatalog()
+    const instructModel = QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id
+
+    speechStore.activeSpeechModel = instructModel
+    speechStore.ensureQwenRealtimeSelection()
+
+    expect(speechStore.activeSpeechModel).toBe(instructModel)
+    expect(speechStore.activeSpeechVoiceId).toBe(QWEN3_TTS_REALTIME_VOICE_ID)
   })
 })
 

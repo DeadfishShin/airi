@@ -2,6 +2,7 @@ import type {
   Qwen3TtsRealtimeLanguageType,
   Qwen3TtsRealtimeMode,
 } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import type { Qwen3TtsRealtimeModelId } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 
 import process from 'node:process'
 
@@ -11,7 +12,10 @@ import { randomUUID } from 'node:crypto'
 import QwenWebSocket from 'crossws/websocket'
 
 import { errorMessageFrom } from '@moeru/std'
-import { QWEN3_TTS_REALTIME_MODEL } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import {
+  isQwen3TtsRealtimeModel,
+  QWEN3_TTS_REALTIME_DEFAULT_MODEL,
+} from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 
 export const QWEN3_TTS_REALTIME_SAMPLE_RATE = 24_000
 export const QWEN3_TTS_REALTIME_DEFAULT_VOICE = 'Cherry'
@@ -64,11 +68,13 @@ export function resolveQwenTtsRealtimeRuntimeConfig(
   }
 }
 
-export function buildQwenTtsRealtimeEndpoint(region: QwenTtsRealtimeRegion): string {
+export function buildQwenTtsRealtimeEndpoint(region: QwenTtsRealtimeRegion, model: Qwen3TtsRealtimeModelId = QWEN3_TTS_REALTIME_DEFAULT_MODEL): string {
+  if (!isQwen3TtsRealtimeModel(model))
+    throw new Error('Qwen3 realtime TTS model is unsupported.')
   const host = region === 'beijing'
     ? 'dashscope.aliyuncs.com'
     : 'dashscope-intl.aliyuncs.com'
-  return `wss://${host}/api-ws/v1/realtime?model=${QWEN3_TTS_REALTIME_MODEL}`
+  return `wss://${host}/api-ws/v1/realtime?model=${model}`
 }
 
 export function buildQwenTtsRealtimeHeaders(config: QwenTtsRealtimeRuntimeConfig): Record<string, string> {
@@ -372,8 +378,9 @@ export class Qwen3TtsRealtimeSession {
     private readonly callbacks: QwenTtsRealtimeSessionCallbacks,
     private readonly socketFactory: QwenTtsRealtimeSocketFactory = createQwenTtsRealtimeSocket,
     now: () => number = () => performance.now(),
+    model: Qwen3TtsRealtimeModelId = QWEN3_TTS_REALTIME_DEFAULT_MODEL,
   ) {
-    this.endpoint = buildQwenTtsRealtimeEndpoint(config.region)
+    this.endpoint = buildQwenTtsRealtimeEndpoint(config.region, model)
     this.now = now
     this.telemetry = { t1: 0 }
     this.completion = new Promise<void>((resolve, reject) => {
@@ -660,5 +667,5 @@ export class Qwen3TtsRealtimeSession {
 }
 
 export {
-  QWEN3_TTS_REALTIME_MODEL,
+  QWEN3_TTS_REALTIME_DEFAULT_MODEL,
 }

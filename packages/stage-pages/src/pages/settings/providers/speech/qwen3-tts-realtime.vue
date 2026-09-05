@@ -5,7 +5,8 @@ import {
   ProviderSettingsLayout,
 } from '@proj-airi/stage-ui/components'
 import { selectProviderMetadata } from '@proj-airi/stage-ui/libs'
-import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import { normalizeQwen3TtsRealtimeModel, QWEN3_TTS_REALTIME_DEFAULT_MODEL } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 import { useSpeechStore } from '@proj-airi/stage-ui/stores/modules/speech'
 import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { computedAsync } from '@vueuse/core'
@@ -29,14 +30,16 @@ const providerMetadata = computedAsync(() => selectProviderMetadata(
   { id: providerId },
 ))
 
-const model = computed(() => providersStore.getModelsForProvider(providerId).find(model => model.id === QWEN3_TTS_REALTIME_MODEL))
+const selectedModelId = computed(() => normalizeQwen3TtsRealtimeModel(speechStore.activeSpeechModel))
+const model = computed(() => providersStore.getModelsForProvider(providerId).find(model => model.id === selectedModelId.value))
 const voice = computed(() => speechStore.getVoicesForProvider(providerId).find(voice => voice.id === canaryVoiceId))
 
 async function initializeCatalog() {
   try {
     await providersStore.initializeProvider(providerId)
     await providersStore.fetchModelsForProvider(providerId)
-    await speechStore.loadVoicesForProvider(providerId, QWEN3_TTS_REALTIME_MODEL)
+    speechStore.ensureQwenRealtimeSelection(providerId)
+    await speechStore.loadVoicesForProvider(providerId, selectedModelId.value)
   }
   catch {
     // Catalog loading is best-effort for this static canary page. Keep the
@@ -79,7 +82,7 @@ onMounted(() => {
                 {{ t('settings.pages.providers.provider.qwen3-tts-realtime.fields.model.label') }}
               </dt>
               <dd data-testid="qwen3-tts-realtime-model" class="mt-1 text-sm font-mono">
-                {{ model?.id ?? QWEN3_TTS_REALTIME_MODEL }}
+                {{ model?.id ?? selectedModelId ?? QWEN3_TTS_REALTIME_DEFAULT_MODEL }}
               </dd>
             </div>
             <div>

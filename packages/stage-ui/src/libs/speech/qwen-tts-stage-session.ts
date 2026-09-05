@@ -31,6 +31,7 @@ import {
   qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '../providers/qwen-tts-realtime-ipc'
+import { normalizeQwen3TtsRealtimeModel } from '../providers/qwen3-tts-realtime-models'
 import { createQwen3TtsPcmPlaybackBridge } from './qwen-tts-pcm-playback'
 
 export const MAX_QWEN3_TTS_PENDING_TEXT_CHARS = 64 * 1024
@@ -291,6 +292,7 @@ export function createQwen3TtsStageSession(options: Qwen3TtsStageSessionOptions)
   queueOperation(async () => {
     const payload: Qwen3TtsRealtimeSessionStartPayload = {
       sessionId: intentId,
+      model: normalizeQwen3TtsRealtimeModel(snapshot.model),
       voice: snapshot.voice,
       languageType: 'Chinese' satisfies Qwen3TtsRealtimeLanguageType,
       mode: 'server_commit' satisfies Qwen3TtsRealtimeMode,

@@ -15,6 +15,7 @@ import {
   qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_MODEL_CATALOG } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -138,6 +139,30 @@ function serverMessage(type: string, payload: Record<string, unknown> = {}) {
 }
 
 describe('qwen3 realtime TTS main service', () => {
+  it('validates the selected model before socket creation and propagates it to the endpoint', async () => {
+    const context = createContext()
+    const sockets: Array<{ endpoint: string, socket: FakeSocket }> = []
+    const service = createQwen3TtsRealtimeService({
+      context: context as never,
+      environment: runtimeEnvironment,
+      socketFactory: (endpoint) => {
+        const socket = new FakeSocket()
+        sockets.push({ endpoint, socket })
+        return socket
+      },
+    })
+    const start = defineInvoke(context, qwen3TtsRealtimeSessionStart)
+    const selectedModel = QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id
+
+    await start({ sessionId: 'selected-model-session', model: selectedModel, voice: 'Cherry', languageType: 'Chinese', mode: 'server_commit' })
+    expect(sockets).toHaveLength(1)
+    expect(sockets[0].endpoint).toContain(`?model=${selectedModel}`)
+
+    await expect(start({ sessionId: 'unsupported-model-session', model: 'qwen3-tts-vd-realtime' as never, voice: 'Cherry', languageType: 'Chinese', mode: 'server_commit' })).rejects.toThrow('model is unsupported')
+    expect(sockets).toHaveLength(1)
+    await service.dispose()
+  })
+
   it('routes ready, PCM audio, response, finish, and error events only to the originating renderer', async () => {
     const ipc = createFakeElectronIpc()
     const otherIpc = createFakeElectronIpc(ipc.main)

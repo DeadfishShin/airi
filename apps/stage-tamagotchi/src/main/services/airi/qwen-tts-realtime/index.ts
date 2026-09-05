@@ -21,6 +21,10 @@ import {
   qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import {
+  isQwen3TtsRealtimeModel,
+  QWEN3_TTS_REALTIME_DEFAULT_MODEL,
+} from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 import { ipcMain } from 'electron'
 
 import {
@@ -65,6 +69,14 @@ function sessionIdFromPayload(payload: { sessionId: string }): string {
   if (!sessionId || sessionId.length > 128)
     throw new Error('Qwen3 realtime TTS session ID is invalid.')
   return sessionId
+}
+
+function modelFromPayload(value: unknown) {
+  if (value === undefined)
+    return QWEN3_TTS_REALTIME_DEFAULT_MODEL
+  if (!isQwen3TtsRealtimeModel(value))
+    throw new Error('Qwen3 realtime TTS model is unsupported.')
+  return value
 }
 
 function errorCodeFrom(error: Error): string {
@@ -131,6 +143,9 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
       if (sessions.has(sessionId))
         throw new Error('Qwen3 realtime TTS session already exists.')
 
+      // Validate renderer-controlled model data before resolving credentials
+      // or creating the provider socket. There is no silent fallback.
+      const model = modelFromPayload(payload.model)
       const config = options.credentialStore?.getRuntimeProfile() ?? resolveQwenTtsRealtimeRuntimeConfig(options.environment)
       terminalErrors.delete(sessionId)
       loggedStageTelemetry.delete(sessionId)
@@ -167,6 +182,7 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
         },
         socketFactory,
         now,
+        model,
       )
       if (target)
         eventTargets.set(sessionId, target)

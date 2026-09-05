@@ -16,7 +16,8 @@ import { x } from 'xastscript'
 
 import { getDefaultSpeechModel, getDefaultStreamingModel, OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, setupOfficialSpeechAutoPick } from '../../libs/providers/providers/official'
 import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID } from '../../libs/providers/qwen-audio-tts-token-plan-ipc'
-import { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
+import { normalizeQwen3TtsRealtimeModel } from '../../libs/providers/qwen3-tts-realtime-models'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
 
@@ -159,17 +160,17 @@ export const useSpeechStore = defineStore('speech', () => {
   }
 
   /**
-   * Applies the fixed, renderer-visible canary selection for Qwen realtime
-   * TTS after its static catalogue is available. This is deliberately scoped
-   * to Qwen: other providers may expose multiple models or user-selectable
-   * voices and must retain their existing selection policy.
+   * Normalizes the Qwen realtime selection without overwriting a valid model.
+   * This is deliberately scoped to Qwen: other providers retain their own
+   * model and voice selection policy.
    */
   function ensureQwenRealtimeSelection(provider = activeSpeechProvider.value) {
     if (provider !== QWEN3_TTS_REALTIME_PROVIDER_ID || activeSpeechProvider.value !== provider)
       return
 
-    if (activeSpeechModel.value !== QWEN3_TTS_REALTIME_MODEL)
-      activeSpeechModel.value = QWEN3_TTS_REALTIME_MODEL
+    const normalizedModel = normalizeQwen3TtsRealtimeModel(activeSpeechModel.value)
+    if (activeSpeechModel.value !== normalizedModel)
+      activeSpeechModel.value = normalizedModel
 
     const voice = availableVoices.value[provider]?.find(candidate => candidate.id === QWEN3_TTS_REALTIME_VOICE_ID)
     if (!voice)

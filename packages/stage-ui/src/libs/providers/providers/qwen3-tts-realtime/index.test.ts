@@ -6,6 +6,7 @@ import { z } from 'zod'
 import {
   providerQwen3TtsRealtime,
   QWEN3_TTS_REALTIME_MODEL,
+  QWEN3_TTS_REALTIME_MODEL_CATALOG,
   QWEN3_TTS_REALTIME_PROVIDER_ID,
 } from './index'
 
@@ -19,9 +20,9 @@ describe('qwen3 realtime TTS provider', () => {
     expect(config).toEqual({})
     expect(providerQwen3TtsRealtime.requiresCredentials).toBe(false)
     expect(providerQwen3TtsRealtime.capabilities?.speech).toEqual({ transport: 'bidirectional-ws' })
-    expect(models?.map(model => model.id)).toEqual([QWEN3_TTS_REALTIME_MODEL])
+    expect(models?.map(model => model.id)).toEqual(QWEN3_TTS_REALTIME_MODEL_CATALOG.map(model => model.id))
     expect(voices?.map(voice => voice.id)).toEqual(['Cherry'])
-    expect(voices?.[0]?.compatibleModels).toEqual([QWEN3_TTS_REALTIME_MODEL])
+    expect(voices?.[0]?.compatibleModels).toEqual(QWEN3_TTS_REALTIME_MODEL_CATALOG.map(model => model.id))
     expect(QWEN3_TTS_REALTIME_PROVIDER_ID).toBe('qwen3-tts-realtime')
   })
 
