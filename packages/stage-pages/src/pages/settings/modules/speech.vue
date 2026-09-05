@@ -31,6 +31,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 
+import DashScopePaygCredentialSettings from '../providers/speech/DashScopePaygCredentialSettings.vue'
 import { ensureQwenTtsModelCatalog } from './speech-model-catalog'
 
 const { t } = useI18n()
@@ -615,6 +616,7 @@ function handleDeleteProvider(providerId: string) {
 
 <template>
   <div flex="~ col md:row gap-6">
+    <DashScopePaygCredentialSettings class="md:col-span-2" />
     <div bg="neutral-100 dark:[rgba(0,0,0,0.3)]" rounded-xl p-4 flex="~ col gap-4" class="h-fit w-full md:w-[40%]">
       <div flex="~ col gap-4">
         <div>

@@ -3,6 +3,7 @@ import type { createContext, ElectronMainEmitOptions } from '@moeru/eventa/adapt
 import type { Lifecycle } from 'injeca'
 
 import type { QwenTtsRealtimeSocketFactory, QwenTtsRealtimeTelemetry } from './protocol'
+import type { QwenDashScopePaygRuntimeProfile } from '../qwen-dashscope-payg-credentials/store'
 
 import {
   defineInvokeHandler,
@@ -49,6 +50,9 @@ export const MAX_STAGE_TELEMETRY_LOGS = 64
 
 export interface Qwen3TtsRealtimeServiceOptions {
   context: QwenTtsMainEventContext
+  credentialStore?: {
+    getRuntimeProfile: () => QwenDashScopePaygRuntimeProfile
+  }
   environment?: NodeJS.ProcessEnv
   lifecycle?: Lifecycle
   now?: () => number
@@ -127,7 +131,7 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
       if (sessions.has(sessionId))
         throw new Error('Qwen3 realtime TTS session already exists.')
 
-      const config = resolveQwenTtsRealtimeRuntimeConfig(options.environment)
+      const config = options.credentialStore?.getRuntimeProfile() ?? resolveQwenTtsRealtimeRuntimeConfig(options.environment)
       terminalErrors.delete(sessionId)
       loggedStageTelemetry.delete(sessionId)
       const target = targetFromInvoke(invokeOptions)

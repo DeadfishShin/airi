@@ -3,6 +3,7 @@ import type { createContext, ElectronMainEmitOptions } from '@moeru/eventa/adapt
 import type { Lifecycle } from 'injeca'
 
 import type { QwenAsrTelemetry, QwenAudioRealtimeSocketFactory } from './protocol'
+import type { QwenDashScopePaygRuntimeProfile } from '../qwen-dashscope-payg-credentials/store'
 
 import {
   defineInvokeHandler,
@@ -45,6 +46,9 @@ interface QwenTerminalErrorTombstone {
 
 export interface QwenAudioRealtimeServiceOptions {
   context: QwenMainEventContext
+  credentialStore?: {
+    getRuntimeProfile: () => QwenDashScopePaygRuntimeProfile
+  }
   environment?: NodeJS.ProcessEnv
   lifecycle?: Lifecycle
   now?: () => number
@@ -79,7 +83,7 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
   const sessionEventTargets = new Map<string, QwenRendererEventTarget>()
   const terminalErrors = new Map<string, QwenTerminalErrorTombstone>()
   const now = options.now ?? (() => Date.now())
-  const runtimeConfig = () => resolveQwenAudioRealtimeRuntimeConfig(options.environment)
+  const runtimeConfig = () => options.credentialStore?.getRuntimeProfile() ?? resolveQwenAudioRealtimeRuntimeConfig(options.environment)
   const socketFactory = options.socketFactory ?? createQwenAudioRealtimeSocket
   let disposed = false
 

@@ -13,6 +13,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
+import DashScopePaygCredentialSettings from './DashScopePaygCredentialSettings.vue'
+
 const providerId = QWEN3_TTS_REALTIME_PROVIDER_ID
 const canaryVoiceId = QWEN3_TTS_REALTIME_VOICE_ID
 const { t } = useI18n()
@@ -56,6 +58,7 @@ onMounted(() => {
     :on-back="() => router.back()"
   >
     <ProviderSettingsContainer>
+      <DashScopePaygCredentialSettings class="mb-5" />
       <ProviderBasicSettings
         :title="t('settings.pages.providers.common.section.basic.title')"
         :description="t('settings.pages.providers.common.section.basic.description')"
