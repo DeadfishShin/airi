@@ -1556,6 +1556,10 @@ pages:
           is stored by the Electron main process secure store and is never
           displayed back to the renderer.
         fields:
+          model:
+            label: ASR model
+            description: Select the official realtime model supported by AIRI's current Qwen Audio streaming protocol.
+            placeholder: Select an ASR model
           language:
             label: ASR language
             description: Choose a language hint for Qwen Audio recognition, or let the service detect it automatically.
