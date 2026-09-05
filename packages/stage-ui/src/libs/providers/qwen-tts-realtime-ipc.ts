@@ -3,11 +3,13 @@ import type { Qwen3TtsRealtimeModelId } from './qwen3-tts-realtime-models'
 import { defineEventa, defineInvokeEventa } from '@moeru/eventa'
 
 import { QWEN3_TTS_REALTIME_DEFAULT_MODEL } from './qwen3-tts-realtime-models'
+import { QWEN3_TTS_REALTIME_DEFAULT_VOICE } from './qwen3-tts-realtime-voices'
 
 export const QWEN3_TTS_REALTIME_PROVIDER_ID = 'qwen3-tts-realtime'
 /** Backwards-compatible alias for the canonical catalog default. */
 export const QWEN3_TTS_REALTIME_MODEL = QWEN3_TTS_REALTIME_DEFAULT_MODEL
-export const QWEN3_TTS_REALTIME_VOICE_ID = 'Cherry'
+/** Backwards-compatible alias for the canonical catalog default voice. */
+export const QWEN3_TTS_REALTIME_VOICE_ID = QWEN3_TTS_REALTIME_DEFAULT_VOICE
 
 export type Qwen3TtsRealtimeMode = 'server_commit' | 'commit'
 export type Qwen3TtsRealtimeLanguageType

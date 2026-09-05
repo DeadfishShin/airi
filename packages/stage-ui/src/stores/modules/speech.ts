@@ -16,8 +16,11 @@ import { x } from 'xastscript'
 
 import { getDefaultSpeechModel, getDefaultStreamingModel, OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, setupOfficialSpeechAutoPick } from '../../libs/providers/providers/official'
 import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID } from '../../libs/providers/qwen-audio-tts-token-plan-ipc'
-import { QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
 import { normalizeQwen3TtsRealtimeModel } from '../../libs/providers/qwen3-tts-realtime-models'
+import {
+  normalizeQwen3TtsRealtimeVoice,
+} from '../../libs/providers/qwen3-tts-realtime-voices'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
 
@@ -172,12 +175,14 @@ export const useSpeechStore = defineStore('speech', () => {
     if (activeSpeechModel.value !== normalizedModel)
       activeSpeechModel.value = normalizedModel
 
-    const voice = availableVoices.value[provider]?.find(candidate => candidate.id === QWEN3_TTS_REALTIME_VOICE_ID)
+    const voices = availableVoices.value[provider] ?? []
+    const normalizedVoiceId = normalizeQwen3TtsRealtimeVoice(activeSpeechVoiceId.value, normalizedModel)
+    const voice = voices.find(candidate => candidate.id === normalizedVoiceId)
     if (!voice)
       return
 
-    if (activeSpeechVoiceId.value !== QWEN3_TTS_REALTIME_VOICE_ID)
-      activeSpeechVoiceId.value = QWEN3_TTS_REALTIME_VOICE_ID
+    if (activeSpeechVoiceId.value !== normalizedVoiceId)
+      activeSpeechVoiceId.value = normalizedVoiceId
     if (!isEqual(activeSpeechVoice.value, voice))
       activeSpeechVoice.value = voice
   }

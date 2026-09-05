@@ -18,7 +18,6 @@ import {
 } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 
 export const QWEN3_TTS_REALTIME_SAMPLE_RATE = 24_000
-export const QWEN3_TTS_REALTIME_DEFAULT_VOICE = 'Cherry'
 export const QWEN3_TTS_REALTIME_DEFAULT_MODE: Qwen3TtsRealtimeMode = 'server_commit'
 export const QWEN3_TTS_REALTIME_DEFAULT_LANGUAGE: Qwen3TtsRealtimeLanguageType = 'Chinese'
 export const MAX_PRE_READY_TEXT_CHARS = 32 * 1024

@@ -405,8 +405,13 @@ watch(activeSpeechModel, async (model) => {
   if (!activeSpeechProvider.value)
     return
 
-  activeSpeechVoiceId.value = ''
-  activeSpeechVoice.value = undefined
+  // Qwen3 realtime voices are model-scoped. Keep a selected voice alive while
+  // the new catalog loads; the shared speech store normalizes it to Cherry
+  // only when the selected model does not support that voice.
+  if (activeSpeechProvider.value !== QWEN3_TTS_REALTIME_PROVIDER_ID) {
+    activeSpeechVoiceId.value = ''
+    activeSpeechVoice.value = undefined
+  }
 
   await speechStore.loadVoicesForProvider(activeSpeechProvider.value, model || undefined)
   trackOfficialTtsExposure(activeSpeechProvider.value, currentTtsModelId())
