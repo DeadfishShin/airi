@@ -154,11 +154,17 @@ describe('qwen3 realtime TTS main service', () => {
     const start = defineInvoke(context, qwen3TtsRealtimeSessionStart)
     const selectedModel = QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id
 
-    await start({ sessionId: 'selected-model-session', model: selectedModel, voice: 'Cherry', languageType: 'Chinese', mode: 'server_commit' })
+    await start({ sessionId: 'selected-model-session', model: selectedModel, voice: 'Serena', languageType: 'Chinese', mode: 'server_commit' })
     expect(sockets).toHaveLength(1)
     expect(sockets[0].endpoint).toContain(`?model=${selectedModel}`)
+    sockets[0].socket.emit('open')
+    sockets[0].socket.emit('message', serverMessage('session.created', { session: { id: 'selected-model-server-session' } }))
+    await settleEvents()
+    expect(JSON.parse(sockets[0].socket.sent[0])).toMatchObject({ type: 'session.update', session: { voice: 'Serena' } })
 
     await expect(start({ sessionId: 'unsupported-model-session', model: 'qwen3-tts-vd-realtime' as never, voice: 'Cherry', languageType: 'Chinese', mode: 'server_commit' })).rejects.toThrow('model is unsupported')
+    await expect(start({ sessionId: 'unsupported-voice-session', model: selectedModel, voice: 'unknown-voice', languageType: 'Chinese', mode: 'server_commit' })).rejects.toThrow('voice is unsupported')
+    await expect(start({ sessionId: 'incompatible-voice-session', model: selectedModel, voice: 'Jennifer', languageType: 'Chinese', mode: 'server_commit' })).rejects.toThrow('voice is unsupported')
     expect(sockets).toHaveLength(1)
     await service.dispose()
   })

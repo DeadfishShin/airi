@@ -579,6 +579,34 @@ describe('qwen realtime speech selection', () => {
     expect(speechStore.activeSpeechModel).toBe(instructModel)
     expect(speechStore.activeSpeechVoiceId).toBe(QWEN3_TTS_REALTIME_VOICE_ID)
   })
+
+  it('preserves a compatible non-Cherry voice when switching Qwen3 models', async () => {
+    const { speechStore } = await prepareQwenCatalog()
+    const instructModel = QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id
+    const selectedVoice = speechStore.getVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID).find(voice => voice.id === 'Serena')
+
+    speechStore.activeSpeechVoiceId = 'Serena'
+    speechStore.activeSpeechVoice = selectedVoice
+    speechStore.activeSpeechModel = instructModel
+    await speechStore.loadVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID, instructModel)
+
+    expect(speechStore.activeSpeechVoiceId).toBe('Serena')
+    expect(speechStore.activeSpeechVoice?.id).toBe('Serena')
+  })
+
+  it('normalizes a voice that is incompatible with the newly selected model to Cherry', async () => {
+    const { speechStore } = await prepareQwenCatalog()
+    const instructModel = QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id
+    const selectedVoice = speechStore.getVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID).find(voice => voice.id === 'Jennifer')
+
+    speechStore.activeSpeechVoiceId = 'Jennifer'
+    speechStore.activeSpeechVoice = selectedVoice
+    speechStore.activeSpeechModel = instructModel
+    await speechStore.loadVoicesForProvider(QWEN3_TTS_REALTIME_PROVIDER_ID, instructModel)
+
+    expect(speechStore.activeSpeechVoiceId).toBe(QWEN3_TTS_REALTIME_VOICE_ID)
+    expect(speechStore.activeSpeechVoice?.id).toBe(QWEN3_TTS_REALTIME_VOICE_ID)
+  })
 })
 
 describe('qwen Audio Token Plan speech selection', () => {

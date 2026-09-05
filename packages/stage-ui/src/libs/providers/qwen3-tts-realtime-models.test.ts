@@ -16,7 +16,6 @@ describe('qwen3 realtime TTS model authority', () => {
     ])
     expect(QWEN3_TTS_REALTIME_DEFAULT_MODEL).toBe('qwen3-tts-flash-realtime')
     expect(QWEN3_TTS_REALTIME_MODEL_CATALOG.every(model => model.supportedRegions.includes('beijing') && model.supportedRegions.includes('singapore'))).toBe(true)
-    expect(QWEN3_TTS_REALTIME_MODEL_CATALOG.every(model => model.compatibleVoiceIds.includes('Cherry'))).toBe(true)
   })
 
   it('normalizes missing and stale persisted state without accepting arbitrary IDs', () => {

@@ -1,8 +1,8 @@
 import type { ModelInfo } from './types'
 
 /**
- * Stable Qwen3 realtime TTS models whose protocol and Cherry compatibility
- * are verified by the official Model Studio documentation. Snapshot IDs are
+ * Stable Qwen3 realtime TTS models whose protocol and region support are
+ * verified by the official Model Studio documentation. Snapshot IDs are
  * retained as provenance only; stable IDs are the user-facing authority.
  */
 export const QWEN3_TTS_REALTIME_MODEL_CATALOG = [
@@ -12,7 +12,6 @@ export const QWEN3_TTS_REALTIME_MODEL_CATALOG = [
     description: 'Realtime text-to-speech through Alibaba Cloud Model Studio.',
     snapshotId: 'qwen3-tts-flash-realtime-2025-11-27',
     supportedRegions: ['beijing', 'singapore'],
-    compatibleVoiceIds: ['Cherry'],
   },
   {
     id: 'qwen3-tts-instruct-flash-realtime',
@@ -20,7 +19,6 @@ export const QWEN3_TTS_REALTIME_MODEL_CATALOG = [
     description: 'Realtime text-to-speech with the shared Qwen-TTS realtime protocol.',
     snapshotId: 'qwen3-tts-instruct-flash-realtime-2026-01-22',
     supportedRegions: ['beijing', 'singapore'],
-    compatibleVoiceIds: ['Cherry'],
   },
 ] as const
 
