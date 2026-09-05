@@ -1,10 +1,15 @@
+import type { QwenAudioRealtimeAsrModelId } from '@proj-airi/stage-ui/libs/providers/qwen-audio-realtime-models'
+
 import process from 'node:process'
 
 import QwenWebSocket from 'crossws/websocket'
 
 import { errorMessageFrom } from '@moeru/std'
+import {
+  QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL,
+} from '@proj-airi/stage-ui/libs/providers/qwen-audio-realtime-models'
 
-export const QWEN_AUDIO_REALTIME_ASR_MODEL = 'qwen-audio-3.0-asr-flash-streaming'
+export const QWEN_AUDIO_REALTIME_ASR_MODEL = QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL
 export const QWEN_ASR_SAMPLE_RATE = 16_000
 export const MAX_PRESTART_BUFFER_BYTES = 256 * 1024
 const MAX_ERROR_DETAIL_LENGTH = 240
@@ -84,7 +89,7 @@ export interface QwenRunTaskFrame {
   payload: {
     function: 'recognition'
     input: Record<string, never>
-    model: typeof QWEN_AUDIO_REALTIME_ASR_MODEL
+    model: QwenAudioRealtimeAsrModelId
     parameters: {
       format: 'pcm'
       language_hints?: Array<Exclude<QwenAudioRealtimeAsrLanguage, 'auto'>>
@@ -106,7 +111,14 @@ export interface QwenFinishTaskFrame {
   }
 }
 
-export function buildQwenRunTaskFrame(taskId: string, language: QwenAudioRealtimeAsrLanguage = 'auto'): QwenRunTaskFrame {
+export function buildQwenRunTaskFrame(
+  taskId: string,
+  modelOrLanguage: QwenAudioRealtimeAsrModelId | QwenAudioRealtimeAsrLanguage = 'auto',
+  requestedLanguage: QwenAudioRealtimeAsrLanguage = 'auto',
+): QwenRunTaskFrame {
+  const isLegacyLanguage = modelOrLanguage === 'auto' || modelOrLanguage === 'zh' || modelOrLanguage === 'en'
+  const model = isLegacyLanguage ? QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL : modelOrLanguage
+  const language = isLegacyLanguage ? modelOrLanguage : requestedLanguage
   const languageHints = language === 'auto' ? undefined : [language]
   return {
     header: { action: 'run-task', streaming: 'duplex', task_id: taskId },
@@ -114,7 +126,7 @@ export function buildQwenRunTaskFrame(taskId: string, language: QwenAudioRealtim
       task_group: 'audio',
       task: 'asr',
       function: 'recognition',
-      model: QWEN_AUDIO_REALTIME_ASR_MODEL,
+      model,
       parameters: {
         format: 'pcm',
         ...(languageHints ? { language_hints: languageHints } : {}),
@@ -359,6 +371,7 @@ export class QwenAudioRealtimeAsrSession {
     private readonly callbacks: QwenAsrSessionCallbacks,
     private readonly socketFactory: QwenAudioRealtimeSocketFactory = createQwenAudioRealtimeSocket,
     now: () => number = () => performance.now(),
+    private readonly model: QwenAudioRealtimeAsrModelId = QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL,
   ) {
     this.endpoint = buildQwenAudioRealtimeEndpoint(config.region, config.workspaceId)
     this.taskId = sessionId
@@ -458,7 +471,7 @@ export class QwenAudioRealtimeAsrSession {
     if (this.state !== 'connecting')
       return
     this.telemetry.t2 = this.now()
-    this.socket?.send(JSON.stringify(buildQwenRunTaskFrame(this.taskId, this.language)))
+    this.socket?.send(JSON.stringify(buildQwenRunTaskFrame(this.taskId, this.model, this.language)))
   }
 
   private async handleMessage(message: unknown) {

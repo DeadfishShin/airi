@@ -4,6 +4,7 @@ import { createContext, defineInvoke } from '@moeru/eventa'
 import { createContext as createElectronMainContext } from '@moeru/eventa/adapters/electron/main'
 import { createContext as createElectronRendererContext } from '@moeru/eventa/adapters/electron/renderer'
 import {
+  QWEN_AUDIO_REALTIME_ASR_MODEL,
   qwenAudioRealtimeAudioAppend,
   qwenAudioRealtimeSessionCancel,
   qwenAudioRealtimeSessionError,
@@ -149,6 +150,7 @@ describe('qwen Audio realtime ASR main service lifecycle', () => {
 
     await start({ language: 'auto', sessionId: 'renderer-session' })
     socket.emit('open')
+    expect(JSON.parse(socket.sent[0] as string).payload.model).toBe(QWEN_AUDIO_REALTIME_ASR_MODEL)
     socket.emit('message', JSON.stringify({
       header: { event: 'task-started', task_id: 'renderer-session' },
       payload: {},
@@ -224,6 +226,47 @@ describe('qwen Audio realtime ASR main service lifecycle', () => {
     })).rejects.toThrow('websocket_error')
     expect(errors[0]?.code).toBe('websocket_error')
     expect(errors[0]?.message).toContain('handshake failed')
+
+    await service.dispose()
+  })
+
+  it('propagates the selected allowlisted model into the main-process run-task frame', async () => {
+    const context = createContext()
+    const socket = new FakeSocket()
+    const service = createQwenAudioRealtimeAsrService({
+      context: context as never,
+      environment: runtimeEnvironment,
+      socketFactory: () => socket,
+    })
+    const start = defineInvoke(context, qwenAudioRealtimeSessionStart)
+
+    await start({ language: 'zh', model: QWEN_AUDIO_REALTIME_ASR_MODEL, sessionId: 'selected-model-session' })
+    socket.emit('open')
+
+    expect(JSON.parse(socket.sent[0] as string).payload).toMatchObject({
+      model: QWEN_AUDIO_REALTIME_ASR_MODEL,
+      parameters: { language_hints: ['zh'] },
+    })
+
+    await service.dispose()
+  })
+
+  it('rejects an unsupported model before the provider socket is created', async () => {
+    const context = createContext()
+    const socketFactory = vi.fn(() => new FakeSocket())
+    const service = createQwenAudioRealtimeAsrService({
+      context: context as never,
+      environment: runtimeEnvironment,
+      socketFactory,
+    })
+    const start = defineInvoke(context, qwenAudioRealtimeSessionStart)
+
+    await expect(start({
+      language: 'auto',
+      model: 'qwen3-asr-flash-realtime' as never,
+      sessionId: 'unsupported-model-session',
+    })).rejects.toThrow('Unsupported Qwen Audio realtime ASR model.')
+    expect(socketFactory).not.toHaveBeenCalled()
 
     await service.dispose()
   })
