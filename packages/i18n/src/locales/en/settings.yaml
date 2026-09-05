@@ -1552,9 +1552,9 @@ pages:
         title: Qwen Audio realtime ASR
         description: Alibaba Cloud Model Studio realtime speech recognition canary.
         environment: >-
-          This canary reads DASHSCOPE_API_KEY, DASHSCOPE_WORKSPACE_ID, and
-          DASHSCOPE_REGION from the Electron main process environment. It does
-          not store credentials in AIRI settings.
+          Configure the shared Qwen PAYG profile in AIRI settings. The API key
+          is stored by the Electron main process secure store and is never
+          displayed back to the renderer.
         fields:
           language:
             label: ASR language
@@ -1568,8 +1568,9 @@ pages:
         title: Qwen3 realtime TTS
         description: Alibaba Cloud Model Studio realtime text-to-speech canary.
         environment: >-
-          This canary reads its credentials from the Electron main process
-          environment and does not store them in AIRI settings.
+          Uses the shared Qwen PAYG profile configured in AIRI settings. The
+          API key is stored by the Electron main process secure store and is
+          never displayed back to the renderer.
         catalogUnavailable: The static canary catalog could not be refreshed; the supported defaults remain available.
         fields:
           model:
