@@ -119,6 +119,12 @@ export default defineConfig({
           'uiohook-napi',
           '@xsai-apple-speech/transcription-native',
         ],
+        // Stage UI is a private workspace source package whose exports point to
+        // TypeScript files. Bundle its main-process imports so packaged Electron
+        // never resolves those files from node_modules at runtime.
+        exclude: [
+          '@proj-airi/stage-ui',
+        ],
       },
     },
     plugins: [
