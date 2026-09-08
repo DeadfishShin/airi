@@ -13,12 +13,26 @@ function createStore(encryptionAvailable = true) {
   const root = mkdtempSync(join(tmpdir(), 'airi-qwen-payg-'))
   roots.push(root)
   const filePath = join(root, 'qwen-dashscope-payg-credential.json')
-  const secureStorage = {
-    isEncryptionAvailable: () => encryptionAvailable,
-    encryptString: (value: string) => Buffer.from(`encrypted:${value}`, 'utf8'),
-    decryptString: (value: Buffer) => value.toString('utf8').replace(/^encrypted:/, ''),
+  const calls = {
+    isEncryptionAvailable: 0,
+    encryptString: 0,
+    decryptString: 0,
   }
-  return { filePath, secureStorage, store: createDashScopePaygCredentialStore({ filePath, secureStorage }) }
+  const secureStorage = {
+    isEncryptionAvailable: () => {
+      calls.isEncryptionAvailable++
+      return encryptionAvailable
+    },
+    encryptString: (value: string) => {
+      calls.encryptString++
+      return Buffer.from(`encrypted:${value}`, 'utf8')
+    },
+    decryptString: (value: Buffer) => {
+      calls.decryptString++
+      return value.toString('utf8').replace(/^encrypted:/, '')
+    },
+  }
+  return { calls, filePath, secureStorage, store: createDashScopePaygCredentialStore({ filePath, secureStorage }) }
 }
 
 afterEach(() => {
@@ -30,6 +44,27 @@ afterEach(() => {
 })
 
 describe('qwen DashScope PAYG credential store', () => {
+  it('does not access secure storage for an empty public profile', () => {
+    const { calls, store } = createStore()
+
+    expect(store.getPublicProfile()).toEqual({
+      hasApiKey: false,
+      workspaceId: '',
+      workspaceIdValid: false,
+      region: null,
+      regionConfigured: false,
+      ready: false,
+    })
+    expect(calls).toEqual({ isEncryptionAvailable: 0, encryptString: 0, decryptString: 0 })
+  })
+
+  it('does not access secure storage for an empty runtime profile', () => {
+    const { calls, store } = createStore()
+
+    expect(() => store.getRuntimeProfile()).toThrow('Qwen DashScope PAYG credential is not configured.')
+    expect(calls).toEqual({ isEncryptionAvailable: 0, encryptString: 0, decryptString: 0 })
+  })
+
   it('saves a shared profile without putting the API key in the persisted JSON', () => {
     const { filePath, store } = createStore()
 
@@ -66,12 +101,15 @@ describe('qwen DashScope PAYG credential store', () => {
   })
 
   it('restores the encrypted profile after restart and exposes only public fields', () => {
-    const { filePath, secureStorage, store } = createStore()
+    const { calls, filePath, secureStorage, store } = createStore()
     store.save({ apiKey: 'unit-test-secret', workspaceId: 'saved-workspace', region: 'singapore' })
     const restarted = createDashScopePaygCredentialStore({ filePath, secureStorage })
+    calls.isEncryptionAvailable = 0
+    calls.decryptString = 0
 
     expect(restarted.getRuntimeProfile()).toEqual({ apiKey: 'unit-test-secret', workspaceId: 'saved-workspace', region: 'singapore' })
-    expect(restarted.getPublicProfile()).toEqual({
+    const publicProfile = restarted.getPublicProfile()
+    expect(publicProfile).toEqual({
       hasApiKey: true,
       workspaceId: 'saved-workspace',
       workspaceIdValid: true,
@@ -79,7 +117,9 @@ describe('qwen DashScope PAYG credential store', () => {
       regionConfigured: true,
       ready: true,
     })
-    expect(JSON.stringify(restarted.getPublicProfile())).not.toContain('unit-test-secret')
+    expect(calls.isEncryptionAvailable).toBe(2)
+    expect(calls.decryptString).toBe(2)
+    expect(JSON.stringify(publicProfile)).not.toContain('unit-test-secret')
   })
 
   it('does not return backend error details when ciphertext decryption fails', () => {
@@ -123,11 +163,15 @@ describe('qwen DashScope PAYG credential store', () => {
   })
 
   it('fails closed when platform encryption is unavailable', () => {
-    const { store } = createStore(false)
+    const { filePath, secureStorage, store } = createStore()
+    store.save({ apiKey: 'unit-test-secret', workspaceId: 'workspace-test', region: 'beijing' })
+    const unavailableStore = createDashScopePaygCredentialStore({
+      filePath,
+      secureStorage: { ...secureStorage, isEncryptionAvailable: () => false },
+    })
 
-    expect(store.getPublicProfile().ready).toBe(false)
-    expect(() => store.save({ apiKey: 'unit-test-secret', workspaceId: 'workspace-test', region: 'beijing' })).toThrow('secure storage is unavailable')
-    expect(() => store.getRuntimeProfile()).toThrow('secure storage is unavailable')
+    expect(unavailableStore.getPublicProfile().ready).toBe(false)
+    expect(() => unavailableStore.getRuntimeProfile()).toThrow('secure storage is unavailable')
   })
 
   it('does not expose a corrupt ciphertext as a configured public profile', () => {
