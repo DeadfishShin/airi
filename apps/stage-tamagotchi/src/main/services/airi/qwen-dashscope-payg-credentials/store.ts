@@ -115,11 +115,11 @@ export function createDashScopePaygCredentialStore(options: DashScopePaygCredent
   }
 
   const publicProfile = (): QwenDashScopePaygPublicProfile => {
-    if (!secureStorage.isEncryptionAvailable())
-      return emptyPublicProfile()
-
     const persisted = readPersisted()
     if (!persisted)
+      return emptyPublicProfile()
+
+    if (!secureStorage.isEncryptionAvailable())
       return emptyPublicProfile()
 
     // Validate the ciphertext without returning its plaintext to the renderer.
@@ -140,12 +140,12 @@ export function createDashScopePaygCredentialStore(options: DashScopePaygCredent
   }
 
   const runtimeProfile = (): QwenDashScopePaygRuntimeProfile => {
-    if (!secureStorage.isEncryptionAvailable())
-      throw new Error('Qwen DashScope PAYG secure storage is unavailable.')
-
     const persisted = readPersisted()
     if (!persisted)
       throw new Error('Qwen DashScope PAYG credential is not configured.')
+
+    if (!secureStorage.isEncryptionAvailable())
+      throw new Error('Qwen DashScope PAYG secure storage is unavailable.')
 
     const apiKey = decryptPersistedApiKey(persisted, secureStorage)
     if (!apiKey || !isWorkspaceIdValid(persisted.workspaceId))
