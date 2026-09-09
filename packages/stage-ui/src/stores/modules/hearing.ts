@@ -20,6 +20,7 @@ import vadWorkletUrl from '../../workers/vad/process.worklet?worker&url'
 
 import { useAnalytics } from '../../composables/use-analytics'
 import { activeTurnSpan, startSpan } from '../../composables/use-io-tracer'
+import { createRemoteAsrOwnerSyncDiagnosticGate } from '../../libs/audio/remote-asr-owner-sync-gate'
 import { createVadStreamingSession } from '../../libs/audio/vad-streaming-session'
 import { OFFICIAL_TRANSCRIPTION_PROVIDER_ID } from '../../libs/providers'
 import { APPLE_SPEECH_TRANSCRIPTION_PROVIDER_ID, executeAppleSpeechStream } from '../../libs/providers/providers/apple-speech'
@@ -578,6 +579,7 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
   const providersStore = useProviderStore()
   const providerStore = useProviderConfigStore()
   const streamingConsumers = new StreamingTranscriptionConsumers()
+  const remoteAsrOwnerSyncGate = createRemoteAsrOwnerSyncDiagnosticGate()
   const streamingCallbacks = {
     onSentenceEnd: (delta: string) => streamingConsumers.emitSentenceEnd(delta),
     onSpeechEnd: (text: string) => streamingConsumers.emitSpeechEnd(text),
@@ -801,6 +803,7 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
       streamingVadSession.value = undefined
       vadSession.vad.dispose()
       await vadSession.lifecycle.dispose()
+      remoteAsrOwnerSyncGate.setRuntimeSnapshotProvider(undefined)
     }
 
     return await stopRealtimeTranscription(abort, disposeProviderId)
@@ -973,12 +976,13 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
       stop: async () => {
         await finishRealtimeTranscription()
       },
-      canStart: options.canStartRemoteAsr,
+      canStart: remoteAsrOwnerSyncGate.compose(options.canStartRemoteAsr),
       onError: (err) => {
         error.value = errorMessage(err)
         console.error('Error managing VAD streaming transcription:', error.value)
       },
     })
+    remoteAsrOwnerSyncGate.setRuntimeSnapshotProvider(() => lifecycle.snapshot())
     vadSession = {
       vad,
       lifecycle,

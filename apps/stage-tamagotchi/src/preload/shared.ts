@@ -1,13 +1,33 @@
 import type { ElectronWindow } from '@proj-airi/stage-shared'
+import type { RemoteAsrOwnerSyncDiagnosticBridge, RemoteAsrOwnerSyncDiagnosticControl, RemoteAsrOwnerSyncGateSnapshot } from '@proj-airi/stage-ui/libs/audio/remote-asr-owner-sync-gate'
 
 import type { LocalDuplexDiagnosticAPI } from '../shared/local-duplex-diagnostic'
 
 import { contextIsolated, env, platform } from 'node:process'
 
 import { electronAPI } from '@electron-toolkit/preload'
+import { REMOTE_ASR_OWNER_SYNC_DIAGNOSTIC_MODE_ENV } from '@proj-airi/stage-ui/libs/audio/remote-asr-owner-sync-gate'
 import { contextBridge, ipcRenderer } from 'electron'
 
 import { LOCAL_DUPLEX_DIAGNOSTIC_MODE_ENV, LOCAL_DUPLEX_DIAGNOSTIC_READY_CHANNEL } from '../shared/local-duplex-diagnostic'
+
+function createRemoteAsrOwnerSyncDiagnosticAPI(): RemoteAsrOwnerSyncDiagnosticBridge {
+  let control: RemoteAsrOwnerSyncDiagnosticControl | undefined
+
+  const api = {
+    enabled: true as const,
+    bind(nextControl: RemoteAsrOwnerSyncDiagnosticControl) {
+      control = nextControl
+    },
+    snapshot: (): RemoteAsrOwnerSyncGateSnapshot | undefined => control?.snapshot(),
+    close: (): RemoteAsrOwnerSyncGateSnapshot | undefined => control?.close(),
+    armOnce: (): RemoteAsrOwnerSyncGateSnapshot | undefined => control?.armOnce(),
+    bypass: (): RemoteAsrOwnerSyncGateSnapshot | undefined => control?.bypass(),
+    reset: (): RemoteAsrOwnerSyncGateSnapshot | undefined => control?.reset(),
+  }
+
+  return api
+}
 
 export function expose() {
   // TODO: once we refactored eventa to support window-namespaced contexts,
@@ -41,6 +61,16 @@ export function expose() {
     }
     else {
       window.airiLocalDuplexDiagnostic = diagnosticAPI
+    }
+  }
+
+  if (env[REMOTE_ASR_OWNER_SYNC_DIAGNOSTIC_MODE_ENV] === '1') {
+    const diagnosticAPI = createRemoteAsrOwnerSyncDiagnosticAPI()
+    if (contextIsolated) {
+      contextBridge.exposeInMainWorld('airiRemoteAsrOwnerSyncDiagnostic', diagnosticAPI)
+    }
+    else {
+      window.airiRemoteAsrOwnerSyncDiagnostic = diagnosticAPI
     }
   }
 }
