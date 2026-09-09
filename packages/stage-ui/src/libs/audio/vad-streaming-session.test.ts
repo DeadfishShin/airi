@@ -88,4 +88,74 @@ describe('createVadStreamingSession', () => {
 
     expect(start).toHaveBeenCalledTimes(1)
   })
+
+  it('does not retroactively start a denied segment after the gate is armed', async () => {
+    const start = vi.fn(async () => {})
+    const stop = vi.fn(async () => {})
+    let remoteAsrAllowed = false
+    const session = createVadStreamingSession({
+      start,
+      stop,
+      canStart: () => remoteAsrAllowed,
+    })
+
+    session.onSpeechStart()
+    await vi.waitFor(() => expect(session.snapshot().speechActive).toBe(true))
+    await vi.waitFor(() => expect(start).not.toHaveBeenCalled())
+
+    remoteAsrAllowed = true
+    expect(session.snapshot()).toMatchObject({ speechActive: true, providerSessionActive: false, segmentSequence: 1 })
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    expect(start).not.toHaveBeenCalled()
+
+    session.onSpeechEnd()
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    session.onSpeechStart()
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1))
+
+    expect(session.snapshot()).toMatchObject({ speechActive: true, providerSessionActive: true, segmentSequence: 2 })
+    session.onSpeechEnd()
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledTimes(1))
+  })
+
+  it('keeps a one-shot gate from allowing concurrent queued starts twice', async () => {
+    const start = vi.fn(async () => {})
+    const stop = vi.fn(async () => {})
+    let allowed = true
+    const session = createVadStreamingSession({
+      start,
+      stop,
+      canStart: () => {
+        const current = allowed
+        allowed = false
+        return current
+      },
+    })
+
+    session.onSpeechStart()
+    session.onSpeechStart()
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1))
+    expect(session.snapshot().segmentSequence).toBe(1)
+  })
+
+  it('does not start a provider after disposal while the one-shot gate is armed', async () => {
+    const start = vi.fn(async () => {})
+    const stop = vi.fn(async () => {})
+    let allowed = false
+    const session = createVadStreamingSession({
+      start,
+      stop,
+      canStart: () => allowed,
+    })
+
+    session.onSpeechStart()
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    allowed = true
+    await session.dispose()
+    session.onSpeechStart()
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+
+    expect(start).not.toHaveBeenCalled()
+    expect(session.snapshot()).toMatchObject({ disposed: true, providerSessionActive: false })
+  })
 })

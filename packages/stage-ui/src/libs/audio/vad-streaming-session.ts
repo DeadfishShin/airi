@@ -6,6 +6,13 @@ export interface VadStreamingSessionOptions {
   onError?: (error: unknown) => void
 }
 
+export interface VadStreamingSessionSnapshot {
+  disposed: boolean
+  speechActive: boolean
+  providerSessionActive: boolean
+  segmentSequence: number
+}
+
 /**
  * Serializes realtime transcription sessions from VAD speech boundaries.
  *
@@ -16,6 +23,7 @@ export function createVadStreamingSession(options: VadStreamingSessionOptions) {
   let disposed = false
   let speechActive = false
   let providerSessionActive = false
+  let segmentSequence = 0
   let lifecycle = Promise.resolve()
 
   function enqueue(operation: () => Promise<void>) {
@@ -30,6 +38,7 @@ export function createVadStreamingSession(options: VadStreamingSessionOptions) {
       return
 
     speechActive = true
+    segmentSequence += 1
     void enqueue(async () => {
       if (disposed || providerSessionActive)
         return
@@ -108,5 +117,11 @@ export function createVadStreamingSession(options: VadStreamingSessionOptions) {
     onSpeechStart,
     onSpeechEnd,
     dispose,
+    snapshot: (): VadStreamingSessionSnapshot => ({
+      disposed,
+      speechActive,
+      providerSessionActive,
+      segmentSequence,
+    }),
   }
 }
