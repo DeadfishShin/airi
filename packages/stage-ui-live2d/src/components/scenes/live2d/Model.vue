@@ -2,6 +2,7 @@
 import type { Application } from '@pixi/app'
 
 import type { PixiLive2DInternalModel } from '../../../composables/live2d'
+import type { Live2DCompatibilityProfile, Live2DLogicalParameter } from '../../../utils/live2d-compatibility'
 
 import { listenBeatSyncBeatSignal } from '@proj-airi/stage-shared/beat-sync'
 import { useTheme } from '@proj-airi/ui'
@@ -19,6 +20,7 @@ import {
   createLive2DMotionSpring,
   disableLive2DSdkBreath,
   useExpressionController,
+  useLive2DIdleEyeFocus,
   useLive2DMotionManagerUpdate,
   useMotionUpdatePluginAutoEyeBlink,
   useMotionUpdatePluginBeatSync,
@@ -32,6 +34,7 @@ import {
 import { useFitModel } from '../../../composables/live2d/fit-model'
 import { Emotion, EmotionNeutralMotionName } from '../../../constants/emotions'
 import { getLive2DMotionControlModelOffset, useL2dViewControl, useLive2DMotionControl, useLive2dParams } from '../../../stores'
+import { createLive2DCompatibilityProfile } from '../../../utils/live2d-compatibility'
 
 const props = withDefaults(defineProps<{
   modelSrc?: string
@@ -104,6 +107,7 @@ const pixiApp = toRef(() => props.app)
 const paused = toRef(() => props.paused)
 const focusAt = toRef(() => props.focusAt)
 const model = shallowRef<Live2DModel<PixiLive2DInternalModel>>()
+const compatibilityProfile = shallowRef<Live2DCompatibilityProfile>()
 const initialModelWidth = ref<number>(0)
 const initialModelHeight = ref<number>(0)
 const mouthOpenSize = computed(() => Math.max(0, Math.min(100, props.mouthOpenSize)))
@@ -244,6 +248,7 @@ async function performModelLoad() {
     // Dispose expression controller before destroying the old model
     expressionController.dispose()
     internalModelRef.value = undefined
+    compatibilityProfile.value = undefined
 
     try {
       pixiApp.value.stage.removeChild(model.value)
@@ -301,8 +306,16 @@ async function performModelLoad() {
     const internalModel = model.value.internalModel
     const coreModel = internalModel.coreModel
     const motionManager = internalModel.motionManager
+    const modelSettings = internalModel.settings as any
+    compatibilityProfile.value = createLive2DCompatibilityProfile({
+      coreModel,
+      groups: modelSettings?.groups ?? modelSettings?.Groups,
+      motionDefinitions: motionManager.definitions,
+      motionOverrides: motionMap.value,
+      modelId: props.modelId,
+    })
     disableLive2DSdkBreath(internalModel)
-    coreModel.setParameterValueById('ParamMouthOpenY', mouthOpenSize.value)
+    compatibilityProfile.value.setParameter(coreModel, 'mouthOpen', mouthOpenSize.value)
 
     availableMotions.value = Object
       .entries(motionManager.definitions)
@@ -341,14 +354,28 @@ async function performModelLoad() {
       }, 300)
     }
 
+    const idleMotion = compatibilityProfile.value.motionMap.idle
+    if (idleMotion && selectedMotionGroup === null && live2dIdleAnimationEnabled.value) {
+      setTimeout(() => {
+        currentMotion.value = { group: idleMotion.group, index: idleMotion.index }
+      }, 300)
+    }
+
     // Remove eye ball movements from idle motion group to prevent conflicts
     // This is too hacky
     // FIXME: it cannot blink if loading a model only have idle motion
-    if (motionManager.groups.idle) {
-      motionManager.motionGroups[motionManager.groups.idle]?.forEach((motion) => {
+    const idleMotionGroup = compatibilityProfile.value.motionMap.idle?.group
+    const idleGroupIndex = motionManager.groups.idle
+      ?? (idleMotionGroup !== undefined ? (motionManager.groups as Record<string, any>)[idleMotionGroup] : undefined)
+    if (idleGroupIndex !== undefined) {
+      const eyeBallIds = new Set([
+        compatibilityProfile.value.parameterId('eyeBallX'),
+        compatibilityProfile.value.parameterId('eyeBallY'),
+      ].filter(Boolean))
+      motionManager.motionGroups[idleGroupIndex]?.forEach((motion) => {
         motion._motionData.curves.forEach((curve: any) => {
         // TODO: After emotion mapper, stage editor, eye related parameters should be take cared to be dynamical instead of hardcoding
-          if (curve.id === 'ParamEyeBallX' || curve.id === 'ParamEyeBallY') {
+          if (eyeBallIds.has(curve.id)) {
             curve.id = `_${curve.id}`
           }
         })
@@ -359,6 +386,7 @@ async function performModelLoad() {
     const motionManagerUpdate = useLive2DMotionManagerUpdate({
       internalModel,
       motionManager,
+      compatibility: compatibilityProfile.value,
       modelParameters,
       live2dEyeTrackingEnabled,
       live2dEyeFocusSourceActive,
@@ -370,8 +398,8 @@ async function performModelLoad() {
     })
 
     motionManagerUpdate.register(useMotionUpdatePluginBeatSync(beatSync), 'pre')
-    motionManagerUpdate.register(useMotionUpdatePluginIdleDisable(), 'pre')
-    motionManagerUpdate.register(useMotionUpdatePluginIdleFocus(), 'post')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleDisable(useLive2DIdleEyeFocus(compatibilityProfile.value)), 'pre')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleFocus(useLive2DIdleEyeFocus(compatibilityProfile.value)), 'post')
     // Both run in 'final' stage (ignores handled state).
     // Expression first: sets desired parameter values (e.g. closed eyes = 0).
     // Blink second: reads post-expression eye values, Multiply-modulates on top.
@@ -409,28 +437,34 @@ async function performModelLoad() {
       }
     })
 
-    // Apply all stored parameters to the model
-    coreModel.setParameterValueById('ParamAngleX', modelParameters.value.angleX)
-    coreModel.setParameterValueById('ParamAngleY', modelParameters.value.angleY)
-    coreModel.setParameterValueById('ParamAngleZ', modelParameters.value.angleZ)
-    coreModel.setParameterValueById('ParamEyeLOpen', modelParameters.value.leftEyeOpen)
-    coreModel.setParameterValueById('ParamEyeROpen', modelParameters.value.rightEyeOpen)
-    coreModel.setParameterValueById('ParamEyeSmile', modelParameters.value.leftEyeSmile)
-    coreModel.setParameterValueById('ParamBrowLX', modelParameters.value.leftEyebrowLR)
-    coreModel.setParameterValueById('ParamBrowRX', modelParameters.value.rightEyebrowLR)
-    coreModel.setParameterValueById('ParamBrowLY', modelParameters.value.leftEyebrowY)
-    coreModel.setParameterValueById('ParamBrowRY', modelParameters.value.rightEyebrowY)
-    coreModel.setParameterValueById('ParamBrowLAngle', modelParameters.value.leftEyebrowAngle)
-    coreModel.setParameterValueById('ParamBrowRAngle', modelParameters.value.rightEyebrowAngle)
-    coreModel.setParameterValueById('ParamBrowLForm', modelParameters.value.leftEyebrowForm)
-    coreModel.setParameterValueById('ParamBrowRForm', modelParameters.value.rightEyebrowForm)
-    coreModel.setParameterValueById('ParamMouthOpenY', modelParameters.value.mouthOpen)
-    coreModel.setParameterValueById('ParamMouthForm', modelParameters.value.mouthForm)
-    coreModel.setParameterValueById('ParamCheek', modelParameters.value.cheek)
-    coreModel.setParameterValueById('ParamBodyAngleX', modelParameters.value.bodyAngleX)
-    coreModel.setParameterValueById('ParamBodyAngleY', modelParameters.value.bodyAngleY)
-    coreModel.setParameterValueById('ParamBodyAngleZ', modelParameters.value.bodyAngleZ)
-    coreModel.setParameterValueById('ParamBreath', modelParameters.value.breath)
+    // Apply all stored parameters through the resolved logical compatibility map.
+    const setLogical = (logical: Live2DLogicalParameter, value: number) => {
+      compatibilityProfile.value?.setParameter(coreModel, logical, value)
+    }
+    const setPhysical = (id: string, value: number) => {
+      compatibilityProfile.value?.setPhysicalParameter(coreModel, id, value)
+    }
+    setLogical('angleX', modelParameters.value.angleX)
+    setLogical('angleY', modelParameters.value.angleY)
+    setLogical('angleZ', modelParameters.value.angleZ)
+    setLogical('eyeLeftOpen', modelParameters.value.leftEyeOpen)
+    setLogical('eyeRightOpen', modelParameters.value.rightEyeOpen)
+    setPhysical('ParamEyeSmile', modelParameters.value.leftEyeSmile)
+    setPhysical('ParamBrowLX', modelParameters.value.leftEyebrowLR)
+    setPhysical('ParamBrowRX', modelParameters.value.rightEyebrowLR)
+    setPhysical('ParamBrowLY', modelParameters.value.leftEyebrowY)
+    setPhysical('ParamBrowRY', modelParameters.value.rightEyebrowY)
+    setPhysical('ParamBrowLAngle', modelParameters.value.leftEyebrowAngle)
+    setPhysical('ParamBrowRAngle', modelParameters.value.rightEyebrowAngle)
+    setPhysical('ParamBrowLForm', modelParameters.value.leftEyebrowForm)
+    setPhysical('ParamBrowRForm', modelParameters.value.rightEyebrowForm)
+    setLogical('mouthOpen', modelParameters.value.mouthOpen)
+    setLogical('mouthForm', modelParameters.value.mouthForm)
+    setPhysical('ParamCheek', modelParameters.value.cheek)
+    setLogical('bodyAngleX', modelParameters.value.bodyAngleX)
+    setLogical('bodyAngleY', modelParameters.value.bodyAngleY)
+    setLogical('bodyAngleZ', modelParameters.value.bodyAngleZ)
+    setLogical('breath', modelParameters.value.breath)
 
     // Save SDK manager references so they can be restored if expression is
     // toggled off at runtime.
@@ -512,13 +546,23 @@ async function setMotion(motionName: string, index?: number) {
     return
   }
 
-  console.info('Setting motion:', motionName, 'index:', index)
+  const resolvedMotion = compatibilityProfile.value?.resolveMotion(motionName, index)
+  const resolvedGroup = resolvedMotion?.group ?? motionName
+  const resolvedIndex = resolvedMotion?.index ?? index
+  const motionDefinitions = model.value.internalModel.motionManager.definitions
+  const hasDeclaredGroup = Object.hasOwn(motionDefinitions, resolvedGroup)
+  if (!resolvedMotion && !hasDeclaredGroup) {
+    console.warn('Cannot resolve Live2D motion:', motionName)
+    return
+  }
+
+  console.info('Setting motion:', resolvedGroup, 'index:', resolvedIndex)
   try {
-    await model.value.motion(motionName, index, MotionPriority.FORCE)
-    console.info('Motion started successfully:', motionName)
+    await model.value.motion(resolvedGroup, resolvedIndex, MotionPriority.FORCE)
+    console.info('Motion started successfully:', resolvedGroup)
   }
   catch (error) {
-    console.error('Failed to start motion:', motionName, error)
+    console.error('Failed to start motion:', resolvedGroup, error)
   }
 }
 
@@ -572,145 +616,99 @@ watch(currentMotion, value => setMotion(value.group, value.index))
 watch(paused, value => value ? pixiApp.value?.stop() : pixiApp.value?.start())
 
 // Watch and apply model parameters
+function setCurrentLogicalParameter(logical: Live2DLogicalParameter, value: number) {
+  const coreModel = model.value?.internalModel.coreModel
+  if (!coreModel)
+    return
+  compatibilityProfile.value?.setParameter(coreModel, logical, value)
+}
+
+function setCurrentPhysicalParameter(id: string, value: number) {
+  const coreModel = model.value?.internalModel.coreModel
+  if (!coreModel)
+    return
+  compatibilityProfile.value?.setPhysicalParameter(coreModel, id, value)
+}
+
 watch(() => modelParameters.value.angleX, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamAngleX', value)
-  }
+  setCurrentLogicalParameter('angleX', value)
 })
 
 watch(() => modelParameters.value.angleY, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamAngleY', value)
-  }
+  setCurrentLogicalParameter('angleY', value)
 })
 
 watch(() => modelParameters.value.angleZ, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamAngleZ', value)
-  }
+  setCurrentLogicalParameter('angleZ', value)
 })
 
 watch(() => modelParameters.value.leftEyeOpen, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamEyeLOpen', value)
-  }
+  setCurrentLogicalParameter('eyeLeftOpen', value)
 })
 
 watch(() => modelParameters.value.rightEyeOpen, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamEyeROpen', value)
-  }
+  setCurrentLogicalParameter('eyeRightOpen', value)
 })
 
 watch(() => modelParameters.value.mouthOpen, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamMouthOpenY', value)
-  }
+  setCurrentLogicalParameter('mouthOpen', value)
 })
 
 watch(() => modelParameters.value.mouthForm, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamMouthForm', value)
-  }
+  setCurrentLogicalParameter('mouthForm', value)
 })
 
 watch(() => modelParameters.value.cheek, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamCheek', value)
-  }
+  setCurrentPhysicalParameter('ParamCheek', value)
 })
 
 watch(() => modelParameters.value.bodyAngleX, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBodyAngleX', value)
-  }
+  setCurrentLogicalParameter('bodyAngleX', value)
 })
 
 watch(() => modelParameters.value.bodyAngleY, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBodyAngleY', value)
-  }
+  setCurrentLogicalParameter('bodyAngleY', value)
 })
 
 watch(() => modelParameters.value.bodyAngleZ, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBodyAngleZ', value)
-  }
+  setCurrentLogicalParameter('bodyAngleZ', value)
 })
 
 watch(() => modelParameters.value.breath, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBreath', value)
-  }
+  setCurrentLogicalParameter('breath', value)
 })
 
 // Watch eyebrow parameters
 watch(() => modelParameters.value.leftEyebrowLR, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowLX', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowLX', value)
 })
 
 watch(() => modelParameters.value.rightEyebrowLR, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowRX', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowRX', value)
 })
 
 watch(() => modelParameters.value.leftEyebrowY, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowLY', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowLY', value)
 })
 
 watch(() => modelParameters.value.rightEyebrowY, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowRY', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowRY', value)
 })
 
 watch(() => modelParameters.value.leftEyebrowAngle, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowLAngle', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowLAngle', value)
 })
 
 watch(() => modelParameters.value.rightEyebrowAngle, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowRAngle', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowRAngle', value)
 })
 
 watch(() => modelParameters.value.leftEyebrowForm, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowLForm', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowLForm', value)
 })
 
 watch(() => modelParameters.value.rightEyebrowForm, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowRForm', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowRForm', value)
 })
 
 // Watch for idle animation setting changes and stop motions if disabled
@@ -757,6 +755,18 @@ watch(focusAt, (value) => {
     return
 
   model.value.focus(value.x, value.y)
+
+  // pixi-live2d-display's focus helper targets the canonical Cubism IDs. Keep
+  // the same pointer-to-model coordinate semantics for models whose eye IDs
+  // are discovered through the compatibility profile instead.
+  if (compatibilityProfile.value?.capabilities.gazeTracking) {
+    const width = Math.max(1, model.value.width)
+    const height = Math.max(1, model.value.height)
+    const x = Math.max(-1, Math.min(1, (value.x - model.value.x) / (width / 2)))
+    const y = Math.max(-1, Math.min(1, (model.value.y - value.y) / (height / 2)))
+    compatibilityProfile.value.setParameter(model.value.internalModel.coreModel, 'eyeBallX', x)
+    compatibilityProfile.value.setParameter(model.value.internalModel.coreModel, 'eyeBallY', y)
+  }
 })
 
 onMounted(() => {
@@ -773,6 +783,7 @@ onUnmounted(() => {
   resizeAnimation?.pause()
   disposeShouldUpdateView?.()
   expressionController.dispose()
+  compatibilityProfile.value = undefined
 })
 
 function listMotionGroups() {

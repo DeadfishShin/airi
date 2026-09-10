@@ -1,0 +1,298 @@
+# AIRI Live2D Compatibility: macOS → Android Handoff
+
+## Scope and authority
+
+~~~text
+PROJECT=DeadfishShin/airi
+MACOS_SOURCE_PR=13
+MACOS_SOURCE_HEAD=30ca9068aa864ed79706b665154a24bc890edfca
+MACOS_SOURCE_TREE=bf6f12a7baebf40c7db45afc058d113514ab3771
+COMPATIBILITY_BRANCH=codex/macos-live2d-generic-compatibility-v1
+~~~
+
+This document is the Android reference for the Live2D compatibility work. The
+macOS source is a reference implementation, not an Android source tree. Android
+must first audit its own renderer, audio, lifecycle, storage, and conversation
+code before choosing integration points.
+
+~~~text
+PROJECT_TYPE=PERSONAL_PROJECT
+ANDROID_GOAL=复用 macOS Live2D 兼容经验，尽快完成 Android 端可靠实现
+PRIORITY=functionality + stability + maintainability
+COMMERCIAL_GRADE_SECURITY_ARCHITECTURE=NOT_REQUIRED
+OVERENGINEERING=AVOID
+~~~
+
+Do not turn this handoff into a generic renderer rewrite, a new provider
+framework, or an enterprise asset/security project.
+
+## Problem
+
+Third-party Cubism models do not necessarily use AIRI's default parameter IDs
+or motion-group conventions. A model may load successfully while gaze, blink,
+lip sync, body control, or idle motion silently does nothing.
+
+The confirmed legacy shape is:
+
+- Cubism model version 3;
+- all motions under the empty group "";
+- no Idle group;
+- a clear wait motion such as motions/00_Wait_01.motion3.json;
+- legacy IDs such as PARAM_EYE_BALL_X and PARAM_MOUTH_OPEN_Y;
+- EyeBlink and LipSync groups declaring the real parameter IDs.
+
+The compatibility layer adapts the model at runtime. It does not rewrite the
+user's ZIP, .moc3, motion files, or physics files.
+
+## Production flow
+
+The platform-neutral flow is:
+
+~~~text
+pointer / touch input
+→ local gaze/focus normalization
+→ logical Live2D capability
+→ resolved physical parameter ID
+
+microphone / local VAD
+→ speech segment / endpointing
+→ realtime ASR
+→ AIRI canonical conversation pipeline
+→ persona / memory / tools
+→ generation provider
+→ conversational TTS queue
+→ realtime TTS
+→ speaker playback
+~~~
+
+During assistant playback, local VAD remains active. A valid new speech
+segment cancels the old generation/TTS work, invalidates the old session/token,
+starts the new turn, and suppresses stale output. Keep a quiet tail and make
+consecutive interruptions safe.
+
+## Logical parameter compatibility
+
+The upper layers use logical names, never model-specific IDs:
+
+| AIRI logical capability | Modern ID | Legacy example |
+| --- | --- | --- |
+| angleX/Y/Z | ParamAngleX/Y/Z | PARAM_ANGLE_X/Y/Z |
+| bodyAngleX/Y/Z | ParamBodyAngleX/Y/Z | PARAM_BODY_ANGLE_X/Y/Z |
+| eyeBallX/Y | ParamEyeBallX/Y | PARAM_EYE_BALL_X/Y |
+| eyeLeftOpen/rightOpen | ParamEyeLOpen/ROpen | PARAM_EYE_L_OPEN/R_OPEN |
+| mouthOpen | ParamMouthOpenY | PARAM_MOUTH_OPEN_Y |
+| mouthForm | ParamMouthForm | model-dependent |
+| breath | ParamBreath | PARAM_BREATH |
+
+Resolution order:
+
+1. discover IDs from the live Cubism core model;
+2. use model-declared semantic metadata when available;
+3. try known aliases only when the alias actually exists;
+4. mark the capability unsupported when no physical ID exists.
+
+Do not mechanically transform ParamFoo into PARAM_FOO. A missing parameter is
+a degraded capability, not a model-load failure.
+
+EyeBlink metadata should identify the left/right open parameters. LipSync
+metadata should identify the mouth parameter. If a group declares several
+possible IDs, resolve by semantic side/name and actual existence; do not blindly
+write to an arbitrary absent ID.
+
+## Motion normalization
+
+Normalize motion groups and files into candidates for AIRI semantic motions:
+
+~~~text
+Idle / idle / IDLE       → idle
+wait / standby / normal  → idle candidate
+Happy                    → happy
+Anger / Angry            → angry
+Sad                      → sad
+Surprise                 → surprise
+Awkward                  → awkward
+Puzzle / Doubt           → low-confidence think candidate
+~~~
+
+The empty group is valid. A filename such as 00_Wait_01.motion3.json is a
+high-confidence idle candidate even when its group is empty. If there is no
+high-confidence candidate, leave idle unresolved and keep the existing manual
+motion selection path. Never select the first Anger/Cry motion as idle merely
+because it exists.
+
+Semantic mappings are candidates, not facts. Opaque filenames remain
+unresolved. Existing runtime motion selection and persistence remain the
+override path: settings/live2d/current-motion, settings/live2d/motion-map, and
+the selected runtime motion keys. A manual mapping must take precedence over a
+filename heuristic and should be keyed by model identity when Android
+introduces its persistence layer.
+
+## Model compatibility profile
+
+The macOS resolver produces a small profile containing:
+
+~~~text
+parameterMap
+  angleX, angleY, angleZ
+  bodyAngleX, bodyAngleY, bodyAngleZ
+  eyeBallX, eyeBallY
+  eyeLeftOpen, eyeRightOpen
+  mouthOpen, mouthForm, breath
+
+motionMap
+  idle, happy, sad, angry, think
+  surprise, awkward, question, curious
+
+capabilities
+  gazeTracking, blinking, lipSync
+  headMotion, bodyMotion, breath
+~~~
+
+Upper-level plugins call this profile. They do not need to know whether the
+model is modern or legacy. Physics remains model-native and continues through
+the Cubism runtime; this layer does not reimplement physics.
+
+## Qwen and voice lessons relevant to Android
+
+The accepted macOS speech authority is:
+
+~~~text
+ASR provider = qwen-audio-realtime-transcription
+ASR model    = qwen-audio-3.0-asr-flash-streaming
+TTS provider = qwen3-tts-realtime
+TTS model    = qwen3-tts-flash-realtime
+validated voice = Serena
+~~~
+
+For Android, use one shared Qwen PAYG profile for ASR and TTS, native secure
+storage, public readiness state, and runtime-only credential resolution. Do not
+store a secret long-term in ordinary SharedPreferences or a normal config
+file. Do not copy Electron safeStorage APIs literally.
+
+Provider voice ID is not the same thing as display label. The value sent to a
+provider must be the provider ID, not a translated or human-readable label.
+Serena has passed real macOS runtime validation.
+
+## Barge-in invariants
+
+Keep these invariants independent of Pixi or Electron:
+
+- microphone/VAD stays active while the assistant speaks;
+- a valid speech onset cancels the old generation and TTS;
+- session/token identity invalidates old work;
+- stale audio after cancellation or completion is discarded;
+- only one current conversational output is eligible for playback;
+- the quiet tail prevents immediate re-trigger loops.
+
+## Do not port literally
+
+DO_NOT_PORT_LITERALLY:
+
+- macOS TCC and launch attribution;
+- LaunchServices /usr/bin/open -n;
+- Electron safeStorage;
+- Electron IPC/Eventa plumbing;
+- APP_USER_DATA_PATH test profiles;
+- macOS bundle IDs and CDHashes;
+- macOS speaker/output implementation details;
+- the temporary owner-sync diagnostic seam unless Android tests genuinely need
+  an equivalent synchronization point;
+- Vue, Pinia, Pixi-specific component wiring;
+- browser localStorage as an Android persistence implementation.
+
+Port the architecture, lifecycle, invariants, capability degradation, and
+failure lessons. Bind them to Android's renderer, pointer/touch source,
+persistence, audio lifecycle, and cancellation primitives.
+
+## Android implementation order
+
+| Step | Goal | macOS reference | Android acceptance signal |
+| --- | --- | --- | --- |
+| A1 | Audit existing capture, VAD, AIRI chat, TTS, storage, and cancellation | Model.vue, stage conversation/audio owners | Current Android ownership map exists before edits |
+| A2 | Add shared Qwen PAYG configuration | Qwen secure profile and public readiness contract | One profile is visible to ASR and TTS without secret leakage |
+| A3 | Implement realtime Qwen ASR adapter | ASR provider/model adapter and segment lifecycle | One segment has start/partial/final/error/finish ownership |
+| A4 | Implement Qwen3 realtime TTS and catalog | TTS adapter, model catalog, voice ID catalog | Serena/provider ID is selected and audio deltas are lifecycle-owned |
+| A5 | Bind Android VAD → ASR → AIRI → TTS | canonical Stage flow | A real user turn reaches existing conversation and returns to TTS |
+| A6 | Add barge-in and stale-output cancellation | session/token invalidation and playback queue | Repeated interruptions do not play old audio |
+| A7 | Run real-device full-chain acceptance | Owner macOS runtime evidence | Owner hears one complete response and can interrupt it |
+
+Android must audit its own repository first. Do not cherry-pick the macOS
+branch wholesale.
+
+## Compact macOS source map
+
+| Capability | PR13 / compatibility source | Android concept |
+| --- | --- | --- |
+| Logical parameter and motion resolver | packages/stage-ui-live2d/src/utils/live2d-compatibility.ts | Runtime model profile |
+| Compatibility tests and synthetic fixtures | packages/stage-ui-live2d/src/utils/live2d-compatibility.test.ts | Modern/legacy/partial/ambiguous test fixtures |
+| Parameter application and model lifecycle | packages/stage-ui-live2d/src/components/scenes/live2d/Model.vue | Renderer model binder |
+| Motion plugins, blink, lip sync, breath, beat sync | packages/stage-ui-live2d/src/composables/live2d/motion-manager.ts | Frame/update control layer |
+| Idle eye focus and pointer-compatible gaze | packages/stage-ui-live2d/src/composables/live2d/animation.ts and eye-tracking.ts | Touch/pointer focus adapter |
+| Motion selection persistence | packages/stage-ui-live2d/src/stores/model-parameters.ts and packages/stage-ui/src/components/scenarios/settings/model-settings/live2d.vue | Model-identity mapping storage/UI |
+| Archive/model validation | packages/stage-ui-live2d/src/utils/live2d-validator.ts and live2d-zip-loader.ts | Android import validation |
+| Existing expression semantics | packages/stage-ui-live2d/src/composables/live2d/expression-controller.ts | Preserve existing expression ownership |
+
+## Synthetic fixtures and tests
+
+Use metadata-only fixtures; do not commit Aqua files. The minimum fixture set
+is:
+
+1. modern IDs and an Idle group;
+2. legacy PARAM_* IDs, EyeBlink, LipSync, and empty-group
+   00_Wait_01/emotion motions;
+3. a partial model without eye-ball or breath parameters;
+4. an opaque-motion model with no defensible idle candidate.
+
+The resolver tests must assert parameter IDs, capability flags, motion
+confidence, empty-group/index selection, safe unsupported writes, and manual
+override precedence.
+
+## Failure lessons
+
+1. A packaged identity and a development identity can have different
+   permissions and profiles.
+2. Mixing forced test userData with normal userData creates false persistence
+   failures.
+3. A live microphone track does not imply a VAD-positive speech segment.
+4. An observer missing an event is not proof that the product did not run.
+5. Provider voice IDs and display names must stay separate.
+6. Credential readiness and provider configuration are separate public states.
+7. Cancelled TTS sessions must suppress stale output.
+8. Diagnostic harnesses must not become production dependencies.
+9. Full-chain acceptance must include real-device audibility and interruption,
+   not only provider lifecycle telemetry.
+
+## Evidence and known limits
+
+Source and synthetic package tests cover modern, legacy, partial, and
+ambiguous models. The Owner's earlier macOS runtime acceptance covered real
+microphone speech, Qwen ASR, AIRI generation, DeepSeek V4 Flash, Serena
+playback, and barge-in. An instrumented observer previously produced a
+false-negative speech observation; it must not override Owner product evidence.
+
+The new compatibility behavior still requires Owner visual validation on the
+original, unmodified Aqua ZIP:
+
+~~~text
+OWNER_RUNTIME_REQUIRED=NEEDS_OWNER_RUNTIME_VALIDATION
+~~~
+
+Shortest validation:
+
+1. Build/run the candidate from this branch.
+2. Import the original Aqua ZIP without editing it.
+3. Confirm idle motion starts without manual ZIP repair.
+4. Move the pointer and confirm legacy eye-ball tracking.
+5. Trigger conversational TTS and confirm mouth movement.
+6. Trigger Happy, Angry, Sad, and Surprise semantics.
+7. Confirm physics/hair/clothing behavior remains intact.
+
+Known limitations:
+
+- a missing parameter cannot be invented;
+- a missing motion cannot be generated by mapping;
+- opaque motion filenames cannot be reliably assigned an emotion;
+- low-confidence mappings must remain manually correctable;
+- physics stays model-native;
+- visual quality and physics preservation cannot be truthfully marked PASS by
+  automated source tests alone.

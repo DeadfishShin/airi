@@ -28,6 +28,7 @@
     "./tools/expression-tools": "./src/tools/expression-tools.ts",
     "./utils/eye-motions": "./src/utils/eye-motions.ts",
     "./utils/live2d-preview": "./src/utils/live2d-preview.ts",
+    "./utils/live2d-compatibility": "./src/utils/live2d-compatibility.ts",
     "./utils/live2d-zip-loader": "./src/utils/live2d-zip-loader.ts",
     "./utils/live2d-opfs-registration": "./src/utils/live2d-opfs-registration.ts",
     "./utils/opfs-loader": "./src/utils/opfs-loader.ts"
