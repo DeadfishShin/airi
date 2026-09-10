@@ -9,6 +9,14 @@ import { computed } from 'vue'
 
 import { client } from '../../composables/api'
 import { getDefinedProvider } from '../../libs/providers'
+import {
+  clearDeepSeekCredential,
+  getDeepSeekCredentialProfile,
+  hasDeepSeekCredentialBridge,
+  migrateLegacyDeepSeekCredential as migrateLegacyDeepSeekCredentialValue,
+  saveDeepSeekCredential,
+  stripDeepSeekCredential,
+} from '../../libs/providers/deepseek-credential'
 import { inferenceServiceProvidersService as service } from '../../services/inference-service-providers'
 
 const PROVIDERS_QUERY_KEY = ['inference-service-providers']
@@ -111,6 +119,50 @@ export const useProviderConfigStore = defineStore('provider-config', () => {
     ?? removeProviderMutation.error.value
     ?? updateProviderMutation.error.value)
 
+  let deepSeekMigration: Promise<void> | undefined
+
+  function removeLegacyDeepSeekCredential() {
+    const provider = providers.value.deepseek
+    if (!provider || !Object.hasOwn(provider.config, 'apiKey'))
+      return
+
+    providers.value.deepseek = {
+      ...provider,
+      config: stripDeepSeekCredential(provider.config),
+    }
+  }
+
+  async function migrateLegacyDeepSeekCredential() {
+    if (!hasDeepSeekCredentialBridge())
+      return
+
+    const legacyApiKey = providers.value.deepseek?.config.apiKey
+    if (typeof legacyApiKey !== 'string' || !legacyApiKey.trim())
+      return
+
+    if (deepSeekMigration)
+      return deepSeekMigration
+
+    deepSeekMigration = (async () => {
+      await migrateLegacyDeepSeekCredentialValue({
+        legacyApiKey,
+        getProfile: getDeepSeekCredentialProfile,
+        save: saveDeepSeekCredential,
+        removeLegacy: removeLegacyDeepSeekCredential,
+      })
+    })().catch(() => {
+      // Keep the legacy value intact if safeStorage or IPC is unavailable.
+    }).finally(() => {
+      deepSeekMigration = undefined
+    })
+
+    return deepSeekMigration
+  }
+
+  // Upgrade legacy renderer profiles opportunistically. The plaintext entry is
+  // removed only after the main process confirms secure persistence.
+  void migrateLegacyDeepSeekCredential()
+
   function getProvider(providerId: string) {
     return providers.value[providerId]
   }
@@ -175,7 +227,15 @@ export const useProviderConfigStore = defineStore('provider-config', () => {
   }
 
   async function addProvider(definitionId: string, initialConfig: Record<string, unknown> = {}) {
-    const provider = service.buildLocal(definitionId, initialConfig)
+    let persistedInitialConfig = initialConfig
+    if (definitionId === 'deepseek' && hasDeepSeekCredentialBridge()) {
+      const apiKey = typeof initialConfig.apiKey === 'string' ? initialConfig.apiKey.trim() : ''
+      if (apiKey)
+        await saveDeepSeekCredential(apiKey)
+      persistedInitialConfig = stripDeepSeekCredential(initialConfig)
+    }
+
+    const provider = service.buildLocal(definitionId, persistedInitialConfig)
     providers.value[provider.id] = provider
     markProviderAdded(provider.id)
 
@@ -197,6 +257,9 @@ export const useProviderConfigStore = defineStore('provider-config', () => {
     if (!providers.value[providerId])
       return
 
+    if (providerId === 'deepseek' && hasDeepSeekCredentialBridge())
+      await clearDeepSeekCredential()
+
     delete providers.value[providerId]
     unmarkProviderAdded(providerId)
 
@@ -213,15 +276,30 @@ export const useProviderConfigStore = defineStore('provider-config', () => {
     if (!provider)
       return
 
+    let persistedConfig = { ...config }
+    if (providerId === 'deepseek' && hasDeepSeekCredentialBridge()) {
+      const apiKey = typeof persistedConfig.apiKey === 'string' ? persistedConfig.apiKey.trim() : ''
+      if (apiKey) {
+        await saveDeepSeekCredential(apiKey)
+      }
+      else {
+        await migrateLegacyDeepSeekCredential()
+        const profile = await getDeepSeekCredentialProfile()
+        if (!profile?.ready)
+          throw new Error('DeepSeek API key is missing.')
+      }
+      persistedConfig = stripDeepSeekCredential(persistedConfig)
+    }
+
     const localProvider = {
       ...provider,
-      config: { ...config },
+      config: persistedConfig,
       status,
     }
     providers.value[providerId] = localProvider
 
     try {
-      const remote = await updateProviderMutation.mutateAsync({ providerId, config, status })
+      const remote = await updateProviderMutation.mutateAsync({ providerId, config: persistedConfig, status })
       providers.value[remote.id] = remote
       return remote
     }
@@ -256,6 +334,7 @@ export const useProviderConfigStore = defineStore('provider-config', () => {
     addProvider,
     removeProvider,
     updateProviderConfig,
+    migrateLegacyDeepSeekCredential,
     resetProviders,
   }
 }, {

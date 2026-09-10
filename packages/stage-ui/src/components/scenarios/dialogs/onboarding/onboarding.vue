@@ -19,6 +19,7 @@ import StepProviderSelection from './step-provider-selection.vue'
 import StepWelcome from './step-welcome.vue'
 
 import { useAnalytics } from '../../../../composables/use-analytics'
+import { hasDeepSeekCredentialBridge, saveDeepSeekCredential } from '../../../../libs/providers/deepseek-credential'
 import { useConsciousnessStore } from '../../../../stores/modules/consciousness'
 import { useProviderConfigStore } from '../../../../stores/providers/config'
 import { useProviderStore } from '../../../../stores/providers/provider'
@@ -91,7 +92,7 @@ async function saveProviderConfiguration(data: ProviderConfigData) {
 
   const config: Record<string, unknown> = {}
 
-  if (data.apiKey)
+  if (data.apiKey && selectedProvider.value.id !== 'deepseek')
     config.apiKey = data.apiKey.trim()
   if (data.baseUrl)
     config.baseUrl = data.baseUrl.trim()
@@ -103,6 +104,9 @@ async function saveProviderConfiguration(data: ProviderConfigData) {
         config[key] = value.trim()
     }
   }
+
+  if (selectedProvider.value.id === 'deepseek' && data.apiKey && hasDeepSeekCredentialBridge())
+    await saveDeepSeekCredential(data.apiKey.trim())
 
   providers.value[selectedProvider.value.id] = {
     ...providers.value[selectedProvider.value.id],

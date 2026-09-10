@@ -32,6 +32,7 @@ import { setElectronMainDirname } from './libs/electron/location'
 import { createI18n } from './libs/i18n'
 import { setupAppleSpeechTranscriptionService } from './services/airi/apple-speech-transcription'
 import { setupServerChannel } from './services/airi/channel-server'
+import { setupDeepSeekCredentials } from './services/airi/deepseek-credentials'
 import { setupGodotStageManager } from './services/airi/godot-stage'
 import { setupBuiltInServer } from './services/airi/http-server'
 import { setupMcpStdioManager } from './services/airi/mcp-servers'
@@ -237,6 +238,11 @@ app.whenReady().then(async () => {
     build: ({ dependsOn }) => setupDashScopePaygCredentials({ lifecycle: dependsOn.lifecycle }),
   })
 
+  const deepSeekCredentials = injeca.provide('services:deepseek-credentials', {
+    dependsOn: { lifecycle },
+    build: ({ dependsOn }) => setupDeepSeekCredentials({ lifecycle: dependsOn.lifecycle }),
+  })
+
   const qwenAudioRealtimeAsr = injeca.provide('modules:qwen-audio-realtime-asr', {
     dependsOn: { lifecycle, qwenDashScopePaygCredentials },
     build: ({ dependsOn }) => setupQwenAudioRealtimeAsr({
@@ -360,7 +366,7 @@ app.whenReady().then(async () => {
   }
 
   injeca.invoke({
-    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioTtsTokenPlan, qwen3TtsRealtime, realtimeVoiceE2eTelemetry },
+    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioTtsTokenPlan, qwen3TtsRealtime, realtimeVoiceE2eTelemetry, deepSeekCredentials },
     callback: async (deps) => {
       const { context } = createContext(ipcMain)
       await setupArtistryBridge({
