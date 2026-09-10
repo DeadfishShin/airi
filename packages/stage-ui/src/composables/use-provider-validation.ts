@@ -10,6 +10,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
+import { clearDeepSeekCredential, hasDeepSeekCredentialBridge } from '../libs/providers/deepseek-credential'
 import { selectProviderMetadata } from '../libs/providers/metadata'
 import { useProviderConfigStore } from '../stores/providers/config'
 import { useProviderStore } from '../stores/providers/provider'
@@ -48,10 +49,15 @@ export function useProviderValidation(providerId: string) {
 
   // --- Internal Computed Properties for Credentials ---
   const credentials = computed(() => providers.value[providerId] || {})
+  const deepSeekApiKeyDraft = ref('')
 
   const apiKey = computed({
-    get: () => credentials.value.apiKey || '',
+    get: () => providerId === 'deepseek' ? deepSeekApiKeyDraft.value : credentials.value.apiKey || '',
     set: (value) => {
+      if (providerId === 'deepseek') {
+        deepSeekApiKeyDraft.value = value
+        return
+      }
       if (!providers.value[providerId])
         providers.value[providerId] = {}
       providers.value[providerId].apiKey = value
@@ -107,8 +113,14 @@ export function useProviderValidation(providerId: string) {
    */
   function configToValidate(): Record<string, any> {
     const config = cloneDeep(credentials.value)
-    if (config.apiKey)
+    if (providerId === 'deepseek') {
+      delete config.apiKey
+      if (deepSeekApiKeyDraft.value.trim())
+        config.apiKey = deepSeekApiKeyDraft.value.trim()
+    }
+    else if (config.apiKey) {
       config.apiKey = config.apiKey.trim()
+    }
     if (config.baseUrl)
       config.baseUrl = config.baseUrl.trim()
 
@@ -135,6 +147,12 @@ export function useProviderValidation(providerId: string) {
 
       if (!isValid.value) {
         finalValidationMessage = validationResult.reason
+      }
+
+      if (isValid.value && providerId === 'deepseek') {
+        await providerStore.updateProviderConfig(providerId, configToValidate(), 'configured')
+        await providersStore.disposeProviderInstance(providerId)
+        deepSeekApiKeyDraft.value = ''
       }
 
       // When a provider validates successfully on its settings page,
@@ -208,7 +226,7 @@ export function useProviderValidation(providerId: string) {
 
   async function shouldValidateConfiguration() {
     const definition = providersStore.getProviderDefinition(providerId)
-    return await definition.validationRequiredWhen?.(credentials.value) ?? false
+    return await definition.validationRequiredWhen?.(configToValidate()) ?? false
   }
 
   const debouncedValidateConfiguration = useDebounceFn(async () => {
@@ -235,15 +253,20 @@ export function useProviderValidation(providerId: string) {
   // validation, which would otherwise loop with markProviderAdded().
   const credentialsSignature = computed(() => JSON.stringify(credentials.value))
 
-  watch(credentialsSignature, () => {
+  watch([credentialsSignature, apiKey], () => {
     debouncedValidateConfiguration()
     // Reset manual test state when credentials actually change
     manualTestPassed.value = false
     manualTestMessage.value = ''
   })
 
-  function handleResetSettings() {
+  async function handleResetSettings() {
     const defaultOptions = providerMetadata.value?.defaultConfig ?? {}
+    deepSeekApiKeyDraft.value = ''
+    if (providerId === 'deepseek' && hasDeepSeekCredentialBridge()) {
+      await clearDeepSeekCredential()
+      await providersStore.disposeProviderInstance(providerId)
+    }
     providers.value[providerId] = { ...defaultOptions }
     isValid.value = false
     validationMessage.value = ''
@@ -252,7 +275,11 @@ export function useProviderValidation(providerId: string) {
     manualTestMessage.value = ''
   }
 
-  function forceValid() {
+  async function forceValid() {
+    if (providerId === 'deepseek') {
+      await providerStore.updateProviderConfig(providerId, configToValidate(), 'bypassed')
+      deepSeekApiKeyDraft.value = ''
+    }
     isValid.value = true
     validationMessage.value = ''
     manualTestPassed.value = true

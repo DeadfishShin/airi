@@ -15,6 +15,7 @@ import {
   qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_MODEL_CATALOG } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -138,6 +139,44 @@ function serverMessage(type: string, payload: Record<string, unknown> = {}) {
 }
 
 describe('qwen3 realtime TTS main service', () => {
+  it('validates the selected model before socket creation and propagates it to the endpoint', async () => {
+    const context = createContext()
+    const sockets: Array<{ endpoint: string, socket: FakeSocket }> = []
+    const service = createQwen3TtsRealtimeService({
+      context: context as never,
+      environment: runtimeEnvironment,
+      socketFactory: (endpoint) => {
+        const socket = new FakeSocket()
+        sockets.push({ endpoint, socket })
+        return socket
+      },
+    })
+    const start = defineInvoke(context, qwen3TtsRealtimeSessionStart)
+    const selectedModel = QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id
+
+    await start({ sessionId: 'selected-model-session', model: selectedModel, voice: 'Serena', languageType: 'Chinese', mode: 'server_commit' })
+    expect(sockets).toHaveLength(1)
+    expect(sockets[0].endpoint).toContain(`?model=${selectedModel}`)
+    sockets[0].socket.emit('open')
+    sockets[0].socket.emit('message', serverMessage('session.created', { session: { id: 'selected-model-server-session' } }))
+    await settleEvents()
+    expect(JSON.parse(sockets[0].socket.sent[0])).toMatchObject({ type: 'session.update', session: { voice: 'Serena' } })
+
+    await start({ sessionId: 'selected-provider-voice-session', model: QWEN3_TTS_REALTIME_MODEL_CATALOG[0].id, voice: 'Jada', languageType: 'Chinese', mode: 'server_commit' })
+    expect(sockets).toHaveLength(2)
+    sockets[1].socket.emit('open')
+    sockets[1].socket.emit('message', serverMessage('session.created', { session: { id: 'selected-provider-voice-server-session' } }))
+    await settleEvents()
+    expect(JSON.parse(sockets[1].socket.sent[0])).toMatchObject({ type: 'session.update', session: { voice: 'Jada' } })
+
+    await expect(start({ sessionId: 'unsupported-model-session', model: 'qwen3-tts-vd-realtime' as never, voice: 'Cherry', languageType: 'Chinese', mode: 'server_commit' })).rejects.toThrow('model is unsupported')
+    await expect(start({ sessionId: 'unsupported-voice-session', model: selectedModel, voice: 'unknown-voice', languageType: 'Chinese', mode: 'server_commit' })).rejects.toThrow('voice is unsupported')
+    await expect(start({ sessionId: 'incompatible-voice-session', model: selectedModel, voice: 'Jennifer', languageType: 'Chinese', mode: 'server_commit' })).rejects.toThrow('voice is unsupported')
+    await expect(start({ sessionId: 'display-name-voice-session', model: QWEN3_TTS_REALTIME_MODEL_CATALOG[0].id, voice: 'Shanghai - Jada' as never, languageType: 'Chinese', mode: 'server_commit' })).rejects.toThrow('voice is unsupported')
+    expect(sockets).toHaveLength(2)
+    await service.dispose()
+  })
+
   it('routes ready, PCM audio, response, finish, and error events only to the originating renderer', async () => {
     const ipc = createFakeElectronIpc()
     const otherIpc = createFakeElectronIpc(ipc.main)

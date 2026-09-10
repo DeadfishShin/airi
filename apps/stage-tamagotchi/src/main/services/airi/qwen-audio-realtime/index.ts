@@ -1,7 +1,9 @@
 import type { Eventa } from '@moeru/eventa'
 import type { createContext, ElectronMainEmitOptions } from '@moeru/eventa/adapters/electron/main'
+import type { QwenAudioRealtimeAsrModelId } from '@proj-airi/stage-ui/libs/providers/qwen-audio-realtime-models'
 import type { Lifecycle } from 'injeca'
 
+import type { QwenDashScopePaygRuntimeProfile } from '../qwen-dashscope-payg-credentials/store'
 import type { QwenAsrTelemetry, QwenAudioRealtimeSocketFactory } from './protocol'
 
 import {
@@ -19,6 +21,10 @@ import {
   qwenAudioRealtimeTranscriptionFinal,
   qwenAudioRealtimeTranscriptionPartial,
 } from '@proj-airi/stage-ui/libs/providers/qwen-audio-realtime-ipc'
+import {
+  isQwenAudioRealtimeAsrModel,
+  QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL,
+} from '@proj-airi/stage-ui/libs/providers/qwen-audio-realtime-models'
 import { ipcMain } from 'electron'
 
 import {
@@ -45,6 +51,9 @@ interface QwenTerminalErrorTombstone {
 
 export interface QwenAudioRealtimeServiceOptions {
   context: QwenMainEventContext
+  credentialStore?: {
+    getRuntimeProfile: () => QwenDashScopePaygRuntimeProfile
+  }
   environment?: NodeJS.ProcessEnv
   lifecycle?: Lifecycle
   now?: () => number
@@ -57,6 +66,14 @@ function sessionIdFromPayload(payload: { sessionId: string }) {
   if (!sessionId)
     throw new Error('Qwen Audio realtime ASR session ID is required.')
   return sessionId
+}
+
+function modelFromPayload(value: unknown): QwenAudioRealtimeAsrModelId {
+  if (value === undefined)
+    return QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL
+  if (!isQwenAudioRealtimeAsrModel(value))
+    throw new Error('Unsupported Qwen Audio realtime ASR model.')
+  return value
 }
 
 function errorCodeFrom(error: Error) {
@@ -79,7 +96,7 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
   const sessionEventTargets = new Map<string, QwenRendererEventTarget>()
   const terminalErrors = new Map<string, QwenTerminalErrorTombstone>()
   const now = options.now ?? (() => Date.now())
-  const runtimeConfig = () => resolveQwenAudioRealtimeRuntimeConfig(options.environment)
+  const runtimeConfig = () => options.credentialStore?.getRuntimeProfile() ?? resolveQwenAudioRealtimeRuntimeConfig(options.environment)
   const socketFactory = options.socketFactory ?? createQwenAudioRealtimeSocket
   let disposed = false
 
@@ -135,6 +152,8 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
       if (sessions.has(sessionId))
         throw new Error('Qwen Audio realtime ASR session already exists.')
 
+      const model = modelFromPayload(payload.model)
+
       sessionEventTargets.delete(sessionId)
       const eventTarget = qwenRendererEventTargetFromInvoke(invokeOptions)
 
@@ -176,6 +195,7 @@ export function createQwenAudioRealtimeAsrService(options: QwenAudioRealtimeServ
         },
         socketFactory,
         options.now,
+        model,
       )
       if (eventTarget)
         sessionEventTargets.set(sessionId, eventTarget)

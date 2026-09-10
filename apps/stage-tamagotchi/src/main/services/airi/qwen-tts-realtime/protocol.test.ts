@@ -1,5 +1,6 @@
 import type { QwenTtsRealtimeSocket } from './protocol'
 
+import { QWEN3_TTS_REALTIME_MODEL_CATALOG } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -69,6 +70,7 @@ describe('qwen3 realtime TTS protocol', () => {
   it('resolves regional endpoints and main-process headers without exposing workspace in the URL', () => {
     expect(buildQwenTtsRealtimeEndpoint('beijing')).toBe('wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3-tts-flash-realtime')
     expect(buildQwenTtsRealtimeEndpoint('singapore')).toBe('wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime?model=qwen3-tts-flash-realtime')
+    expect(buildQwenTtsRealtimeEndpoint('beijing', QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id)).toBe('wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3-tts-instruct-flash-realtime')
 
     const config = resolveQwenTtsRealtimeRuntimeConfig({
       DASHSCOPE_API_KEY: 'unit-test-placeholder',

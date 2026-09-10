@@ -8,6 +8,7 @@ import type {
   QwenAudioRealtimeSessionPayload,
   QwenAudioRealtimeTranscriptionPayload,
 } from '../../qwen-audio-realtime-ipc'
+import type { QwenAudioRealtimeAsrModelId } from '../../qwen-audio-realtime-models'
 import type { AIRIStreamTranscriptionDelta, AIRIStreamTranscriptionResult, StreamTranscriptionOptions } from '../../stream-transcription'
 import type { ProviderConfigContext } from '../../types'
 
@@ -26,6 +27,11 @@ import {
   qwenAudioRealtimeTranscriptionFinal,
   qwenAudioRealtimeTranscriptionPartial,
 } from '../../qwen-audio-realtime-ipc'
+import {
+  normalizeQwenAudioRealtimeAsrModel,
+  QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL,
+  QWEN_AUDIO_REALTIME_ASR_MODEL_CATALOG,
+} from '../../qwen-audio-realtime-models'
 import { streamTranscription } from '../../stream-transcription'
 import { defineProvider } from '../registry'
 
@@ -33,7 +39,10 @@ export const QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID = 'qwen-audio-realtime-transcri
 
 const qwenAudioRealtimeConfigSchema = z.object({
   language: z.enum(['auto', 'zh', 'en']).default('auto'),
-  model: z.literal('qwen-audio-3.0-asr-flash-streaming').default('qwen-audio-3.0-asr-flash-streaming'),
+  model: z.preprocess(
+    value => normalizeQwenAudioRealtimeAsrModel(value),
+    z.enum([QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL]),
+  ).default(QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL),
 })
 
 export type QwenAudioRealtimeConfig = z.input<typeof qwenAudioRealtimeConfigSchema>
@@ -79,6 +88,7 @@ interface QwenAudioRealtimeStreamOptions extends StreamTranscriptionOptions {
   inputAudioStream: ReadableStream<ArrayBuffer>
   eventContext: EventContext<any, any>
   language: QwenAudioRealtimeAsrLanguage
+  model?: QwenAudioRealtimeAsrModelId
 }
 
 function createQwenAudioRealtimeResponseBody(options: {
@@ -86,8 +96,9 @@ function createQwenAudioRealtimeResponseBody(options: {
   eventContext: EventContext<any, any>
   inputAudioStream: ReadableStream<ArrayBuffer>
   language: QwenAudioRealtimeAsrLanguage
+  model: QwenAudioRealtimeAsrModelId
 }) {
-  const { eventContext, inputAudioStream, language, abortSignal } = options
+  const { eventContext, inputAudioStream, language, model, abortSignal } = options
   const start = defineInvoke(eventContext, qwenAudioRealtimeSessionStart)
   const append = defineInvoke(eventContext, qwenAudioRealtimeAudioAppend)
   const finish = defineInvoke(eventContext, qwenAudioRealtimeSessionFinish)
@@ -172,7 +183,7 @@ function createQwenAudioRealtimeResponseBody(options: {
             return
           }
 
-          await start({ sessionId, language })
+          await start({ sessionId, language, model })
           reader = inputAudioStream.getReader()
           while (true) {
             const { done, value } = await reader.read()
@@ -216,6 +227,7 @@ export function executeQwenAudioRealtimeStream(options: QwenAudioRealtimeStreamO
         eventContext: options.eventContext,
         inputAudioStream: init.body as ReadableStream<ArrayBuffer>,
         language: options.language,
+        model: normalizeQwenAudioRealtimeAsrModel(options.model),
       }), {
         headers: {
           'Cache-Control': 'no-cache',
@@ -249,12 +261,11 @@ export function createQwenAudioRealtimeProviderForContext(
   dispose: () => void = () => {},
 ) {
   const configuredLanguage = () => normalizeQwenAudioRealtimeLanguage(config.language)
+  const configuredModel = () => normalizeQwenAudioRealtimeAsrModel(config.model)
 
   return {
     transcription(model: string, extraOptions: QwenAudioRealtimeProviderOptions = {}) {
-      const requestedModel = model.trim() || 'qwen-audio-3.0-asr-flash-streaming'
-      if (requestedModel !== 'qwen-audio-3.0-asr-flash-streaming')
-        throw new Error(`Unsupported Qwen Audio realtime ASR model: ${requestedModel}`)
+      const requestedModel = normalizeQwenAudioRealtimeAsrModel(model.trim() || configuredModel())
 
       const language = normalizeQwenAudioRealtimeLanguage(extraOptions.language ?? configuredLanguage())
       return {
@@ -268,6 +279,7 @@ export function createQwenAudioRealtimeProviderForContext(
             eventContext,
             inputAudioStream: init.body as ReadableStream<ArrayBuffer>,
             language,
+            model: requestedModel,
             abortSignal: init.signal ?? undefined,
           }), {
             headers: {
@@ -309,13 +321,13 @@ export const providerQwenAudioRealtimeTranscription = defineProvider<QwenAudioRe
   createProvider: createRendererQwenAudioRealtimeProvider,
   validationRequiredWhen: () => false,
   extraMethods: {
-    listModels: async () => [{
-      id: 'qwen-audio-3.0-asr-flash-streaming',
-      name: 'Qwen Audio 3.0 ASR Flash Streaming',
+    listModels: async () => QWEN_AUDIO_REALTIME_ASR_MODEL_CATALOG.map(model => ({
+      id: model.id,
+      name: model.name,
       provider: QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID,
-      description: 'Realtime streaming speech recognition through Alibaba Cloud Model Studio.',
+      description: model.description,
       contextLength: 0,
       deprecated: false,
-    }],
+    })),
   },
 })

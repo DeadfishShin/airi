@@ -19,7 +19,9 @@ import {
   ProviderValidationDetailsDialog,
 } from '@proj-airi/stage-ui/components'
 import { getDefinedProvider, getSchemaDefault, getValidatorsOfProvider, validateProvider } from '@proj-airi/stage-ui/libs'
+import { resolveDeepSeekRuntimeConfig } from '@proj-airi/stage-ui/libs/providers/deepseek-credential'
 import { useProviderConfigStore } from '@proj-airi/stage-ui/stores/providers/config'
+import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { Button, Callout, FieldCombobox, FieldInput, FieldKeyValues, GhostButton } from '@proj-airi/ui'
 import { computedAsync, useCloned, useDebounceFn } from '@vueuse/core'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger } from 'reka-ui'
@@ -32,6 +34,7 @@ const router = useRouter()
 const route = useRoute('v2/settings/providers/edit/[providerId]')
 
 const providerStore = useProviderConfigStore()
+const providersRuntimeStore = useProviderStore()
 const emptyProviderConfig = Object.freeze({})
 const emptyProviderConfigValues = Object.freeze({})
 
@@ -295,7 +298,7 @@ async function runValidation() {
     }
 
     if (isEdited.value)
-      commitEditedConfig('configured')
+      await commitEditedConfig('configured')
     else
       providerStore.setProviderStatus(providerId.value, 'configured')
   }
@@ -347,9 +350,13 @@ async function getValidationPlan() {
   if (!definition || !providerSchema.value || isProviderSchemaLoading.value)
     return undefined
 
+  const draftConfig = (providerConfigEdit.value?.config ?? emptyProviderConfigValues) as Record<string, unknown>
+  const validationConfig = providerId.value === 'deepseek' && providerConfig.value.status === 'configured'
+    ? await resolveDeepSeekRuntimeConfig(draftConfig)
+    : draftConfig
   const validationPlan = await getValidatorsOfProvider({
     definition,
-    config: (providerConfigEdit.value?.config ?? emptyProviderConfigValues) as Record<string, unknown>,
+    config: validationConfig,
     schemaDefaults: providerSchemaDefault.value as Record<string, unknown>,
     contextOptions: { t },
   })
@@ -368,18 +375,21 @@ function syncValidationSteps() {
   validationSteps.value = [...validationSteps.value]
 }
 
-function commitEditedConfig(status: 'configured' | 'bypassed') {
+async function commitEditedConfig(status: 'configured' | 'bypassed') {
   if (!providerConfigEdit.value)
     return
 
-  providerStore.updateProviderConfig(providerId.value, { ...providerConfigEdit.value.config }, status)
+  await providerStore.updateProviderConfig(providerId.value, { ...providerConfigEdit.value.config }, status)
+  await providersRuntimeStore.disposeProviderInstance(providerId.value)
+  if (providerId.value === 'deepseek')
+    delete providerConfigEdit.value.config.apiKey
 }
 
-function handleSaveAnyway() {
+async function handleSaveAnyway() {
   if (!isEdited.value)
     return
 
-  commitEditedConfig('bypassed')
+  await commitEditedConfig('bypassed')
 }
 
 function handleDeleteProvider() {

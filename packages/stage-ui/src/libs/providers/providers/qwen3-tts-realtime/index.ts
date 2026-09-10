@@ -1,15 +1,18 @@
 import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 
-import type { ModelInfo, ProviderConfigContext, VoiceInfo } from '../../types'
+import type { ModelInfo, ProviderConfigContext } from '../../types'
 
 import { isElectronWindow, isStageTamagotchi } from '@proj-airi/stage-shared'
 import { z } from 'zod'
 
 import {
-  QWEN3_TTS_REALTIME_MODEL,
   QWEN3_TTS_REALTIME_PROVIDER_ID,
-  QWEN3_TTS_REALTIME_VOICE_ID,
 } from '../../qwen-tts-realtime-ipc'
+import {
+  QWEN3_TTS_REALTIME_MODEL_CATALOG,
+  qwen3TtsRealtimeModelInfo,
+} from '../../qwen3-tts-realtime-models'
+import { listQwen3TtsRealtimeVoices } from '../../qwen3-tts-realtime-voices'
 import { defineProvider } from '../registry'
 
 const qwen3TtsRealtimeConfigSchema = z.object({})
@@ -23,24 +26,7 @@ function isQwen3TtsRealtimeAvailable() {
     && window.platform === 'darwin'
 }
 
-const qwen3TtsRealtimeModels: ModelInfo[] = [{
-  id: QWEN3_TTS_REALTIME_MODEL,
-  name: 'Qwen3 TTS Flash Realtime',
-  provider: QWEN3_TTS_REALTIME_PROVIDER_ID,
-  description: 'Incremental text-to-speech through Alibaba Cloud Model Studio.',
-  contextLength: 0,
-  deprecated: false,
-}]
-
-const qwen3TtsRealtimeVoices: VoiceInfo[] = [{
-  id: QWEN3_TTS_REALTIME_VOICE_ID,
-  name: QWEN3_TTS_REALTIME_VOICE_ID,
-  provider: QWEN3_TTS_REALTIME_PROVIDER_ID,
-  compatibleModels: [QWEN3_TTS_REALTIME_MODEL],
-  description: 'Official Mandarin-capable Qwen3 realtime preset voice.',
-  languages: [{ code: 'zh', title: 'Chinese' }],
-  gender: 'female',
-}]
+const qwen3TtsRealtimeModels: ModelInfo[] = QWEN3_TTS_REALTIME_MODEL_CATALOG.map(model => qwen3TtsRealtimeModelInfo(model))
 
 function createQwen3TtsRealtimeProvider(): SpeechProviderWithExtraOptions<string> {
   return {
@@ -70,8 +56,28 @@ export const providerQwen3TtsRealtime = defineProvider<Qwen3TtsRealtimeConfig>({
   validationRequiredWhen: () => false,
   extraMethods: {
     listModels: async () => qwen3TtsRealtimeModels.map(model => ({ ...model })),
-    listVoices: async () => qwen3TtsRealtimeVoices.map(voice => ({ ...voice, languages: voice.languages.map(language => ({ ...language })) })),
+    listVoices: async (_config, _provider, model) => listQwen3TtsRealtimeVoices(model),
   },
 })
 
-export { QWEN3_TTS_REALTIME_MODEL, QWEN3_TTS_REALTIME_PROVIDER_ID, QWEN3_TTS_REALTIME_VOICE_ID }
+export {
+  isQwen3TtsRealtimeModel,
+  normalizeQwen3TtsRealtimeModel,
+  QWEN3_TTS_REALTIME_DEFAULT_MODEL,
+  QWEN3_TTS_REALTIME_MODEL_CATALOG,
+} from '../../qwen3-tts-realtime-models'
+
+export {
+  isQwen3TtsRealtimeVoice,
+  isQwen3TtsRealtimeVoiceForModel,
+  listQwen3TtsRealtimeVoices,
+  normalizeQwen3TtsRealtimeVoice,
+  QWEN3_TTS_REALTIME_DEFAULT_VOICE,
+  QWEN3_TTS_REALTIME_VOICE_CATALOG,
+} from '../../qwen3-tts-realtime-voices'
+
+export {
+  QWEN3_TTS_REALTIME_MODEL,
+  QWEN3_TTS_REALTIME_PROVIDER_ID,
+  QWEN3_TTS_REALTIME_VOICE_ID,
+} from '../../qwen-tts-realtime-ipc'

@@ -1,7 +1,10 @@
 import type { Eventa } from '@moeru/eventa'
 import type { createContext, ElectronMainEmitOptions } from '@moeru/eventa/adapters/electron/main'
+import type { Qwen3TtsRealtimeModelId } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
+import type { Qwen3TtsRealtimeVoiceId } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-voices'
 import type { Lifecycle } from 'injeca'
 
+import type { QwenDashScopePaygRuntimeProfile } from '../qwen-dashscope-payg-credentials/store'
 import type { QwenTtsRealtimeSocketFactory, QwenTtsRealtimeTelemetry } from './protocol'
 
 import {
@@ -20,13 +23,20 @@ import {
   qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
+import {
+  isQwen3TtsRealtimeModel,
+  QWEN3_TTS_REALTIME_DEFAULT_MODEL,
+} from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
+import {
+  isQwen3TtsRealtimeVoiceForModel,
+  QWEN3_TTS_REALTIME_DEFAULT_VOICE,
+} from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-voices'
 import { ipcMain } from 'electron'
 
 import {
   MAX_TERMINAL_ERROR_TOMBSTONES,
   QWEN3_TTS_REALTIME_DEFAULT_LANGUAGE,
   QWEN3_TTS_REALTIME_DEFAULT_MODE,
-  QWEN3_TTS_REALTIME_DEFAULT_VOICE,
   Qwen3TtsRealtimeSession,
   resolveQwenTtsRealtimeRuntimeConfig,
   TERMINAL_ERROR_TOMBSTONE_TTL_MS,
@@ -49,6 +59,9 @@ export const MAX_STAGE_TELEMETRY_LOGS = 64
 
 export interface Qwen3TtsRealtimeServiceOptions {
   context: QwenTtsMainEventContext
+  credentialStore?: {
+    getRuntimeProfile: () => QwenDashScopePaygRuntimeProfile
+  }
   environment?: NodeJS.ProcessEnv
   lifecycle?: Lifecycle
   now?: () => number
@@ -61,6 +74,24 @@ function sessionIdFromPayload(payload: { sessionId: string }): string {
   if (!sessionId || sessionId.length > 128)
     throw new Error('Qwen3 realtime TTS session ID is invalid.')
   return sessionId
+}
+
+function modelFromPayload(value: unknown) {
+  if (value === undefined)
+    return QWEN3_TTS_REALTIME_DEFAULT_MODEL
+  if (!isQwen3TtsRealtimeModel(value))
+    throw new Error('Qwen3 realtime TTS model is unsupported.')
+  return value
+}
+
+function voiceFromPayload(value: unknown, model: Qwen3TtsRealtimeModelId): Qwen3TtsRealtimeVoiceId {
+  // Preserve legacy callers that omitted voice while rejecting explicit empty,
+  // unknown, or model-incompatible values before credentials or socket setup.
+  if (value === undefined)
+    return QWEN3_TTS_REALTIME_DEFAULT_VOICE
+  if (!isQwen3TtsRealtimeVoiceForModel(value, model))
+    throw new Error('Qwen3 realtime TTS voice is unsupported for the selected model.')
+  return value
 }
 
 function errorCodeFrom(error: Error): string {
@@ -127,14 +158,18 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
       if (sessions.has(sessionId))
         throw new Error('Qwen3 realtime TTS session already exists.')
 
-      const config = resolveQwenTtsRealtimeRuntimeConfig(options.environment)
+      // Validate renderer-controlled model data before resolving credentials
+      // or creating the provider socket. There is no silent fallback.
+      const model = modelFromPayload(payload.model)
+      const voice = voiceFromPayload(payload.voice, model)
+      const config = options.credentialStore?.getRuntimeProfile() ?? resolveQwenTtsRealtimeRuntimeConfig(options.environment)
       terminalErrors.delete(sessionId)
       loggedStageTelemetry.delete(sessionId)
       const target = targetFromInvoke(invokeOptions)
       const session = new Qwen3TtsRealtimeSession(
         sessionId,
         config,
-        payload.voice || QWEN3_TTS_REALTIME_DEFAULT_VOICE,
+        voice,
         payload.languageType || QWEN3_TTS_REALTIME_DEFAULT_LANGUAGE,
         payload.mode || QWEN3_TTS_REALTIME_DEFAULT_MODE,
         {
@@ -163,6 +198,7 @@ export function createQwen3TtsRealtimeService(options: Qwen3TtsRealtimeServiceOp
         },
         socketFactory,
         now,
+        model,
       )
       if (target)
         eventTargets.set(sessionId, target)

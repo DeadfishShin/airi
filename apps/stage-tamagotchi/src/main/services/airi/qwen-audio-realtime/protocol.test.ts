@@ -118,6 +118,10 @@ describe('qwen Audio realtime ASR protocol', () => {
     })
     expect(buildQwenRunTaskFrame('session-1', 'zh').payload.parameters.language_hints).toEqual(['zh'])
     expect(buildQwenRunTaskFrame('session-1', 'en').payload.parameters.language_hints).toEqual(['en'])
+    expect(buildQwenRunTaskFrame('session-1', QWEN_AUDIO_REALTIME_ASR_MODEL, 'zh').payload).toMatchObject({
+      model: QWEN_AUDIO_REALTIME_ASR_MODEL,
+      parameters: { language_hints: ['zh'] },
+    })
   })
 
   it('queues audio until task-started, then flushes binary PCM before finish', async () => {

@@ -30,16 +30,6 @@ const { configs: providers } = storeToRefs(providerConfigStore) as { configs: Re
 const { activeProvider } = storeToRefs(consciousnessStore)
 const providerDefinition = computed(() => providersStore.findProviderDefinition(providerId))
 
-// Define computed properties for credentials
-const apiKey = computed({
-  get: () => providers.value[providerId]?.apiKey || '',
-  set: (value) => {
-    if (!providers.value[providerId])
-      providers.value[providerId] = {}
-    providers.value[providerId].apiKey = value
-  },
-})
-
 const baseUrl = computed({
   get: () => providers.value[providerId]?.baseUrl || '',
   set: (value) => {
@@ -65,6 +55,7 @@ const {
   t,
   router,
   providerMetadata,
+  apiKey,
   isValidating,
   isValid,
   validationMessage,

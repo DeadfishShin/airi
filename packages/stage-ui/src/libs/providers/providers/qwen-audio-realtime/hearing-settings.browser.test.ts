@@ -31,6 +31,11 @@ const messages = {
                     en: 'English',
                   },
                 },
+                model: {
+                  label: 'ASR model',
+                  description: 'Select the current Qwen Audio realtime model.',
+                  placeholder: 'Select a model',
+                },
               },
               environment: 'This canary reads credentials from the Electron main process environment.',
             },
@@ -63,6 +68,7 @@ describe('qwen audio realtime ASR hearing settings', () => {
 
     expect(errors).toEqual([])
     expect(host.querySelector('[data-testid="qwen-audio-realtime-language"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="qwen-audio-realtime-model"]')).not.toBeNull()
     expect(host.textContent).toContain('ASR language')
     expect(host.textContent).toContain('This canary reads credentials from the Electron main process environment.')
 

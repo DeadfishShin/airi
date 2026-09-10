@@ -1,7 +1,10 @@
 import { defineEventa, defineInvokeEventa } from '@moeru/eventa'
 
-/** The only model exposed by the Qwen Audio realtime ASR canary. */
-export const QWEN_AUDIO_REALTIME_ASR_MODEL = 'qwen-audio-3.0-asr-flash-streaming'
+import { QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL } from './qwen-audio-realtime-models'
+
+/** Backwards-compatible protocol alias for the canonical model default. */
+export const QWEN_AUDIO_REALTIME_ASR_MODEL = QWEN_AUDIO_REALTIME_ASR_DEFAULT_MODEL
+export type { QwenAudioRealtimeAsrModelId } from './qwen-audio-realtime-models'
 
 export type QwenAudioRealtimeAsrLanguage = 'auto' | 'zh' | 'en'
 
@@ -11,6 +14,8 @@ export interface QwenAudioRealtimeSessionPayload {
 
 export interface QwenAudioRealtimeSessionStartPayload extends QwenAudioRealtimeSessionPayload {
   language: QwenAudioRealtimeAsrLanguage
+  /** Optional for legacy callers; main resolves missing values to the canonical default. */
+  model?: import('./qwen-audio-realtime-models').QwenAudioRealtimeAsrModelId
 }
 
 export interface QwenAudioRealtimeAudioPayload extends QwenAudioRealtimeSessionPayload {

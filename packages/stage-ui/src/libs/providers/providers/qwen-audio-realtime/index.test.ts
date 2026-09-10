@@ -69,6 +69,7 @@ describe('qwen Audio realtime ASR provider', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(starts[0]?.language).toBe('zh')
+    expect(starts[0]?.model).toBe(model)
     expect(audio).toHaveLength(1)
     expect(new Uint8Array(audio[0] ?? [])).toEqual(new Uint8Array([1, 2, 3]))
     expect(finishes).toBe(1)
@@ -85,6 +86,15 @@ describe('qwen Audio realtime ASR provider', () => {
   it('keeps the configured language when no request override is supplied', () => {
     expect(normalizeQwenAudioRealtimeLanguage('en')).toBe('en')
     expect(normalizeQwenAudioRealtimeLanguage('unsupported')).toBe('auto')
+  })
+
+  it('normalizes a stale persisted model to the current canonical default', async () => {
+    const config = z.parse(await providerQwenAudioRealtimeTranscription.createProviderConfig({ t: input => input }), {
+      language: 'en',
+      model: 'stale-qwen-model',
+    })
+
+    expect(config).toEqual({ language: 'en', model })
   })
 
   it('delivers Qwen snapshots to the Hearing Playground consumer without duplication', async () => {

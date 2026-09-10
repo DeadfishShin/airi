@@ -32,12 +32,14 @@ import { setElectronMainDirname } from './libs/electron/location'
 import { createI18n } from './libs/i18n'
 import { setupAppleSpeechTranscriptionService } from './services/airi/apple-speech-transcription'
 import { setupServerChannel } from './services/airi/channel-server'
+import { setupDeepSeekCredentials } from './services/airi/deepseek-credentials'
 import { setupGodotStageManager } from './services/airi/godot-stage'
 import { setupBuiltInServer } from './services/airi/http-server'
 import { setupMcpStdioManager } from './services/airi/mcp-servers'
 import { setupExtensionHost } from './services/airi/plugins'
 import { setupQwenAudioRealtimeAsr } from './services/airi/qwen-audio-realtime'
 import { setupQwenAudioTtsTokenPlan } from './services/airi/qwen-audio-tts-token-plan'
+import { setupDashScopePaygCredentials } from './services/airi/qwen-dashscope-payg-credentials'
 import { setupQwen3TtsRealtime } from './services/airi/qwen-tts-realtime'
 import { setupRealtimeVoiceE2eTelemetry } from './services/airi/realtime-voice-e2e-telemetry'
 import { setupArtistryBridge } from './services/airi/widgets/artistry-bridge'
@@ -231,9 +233,22 @@ app.whenReady().then(async () => {
     build: ({ dependsOn }) => setupAppleSpeechTranscriptionService(dependsOn),
   })
 
-  const qwenAudioRealtimeAsr = injeca.provide('modules:qwen-audio-realtime-asr', {
+  const qwenDashScopePaygCredentials = injeca.provide('services:qwen-dashscope-payg-credentials', {
     dependsOn: { lifecycle },
-    build: ({ dependsOn }) => setupQwenAudioRealtimeAsr(dependsOn),
+    build: ({ dependsOn }) => setupDashScopePaygCredentials({ lifecycle: dependsOn.lifecycle }),
+  })
+
+  const deepSeekCredentials = injeca.provide('services:deepseek-credentials', {
+    dependsOn: { lifecycle },
+    build: ({ dependsOn }) => setupDeepSeekCredentials({ lifecycle: dependsOn.lifecycle }),
+  })
+
+  const qwenAudioRealtimeAsr = injeca.provide('modules:qwen-audio-realtime-asr', {
+    dependsOn: { lifecycle, qwenDashScopePaygCredentials },
+    build: ({ dependsOn }) => setupQwenAudioRealtimeAsr({
+      lifecycle: dependsOn.lifecycle,
+      credentialStore: dependsOn.qwenDashScopePaygCredentials,
+    }),
   })
 
   const qwenAudioTtsTokenPlan = injeca.provide('modules:qwen-audio-tts-token-plan', {
@@ -242,8 +257,11 @@ app.whenReady().then(async () => {
   })
 
   const qwen3TtsRealtime = injeca.provide('modules:qwen3-tts-realtime', {
-    dependsOn: { lifecycle },
-    build: ({ dependsOn }) => setupQwen3TtsRealtime(dependsOn),
+    dependsOn: { lifecycle, qwenDashScopePaygCredentials },
+    build: ({ dependsOn }) => setupQwen3TtsRealtime({
+      lifecycle: dependsOn.lifecycle,
+      credentialStore: dependsOn.qwenDashScopePaygCredentials,
+    }),
   })
 
   const realtimeVoiceE2eTelemetry = injeca.provide('modules:realtime-voice-e2e-telemetry', {
@@ -348,7 +366,7 @@ app.whenReady().then(async () => {
   }
 
   injeca.invoke({
-    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioTtsTokenPlan, qwen3TtsRealtime, realtimeVoiceE2eTelemetry },
+    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioTtsTokenPlan, qwen3TtsRealtime, realtimeVoiceE2eTelemetry, deepSeekCredentials },
     callback: async (deps) => {
       const { context } = createContext(ipcMain)
       await setupArtistryBridge({

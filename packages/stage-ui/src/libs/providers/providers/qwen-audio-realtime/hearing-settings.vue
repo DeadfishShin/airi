@@ -4,6 +4,10 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useHearingProviderViewContext } from '../../hearing-view'
+import {
+  normalizeQwenAudioRealtimeAsrModel,
+  QWEN_AUDIO_REALTIME_ASR_MODEL_CATALOG,
+} from '../../qwen-audio-realtime-models'
 
 const { t } = useI18n()
 const { providerConfig, updateProviderConfig } = useHearingProviderViewContext()
@@ -19,6 +23,12 @@ const languageOptions = computed(() => [
   { label: t('settings.pages.providers.provider.qwen-audio-realtime-transcription.fields.language.options.en'), value: 'en' },
 ])
 
+const model = computed(() => normalizeQwenAudioRealtimeAsrModel(providerConfig.value?.model))
+const modelOptions = computed(() => QWEN_AUDIO_REALTIME_ASR_MODEL_CATALOG.map(item => ({
+  label: item.name,
+  value: item.id,
+})))
+
 async function updateLanguage(value: string | undefined) {
   if (value !== 'auto' && value !== 'zh' && value !== 'en')
     return
@@ -27,10 +37,28 @@ async function updateLanguage(value: string | undefined) {
 
   await updateProviderConfig({ language: value })
 }
+
+async function updateModel(value: string | undefined) {
+  const selectedModel = normalizeQwenAudioRealtimeAsrModel(value)
+  if (selectedModel === model.value)
+    return
+
+  await updateProviderConfig({ model: selectedModel })
+}
 </script>
 
 <template>
   <div class="flex flex-col gap-3">
+    <FieldCombobox
+      data-testid="qwen-audio-realtime-model"
+      :model-value="model"
+      :label="t('settings.pages.providers.provider.qwen-audio-realtime-transcription.fields.model.label')"
+      :description="t('settings.pages.providers.provider.qwen-audio-realtime-transcription.fields.model.description')"
+      :placeholder="t('settings.pages.providers.provider.qwen-audio-realtime-transcription.fields.model.placeholder')"
+      :options="modelOptions"
+      layout="vertical"
+      @update:model-value="updateModel"
+    />
     <FieldCombobox
       data-testid="qwen-audio-realtime-language"
       :model-value="language"

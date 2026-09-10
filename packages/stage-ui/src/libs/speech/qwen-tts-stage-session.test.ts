@@ -15,6 +15,7 @@ import {
   qwen3TtsRealtimeStageTelemetry,
   qwen3TtsRealtimeTextAppend,
 } from '../providers/qwen-tts-realtime-ipc'
+import { QWEN3_TTS_REALTIME_MODEL_CATALOG } from '../providers/qwen3-tts-realtime-models'
 import { summarizeQwen3TtsStageTelemetry } from './qwen-tts-stage-session'
 import { createStageTtsSession } from './tts-session'
 
@@ -77,9 +78,9 @@ class FakeAudioContext implements Qwen3TtsPcmAudioContext {
   }
 }
 
-function snapshot() {
+function snapshot(model = 'qwen3-tts-flash-realtime') {
   return {
-    model: 'qwen3-tts-flash-realtime',
+    model,
     voice: 'Cherry',
     voiceType: 'custom_configured' as const,
     bufferEntireSession: false,
@@ -139,9 +140,36 @@ describe('qwen3 Stage TTS adapter', () => {
     await flush()
 
     expect(starts).toHaveLength(1)
+    expect(starts[0]).toMatchObject({ model: 'qwen3-tts-flash-realtime' })
     expect(texts).toEqual(['你', '好', '，', '世界'])
     expect(finishCount).toBe(1)
     expect(pipelineFactory).not.toHaveBeenCalled()
+  })
+
+  it('passes a valid selected model through the provider-aware IPC start payload', async () => {
+    const context = eventContext()
+    const starts: unknown[] = []
+    const selectedModel = QWEN3_TTS_REALTIME_MODEL_CATALOG[1].id
+    defineInvokeHandler(context, qwen3TtsRealtimeSessionStart, (payload) => {
+      starts.push(payload)
+    })
+    defineInvokeHandler(context, qwen3TtsRealtimeSessionCancel, () => {})
+
+    const session = createStageTtsSession({
+      providerId: 'qwen3-tts-realtime',
+      transport: 'bidirectional-ws',
+      streaming: () => snapshot(selectedModel),
+      audioContext: new FakeAudioContext() as unknown as BaseAudioContext,
+      playbackManager: { schedule: vi.fn(), stopByIntent: vi.fn() },
+      openIntent: () => { throw new Error('Qwen must not open the segmenter intent.') },
+      intentOptions: () => ({}) as never,
+      qwenRealtime: { eventContext: context },
+    })
+
+    await flush()
+    expect(starts).toHaveLength(1)
+    expect(starts[0]).toMatchObject({ model: selectedModel, voice: 'Cherry' })
+    session.cancel('test-cleanup')
   })
 
   it('records a negative first-audio overlap when audio arrives before input finish', async () => {
