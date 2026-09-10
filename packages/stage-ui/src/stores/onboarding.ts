@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
 import { useAuthStore } from './auth'
+import { useConsciousnessStore } from './modules/consciousness'
 import { useProviderConfigStore } from './providers/config'
 
 const essentialProviderIds = ['openai', 'azure-openai', 'anthropic', 'google-generative-ai', 'openrouter-ai', 'ollama', 'deepseek', 'openai-compatible', 'official-provider'] as const
@@ -86,10 +87,12 @@ const useOnboardingStateStore = defineStore('onboarding-state', () => {
 export const useOnboardingStore = defineStore('onboarding', () => {
   const providerStore = useProviderConfigStore()
   const authStore = useAuthStore()
+  const consciousnessStore = useConsciousnessStore()
   const onboardingStateStore = useOnboardingStateStore()
   const closeRequestId = computed(() => onboardingStateStore.closeRequestId)
   const hasCompletedSetup = computed(() => onboardingStateStore.hasCompletedSetup)
   const hasSkippedSetup = computed(() => onboardingStateStore.hasSkippedSetup)
+  const skipOnboardingPath = ['/auth/callback']
 
   // This is renderer-local view state and never crosses the Pinia channel.
   const showingSetup = ref(false)
@@ -113,8 +116,39 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     })
   })
 
+  // A configured provider and active model are the canonical product signals
+  // that the user completed the own-provider route. This also recovers older
+  // profiles that persisted the provider/module state before onboarding flags
+  // were written, without treating an empty or unvalidated provider record as
+  // proof that onboarding can be skipped.
+  const hasConfiguredOwnProvider = computed(() => {
+    const providerId = consciousnessStore.activeProvider.trim()
+    const modelId = consciousnessStore.activeModel.trim()
+    if (!providerId || !modelId)
+      return false
+
+    const provider = providerStore.providers[providerId]
+    return provider?.status === 'configured' && provider.configuredBy === 'user'
+  })
+
+  const shouldRecoverSetupCompletion = computed(() =>
+    !authStore.isAuthenticated
+    && !authStore.token
+    && !hasSkippedSetup.value
+    && !hasCompletedSetup.value
+    && !skipOnboardingPath.includes(document.location.pathname)
+    && hasConfiguredOwnProvider.value,
+  )
+
+  // Persist recovery through the same canonical writer used by the normal
+  // onboarding completion path. This is deliberately a one-way transition;
+  // it never clears provider state and does not run for auth-owned providers.
+  watch(shouldRecoverSetupCompletion, (shouldRecover) => {
+    if (shouldRecover)
+      onboardingStateStore.markSetupCompleted()
+  }, { immediate: true })
+
   // Check if first-time setup should be shown
-  const skipOnboardingPath = ['/auth/callback']
   const needsOnboarding = computed(() =>
     !authStore.isAuthenticated
     && !authStore.token
@@ -163,6 +197,7 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     closeRequestId,
     hasEssentialProviderConfigured,
     hasEssentialProviderCredentialConfigured,
+    hasConfiguredOwnProvider,
     needsOnboarding,
 
     closeAfterAuthentication,
