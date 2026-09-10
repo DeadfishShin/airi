@@ -30,6 +30,7 @@ import {
   listProviders as listDefinedProviders,
   validateProvider as runProviderValidation,
 } from '../../libs/providers'
+import { resolveDeepSeekRuntimeConfig } from '../../libs/providers/deepseek-credential'
 import { selectProviderMetadata, selectProvidersMetadata } from '../../libs/providers/metadata'
 import { useAuthStore } from '../auth'
 import { useProviderConfigStore } from './config'
@@ -218,10 +219,13 @@ export const useProviderStore = defineStore('provider', () => {
   ) {
     await waitForProviderMetadata()
     const definition = getProviderDefinition(providerId)
+    const runtimeConfig = providerId === 'deepseek'
+      ? await resolveDeepSeekRuntimeConfig(config)
+      : config
     const schemaDefaults = getDefaultProviderConfig(providerId)
     const plan = await getValidatorsOfProvider({
       definition,
-      config,
+      config: runtimeConfig,
       schemaDefaults,
       contextOptions: { t },
     })
@@ -528,18 +532,21 @@ export const useProviderStore = defineStore('provider', () => {
 
   async function listProviderModels(providerId: string, config: Record<string, unknown>) {
     const definition = getProviderDefinition(providerId)
-    const provider = await definition.createProvider(config)
+    const runtimeConfig = providerId === 'deepseek'
+      ? await resolveDeepSeekRuntimeConfig(config)
+      : config
+    const provider = await definition.createProvider(runtimeConfig)
     try {
       if (definition.extraMethods?.listModels) {
-        const models = await definition.extraMethods.listModels(config, provider, { t })
+        const models = await definition.extraMethods.listModels(runtimeConfig, provider, { t })
         return normalizeProviderModels(providerId, models)
       }
 
       if (isModelProvider(provider))
         return normalizeProviderModels(providerId, await listModels(provider.model()))
 
-      const baseUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : ''
-      const apiKey = typeof config.apiKey === 'string' ? config.apiKey.trim() : ''
+      const baseUrl = typeof runtimeConfig.baseUrl === 'string' ? runtimeConfig.baseUrl.trim() : ''
+      const apiKey = typeof runtimeConfig.apiKey === 'string' ? runtimeConfig.apiKey.trim() : ''
       if (!baseUrl)
         return []
 
@@ -566,9 +573,12 @@ export const useProviderStore = defineStore('provider', () => {
       return pending
 
     const task = (async () => {
-      const provider = await definition.createProvider(config)
+      const runtimeConfig = providerId === 'deepseek'
+        ? await resolveDeepSeekRuntimeConfig(config)
+        : config
+      const provider = await definition.createProvider(runtimeConfig)
       try {
-        return await listVoices(config, provider, model)
+        return await listVoices(runtimeConfig, provider, model)
       }
       finally {
         await disposeTemporaryProvider(provider)
@@ -590,9 +600,12 @@ export const useProviderStore = defineStore('provider', () => {
     if (!loadModel)
       return
 
-    const provider = await definition.createProvider(config)
+    const runtimeConfig = providerId === 'deepseek'
+      ? await resolveDeepSeekRuntimeConfig(config)
+      : config
+    const provider = await definition.createProvider(runtimeConfig)
     try {
-      await loadModel(config, provider)
+      await loadModel(runtimeConfig, provider)
     }
     finally {
       await disposeTemporaryProvider(provider)
@@ -797,7 +810,10 @@ export const useProviderStore = defineStore('provider', () => {
       throw new Error(`Provider credentials for ${providerId} not found`)
 
     try {
-      const instance = await definition.createProvider(config || {})
+      const runtimeConfig = providerId === 'deepseek'
+        ? await resolveDeepSeekRuntimeConfig(config || {})
+        : config || {}
+      const instance = await definition.createProvider(runtimeConfig)
       providerInstanceCache.set(providerId, instance)
       return instance as R
     }
