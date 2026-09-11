@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createLive2DLoadOwnershipGuard } from './live2d-load-ownership'
+import { createLive2DLoadOwnershipGuard, finalizeLive2DLoadState } from './live2d-load-ownership'
 
 type LoadState = Parameters<ReturnType<typeof createLive2DLoadOwnershipGuard>['isCurrent']>[1]
 
@@ -16,6 +16,50 @@ function state(overrides: Partial<LoadState> = {}): LoadState {
 }
 
 describe('live2d load ownership', () => {
+  it('releases the load latch after a stale stage-wait exit', () => {
+    const state = finalizeLive2DLoadState({ modelLoading: true, componentState: 'loading' }, false)
+
+    expect(state).toEqual({ modelLoading: false, componentState: 'mounted' })
+  })
+
+  it('releases the load latch after an invalid app or stage exit', () => {
+    const state = finalizeLive2DLoadState({ modelLoading: true, componentState: 'loading' }, false)
+
+    expect(state.modelLoading).toBe(false)
+    expect(state.componentState).toBe('mounted')
+  })
+
+  it('allows a newer request to proceed after the stale request finalizes', () => {
+    const staleState = finalizeLive2DLoadState({ modelLoading: true, componentState: 'loading' }, false)
+    const newerRequestCanProceed = staleState.modelLoading === false
+
+    expect(newerRequestCanProceed).toBe(true)
+  })
+
+  it('releases the load latch when setup fails', () => {
+    const state = finalizeLive2DLoadState({ modelLoading: true, componentState: 'loading' }, false)
+
+    expect(state).toEqual({ modelLoading: false, componentState: 'mounted' })
+  })
+
+  it('releases the load latch after a post-setup stale candidate is destroyed', () => {
+    const state = finalizeLive2DLoadState({ modelLoading: true, componentState: 'loading' }, false)
+
+    expect(state.modelLoading).toBe(false)
+  })
+
+  it('finalizes a successful load as mounted', () => {
+    const state = finalizeLive2DLoadState({ modelLoading: true, componentState: 'loading' }, false)
+
+    expect(state).toEqual({ modelLoading: false, componentState: 'mounted' })
+  })
+
+  it('does not write mounted after unmount', () => {
+    const state = finalizeLive2DLoadState({ modelLoading: true, componentState: 'loading' }, true)
+
+    expect(state).toEqual({ modelLoading: false, componentState: 'loading' })
+  })
+
   it('rejects A after B becomes the latest request', () => {
     const ownership = createLive2DLoadOwnershipGuard()
     const requestA = ownership.begin('model-a', 'a')

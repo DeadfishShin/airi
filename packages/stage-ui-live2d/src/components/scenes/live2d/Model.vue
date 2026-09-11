@@ -42,7 +42,7 @@ import {
   shouldHandoffCompletedSemanticMotionToIdle,
   shouldRestartResolvedIdleMotionOnFinish,
 } from '../../../utils/live2d-compatibility'
-import { createLive2DLoadOwnershipGuard } from '../../../utils/live2d-load-ownership'
+import { createLive2DLoadOwnershipGuard, finalizeLive2DLoadState } from '../../../utils/live2d-load-ownership'
 
 const props = withDefaults(defineProps<{
   modelSrc?: string
@@ -296,51 +296,48 @@ async function performModelLoad(request: Live2DLoadRequest) {
   componentState.value = 'loading'
   invalidateActiveSemanticMotion()
 
-  if (!pixiApp.value || !pixiApp.value.stage) {
-    try {
-      // NOTICE: shouldUpdateView can fire while the canvas (pixiApp) is being torn down/recreated.
-      // Wait briefly for the new stage instead of bailing out, otherwise we keep a blank screen.
-      await until(() => !!pixiApp.value && !!pixiApp.value.stage).toBeTruthy({ timeout: 1500 })
+  // Once the loading latch is raised, every terminal path below must pass
+  // through the finalizer. This includes stale requests that resume after
+  // waiting for a recreated PIXI stage.
+  try {
+    if (!pixiApp.value || !pixiApp.value.stage) {
+      try {
+        // NOTICE: shouldUpdateView can fire while the canvas (pixiApp) is being torn down/recreated.
+        // Wait briefly for the new stage instead of bailing out, otherwise we keep a blank screen.
+        await until(() => !!pixiApp.value && !!pixiApp.value.stage).toBeTruthy({ timeout: 1500 })
+      }
+      catch {
+        return
+      }
     }
-    catch {
-      modelLoading.value = false
-      componentState.value = 'mounted'
+
+    const targetApp = pixiApp.value
+    const targetStage = targetApp?.stage
+    if (!targetApp || !targetStage || !isCurrentLoadRequest(request, { app: targetApp, stage: targetStage }))
+      return
+
+    // REVIEW: here as await until(...) guarded the pixiApp and stage to be valid.
+    if (model.value && targetStage) {
+      // Dispose expression controller before destroying the old model
+      expressionController.dispose()
+      internalModelRef.value = undefined
+      compatibilityProfile.value = undefined
+
+      try {
+        targetStage.removeChild(model.value)
+        model.value.destroy()
+      }
+      catch (error) {
+        console.warn('Error removing old model:', error)
+      }
+      model.value = undefined
+    }
+    if (!modelSrcRef.value) {
+      console.warn('No Live2D model source provided.')
       return
     }
-  }
 
-  const targetApp = pixiApp.value
-  const targetStage = targetApp?.stage
-  if (!targetApp || !targetStage || !isCurrentLoadRequest(request, { app: targetApp, stage: targetStage }))
-    return
-
-  // REVIEW: here as await until(...) guarded the pixiApp and stage to be valid.
-  if (model.value && targetStage) {
-    // Dispose expression controller before destroying the old model
-    expressionController.dispose()
-    internalModelRef.value = undefined
-    compatibilityProfile.value = undefined
-
-    try {
-      targetStage.removeChild(model.value)
-      model.value.destroy()
-    }
-    catch (error) {
-      console.warn('Error removing old model:', error)
-    }
-    model.value = undefined
-  }
-  if (!modelSrcRef.value) {
-    console.warn('No Live2D model source provided.')
-    modelLoading.value = false
-    componentState.value = 'mounted'
-    return
-  }
-
-  try {
     if (!isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })) {
-      modelLoading.value = false
-      componentState.value = 'mounted'
       return
     }
 
@@ -669,8 +666,12 @@ async function performModelLoad(request: Live2DLoadRequest) {
     emits('error', error instanceof Error ? error : new Error(String(error)))
   }
   finally {
-    modelLoading.value = false
-    componentState.value = 'mounted'
+    const finalizedState = finalizeLive2DLoadState({
+      modelLoading: modelLoading.value,
+      componentState: componentState.value,
+    }, isUnmounted)
+    modelLoading.value = finalizedState.modelLoading
+    componentState.value = finalizedState.componentState
     await initExpressionController(internalModelRef.value).catch((err) => {
       console.warn('[Model.vue] Expression controller initialization failed:', err)
     })

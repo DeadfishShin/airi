@@ -12,6 +12,24 @@ export interface Live2DLoadOwnershipState {
   stageIsCurrent?: boolean
 }
 
+export type Live2DComponentState = 'pending' | 'loading' | 'mounted'
+
+export interface Live2DLoadState {
+  modelLoading: boolean
+  componentState: Live2DComponentState
+}
+
+/**
+ * Releases the load latch for every terminal load path. An unmounted
+ * component must not be moved back to `mounted` after teardown.
+ */
+export function finalizeLive2DLoadState(state: Live2DLoadState, isUnmounted: boolean): Live2DLoadState {
+  return {
+    modelLoading: false,
+    componentState: isUnmounted ? state.componentState : 'mounted',
+  }
+}
+
 /**
  * Gives every model-load attempt an ownership generation. A completed async
  * load may commit only while its generation and model identity are current.

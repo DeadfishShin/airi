@@ -392,3 +392,6 @@ stale completions must never attach, install listeners, or reclaim the stage.
 
 Android should preserve this lifecycle invariant with its own coroutine/job or
 generation mechanism rather than copying Vue, Pixi, or Electron plumbing.
+Every terminal stale, invalid-target, error, or successful path must also
+release the loading latch; a late result must not leave the model loader
+permanently waiting.
