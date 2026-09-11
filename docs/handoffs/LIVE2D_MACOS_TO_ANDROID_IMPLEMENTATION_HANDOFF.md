@@ -4,9 +4,8 @@
 
 ~~~text
 PROJECT=DeadfishShin/airi
-MACOS_SOURCE_PR=13
-MACOS_SOURCE_HEAD=30ca9068aa864ed79706b665154a24bc890edfca
-MACOS_SOURCE_TREE=bf6f12a7baebf40c7db45afc058d113514ab3771
+MACOS_SOURCE_PR=15
+MACOS_SOURCE_BASE_HEAD=ee4b71853f93f8aa098eba7125d16af3c0a8322d
 COMPATIBILITY_BRANCH=codex/macos-live2d-generic-compatibility-v1
 ~~~
 
@@ -44,14 +43,34 @@ The confirmed legacy shape is:
 The compatibility layer adapts the model at runtime. It does not rewrite the
 user's ZIP, .moc3, motion files, or physics files.
 
+## Exact Cubism runtime surface
+
+The installed macOS dependency is `pixi-live2d-display` 0.4.0. Its
+`CubismModel` wrapper exposes the underlying Cubism core model through
+`coreModel.getModel()`. The production parameter table is:
+
+~~~text
+coreModel
+→ getModel()
+→ parameters.count
+→ parameters.ids
+~~~
+
+The resolver bounds iteration by `count`, keeps only non-empty strings, and
+removes duplicates. It does not probe by writing unknown IDs. Do not assume
+that every SDK has `getParameterIds()` or `getParameterId(index)`; those are
+only compatibility/test adapters here, not the production authority.
+
 ## Production flow
 
 The platform-neutral flow is:
 
 ~~~text
 pointer / touch input
-→ local gaze/focus normalization
-→ logical Live2D capability
+→ AIRI's existing focus source and Live2DModel.focus()
+→ pixi-live2d-display toModelPosition/focusController geometry
+→ compatibility-bound Cubism focus targets
+→ logical eyeBallX / eyeBallY
 → resolved physical parameter ID
 
 microphone / local VAD
@@ -122,10 +141,21 @@ because it exists.
 
 Semantic mappings are candidates, not facts. Opaque filenames remain
 unresolved. Existing runtime motion selection and persistence remain the
-override path: settings/live2d/current-motion, settings/live2d/motion-map, and
-the selected runtime motion keys. A manual mapping must take precedence over a
-filename heuristic and should be keyed by model identity when Android
-introduces its persistence layer.
+override path: `settings/live2d/current-motion` and the selected runtime motion
+keys remain unchanged. `settings/live2d/motion-map` is now a model-scoped map:
+
+~~~text
+modelId → motion filename → semantic motion
+~~~
+
+The renderer resolves only the requested model's bucket. A missing model ID
+resolves to no manual overrides, so another model's mapping is never reused as
+fact. A legacy flat map is migrated once only when the renderer supplies an
+explicit current model ID; after that all reads are model-scoped. Manual
+overrides take precedence over group and filename heuristics, and the same
+filename can map independently for two model IDs.
+
+This is a small storage-shape migration, not a second persistence framework.
 
 ## Model compatibility profile
 
@@ -151,6 +181,17 @@ capabilities
 Upper-level plugins call this profile. They do not need to know whether the
 model is modern or legacy. Physics remains model-native and continues through
 the Cubism runtime; this layer does not reimplement physics.
+
+## Pointer focus ownership
+
+The pointer path deliberately calls `Live2DModel.focus(x, y)` exactly once and
+does not re-derive normalized coordinates from `model.x`, `model.y`, width, or
+height. The compatibility layer binds the resolved physical IDs to
+`Cubism4InternalModel.idParamEyeBallX/Y` (and corresponding head/body focus
+targets) so the existing `focusController` state is written by the SDK's
+normal `updateFocus()` stage. This keeps scale, offset, model movement, and
+render scale in one geometry chain and avoids idle focus competing with active
+pointer focus.
 
 ## Qwen and voice lessons relevant to Android
 
@@ -221,10 +262,10 @@ branch wholesale.
 
 ## Compact macOS source map
 
-| Capability | PR13 / compatibility source | Android concept |
+| Capability | PR15 / compatibility source | Android concept |
 | --- | --- | --- |
-| Logical parameter and motion resolver | packages/stage-ui-live2d/src/utils/live2d-compatibility.ts | Runtime model profile |
-| Compatibility tests and synthetic fixtures | packages/stage-ui-live2d/src/utils/live2d-compatibility.test.ts | Modern/legacy/partial/ambiguous test fixtures |
+| Logical parameter, runtime discovery, focus binding, and motion resolver | packages/stage-ui-live2d/src/utils/live2d-compatibility.ts | Runtime model profile |
+| Compatibility tests and synthetic fixtures | packages/stage-ui-live2d/src/utils/live2d-compatibility.test.ts | Real-runtime-shape/modern/legacy/partial/ambiguous test fixtures |
 | Parameter application and model lifecycle | packages/stage-ui-live2d/src/components/scenes/live2d/Model.vue | Renderer model binder |
 | Motion plugins, blink, lip sync, breath, beat sync | packages/stage-ui-live2d/src/composables/live2d/motion-manager.ts | Frame/update control layer |
 | Idle eye focus and pointer-compatible gaze | packages/stage-ui-live2d/src/composables/live2d/animation.ts and eye-tracking.ts | Touch/pointer focus adapter |
@@ -244,8 +285,11 @@ is:
 4. an opaque-motion model with no defensible idle candidate.
 
 The resolver tests must assert parameter IDs, capability flags, motion
-confidence, empty-group/index selection, safe unsupported writes, and manual
-override precedence.
+confidence, empty-group/index selection, safe unsupported writes, manual
+override precedence, and the actual runtime-shaped `getModel().parameters`
+fixture. The runtime-shaped fixture intentionally has no
+`getParameterIds()`/`getParameterId()` helpers. Add a two-model same-filename
+mapping test whenever the mapping contract is ported.
 
 ## Failure lessons
 
@@ -261,6 +305,8 @@ override precedence.
 8. Diagnostic harnesses must not become production dependencies.
 9. Full-chain acceptance must include real-device audibility and interruption,
    not only provider lifecycle telemetry.
+10. Synthetic mocks that expose convenient SDK methods can give false
+    confidence; fixtures must match the installed runtime object shape.
 
 ## Evidence and known limits
 
@@ -294,5 +340,9 @@ Known limitations:
 - opaque motion filenames cannot be reliably assigned an emotion;
 - low-confidence mappings must remain manually correctable;
 - physics stays model-native;
+- a model without eye-ball parameters cannot gain gaze tracking; it is marked
+  unsupported while other capabilities continue;
+- automated focus tests cover canonical focus ownership and source
+  render-scale/offset mapping, but not a full GPU visual assertion;
 - visual quality and physics preservation cannot be truthfully marked PASS by
   automated source tests alone.

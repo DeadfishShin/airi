@@ -2,7 +2,7 @@ import type { Cubism4InternalModel, InternalModel } from 'pixi-live2d-display/cu
 import type { Ref } from 'vue'
 
 import type { Live2DBreathControlState, Live2DMotionControlState } from '../../stores/motion-control'
-import type { Live2DCompatibilityProfile, Live2DLogicalParameter } from '../../utils/live2d-compatibility'
+import type { Live2DCompatibilityProfile, Live2DFocusParameterTarget, Live2DLogicalParameter } from '../../utils/live2d-compatibility'
 import type { BeatSyncController } from './beat-sync'
 import type { useExpressionController } from './expression-controller'
 import type { Live2DMotionSpringController } from './motion-control-spring'
@@ -14,7 +14,7 @@ type CubismModel = Cubism4InternalModel['coreModel']
 type CubismEyeBlink = Cubism4InternalModel['eyeBlink']
 
 /** The Pixi internal-model surface that AIRI motion plugins consume. */
-export type PixiLive2DInternalModel = InternalModel & {
+export type PixiLive2DInternalModel = InternalModel & Live2DFocusParameterTarget & {
   /** Cubism's breath controller, which AIRI removes before it applies its own curve. */
   breath?: unknown
   eyeBlink?: CubismEyeBlink

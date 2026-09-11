@@ -32,9 +32,11 @@ import {
   useMotionUpdatePluginManualControl,
 } from '../../../composables/live2d'
 import { useFitModel } from '../../../composables/live2d/fit-model'
-import { Emotion, EmotionNeutralMotionName } from '../../../constants/emotions'
 import { getLive2DMotionControlModelOffset, useL2dViewControl, useLive2DMotionControl, useLive2dParams } from '../../../stores'
-import { createLive2DCompatibilityProfile } from '../../../utils/live2d-compatibility'
+import {
+  bindLive2DFocusParameterTargets,
+  createLive2DCompatibilityProfile,
+} from '../../../utils/live2d-compatibility'
 
 const props = withDefaults(defineProps<{
   modelSrc?: string
@@ -174,7 +176,6 @@ const live2dStore = useLive2dParams()
 const {
   currentMotion,
   availableMotions,
-  motionMap,
   modelParameters,
 } = storeToRefs(live2dStore)
 
@@ -275,14 +276,6 @@ async function performModelLoad() {
 
     const live2DModel = new Live2DModel<PixiLive2DInternalModel>()
     await Live2DFactory.setupLive2DModel(live2DModel, { url: modelSrcRef.value, id: props.modelId }, { autoInteract: false })
-    availableMotions.value.forEach((motion) => {
-      if (motion.motionName in Emotion) {
-        motionMap.value[motion.fileName] = motion.motionName
-      }
-      else {
-        motionMap.value[motion.fileName] = EmotionNeutralMotionName
-      }
-    })
 
     // --- Scene
 
@@ -311,9 +304,13 @@ async function performModelLoad() {
       coreModel,
       groups: modelSettings?.groups ?? modelSettings?.Groups,
       motionDefinitions: motionManager.definitions,
-      motionOverrides: motionMap.value,
+      motionOverrides: live2dStore.getMotionOverrides(props.modelId),
       modelId: props.modelId,
     })
+    // Keep pixi-live2d-display's focus geometry and smoothing as the only
+    // pointer-coordinate authority. The compatibility layer only redirects
+    // Cubism4InternalModel's physical focus targets for legacy IDs.
+    bindLive2DFocusParameterTargets(internalModel, compatibilityProfile.value)
     disableLive2DSdkBreath(internalModel)
     compatibilityProfile.value.setParameter(coreModel, 'mouthOpen', mouthOpenSize.value)
 
@@ -755,18 +752,6 @@ watch(focusAt, (value) => {
     return
 
   model.value.focus(value.x, value.y)
-
-  // pixi-live2d-display's focus helper targets the canonical Cubism IDs. Keep
-  // the same pointer-to-model coordinate semantics for models whose eye IDs
-  // are discovered through the compatibility profile instead.
-  if (compatibilityProfile.value?.capabilities.gazeTracking) {
-    const width = Math.max(1, model.value.width)
-    const height = Math.max(1, model.value.height)
-    const x = Math.max(-1, Math.min(1, (value.x - model.value.x) / (width / 2)))
-    const y = Math.max(-1, Math.min(1, (model.value.y - value.y) / (height / 2)))
-    compatibilityProfile.value.setParameter(model.value.internalModel.coreModel, 'eyeBallX', x)
-    compatibilityProfile.value.setParameter(model.value.internalModel.coreModel, 'eyeBallY', y)
-  }
 })
 
 onMounted(() => {

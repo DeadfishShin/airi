@@ -44,10 +44,20 @@ export interface Live2DCompatibilityCapabilities {
 }
 
 export interface Live2DParameterSource {
+  /** pixi-live2d-display 0.4.0's CubismModel runtime surface. */
+  getModel?: () => {
+    parameters?: {
+      count?: unknown
+      ids?: readonly unknown[]
+    }
+  } | undefined
   getParameterIds?: () => readonly string[]
   getParameterCount?: () => number
   getParameterId?: (index: number) => string
-  parameters?: readonly (string | { id?: string, Id?: string })[]
+  parameters?: readonly (string | { id?: string, Id?: string })[] | {
+    count?: unknown
+    ids?: readonly unknown[]
+  }
 }
 
 export interface Live2DCoreModelParameterTarget {
@@ -75,6 +85,18 @@ export interface Live2DCompatibilityProfileOptions {
   motionDefinitions?: unknown
   motionOverrides?: Readonly<Record<string, string>>
   modelId?: string
+}
+
+export type Live2DMotionOverrideMap = Readonly<Record<string, string>>
+export type Live2DMotionOverridesByModel = Readonly<Record<string, Live2DMotionOverrideMap>>
+
+export interface Live2DFocusParameterTarget {
+  idParamAngleX?: string
+  idParamAngleY?: string
+  idParamAngleZ?: string
+  idParamEyeBallX?: string
+  idParamEyeBallY?: string
+  idParamBodyAngleX?: string
 }
 
 const parameterAliases: Record<Live2DLogicalParameter, readonly string[]> = {
@@ -105,23 +127,62 @@ function uniqueStrings(values: Iterable<string>): string[] {
   return [...new Set([...values].filter(value => value.length > 0))]
 }
 
+function readStringIds(values: readonly unknown[], count?: unknown): string[] {
+  const boundedCount = typeof count === 'number' && Number.isFinite(count) && count >= 0
+    ? Math.min(values.length, Math.floor(count))
+    : values.length
+  const ids: string[] = []
+  for (let index = 0; index < boundedCount; index++) {
+    const value = values[index]
+    if (nonEmptyString(value))
+      ids.push(value)
+  }
+  return uniqueStrings(ids)
+}
+
 export function discoverLive2DParameterIds(source?: Live2DParameterSource): string[] {
   if (!source)
     return []
 
+  // This is the production path for pixi-live2d-display 0.4.0. Its
+  // CubismModel wrapper exposes the underlying Cubism core model through
+  // getModel(), whose stable parameter table is { count, ids }.
+  if (typeof source.getModel === 'function') {
+    try {
+      const parameters = source.getModel()?.parameters
+      if (parameters && Array.isArray(parameters.ids))
+        return readStringIds(parameters.ids, parameters.count)
+    }
+    catch {
+      // Fall through to test/future-runtime compatibility surfaces below.
+    }
+  }
+
+  // Retain these adapters for isolated tests and future SDKs, but production
+  // code never depends on them when the real Cubism surface is available.
   if (typeof source.getParameterIds === 'function') {
-    const ids = source.getParameterIds()
-    if (Array.isArray(ids))
-      return uniqueStrings(ids.filter(nonEmptyString))
+    try {
+      const ids = source.getParameterIds()
+      if (Array.isArray(ids))
+        return uniqueStrings(ids.filter(nonEmptyString))
+    }
+    catch {
+      // Continue to the next compatibility surface.
+    }
   }
 
   if (typeof source.getParameterCount === 'function' && typeof source.getParameterId === 'function') {
     const ids: string[] = []
-    const count = Math.max(0, Math.floor(source.getParameterCount()))
-    for (let index = 0; index < count; index++) {
-      const id = source.getParameterId(index)
-      if (nonEmptyString(id))
-        ids.push(id)
+    try {
+      const count = Math.max(0, Math.floor(source.getParameterCount()))
+      for (let index = 0; index < count; index++) {
+        const id = source.getParameterId(index)
+        if (nonEmptyString(id))
+          ids.push(id)
+      }
+    }
+    catch {
+      return []
     }
     return uniqueStrings(ids)
   }
@@ -133,6 +194,9 @@ export function discoverLive2DParameterIds(source?: Live2DParameterSource): stri
       return [parameter.id, parameter.Id].filter(nonEmptyString)
     }))
   }
+
+  if (isRecord(source.parameters) && Array.isArray(source.parameters.ids))
+    return readStringIds(source.parameters.ids, source.parameters.count)
 
   return []
 }
@@ -172,6 +236,112 @@ function groupIds(groups: Array<{ name: string, ids: string[] }>, name: string):
 
 function pickExisting(ids: ReadonlySet<string>, candidates: readonly string[]): string | undefined {
   return candidates.find(candidate => ids.has(candidate))
+}
+
+/**
+ * Returns only the overrides belonging to the requested model. A missing
+ * identity deliberately returns no overrides, so another model's mapping is
+ * never treated as the current model's fact.
+ */
+export function resolveModelMotionOverrides(
+  value: unknown,
+  modelId?: string,
+): Record<string, string> {
+  if (!nonEmptyString(modelId) || !isRecord(value))
+    return {}
+
+  const modelOverrides = value[modelId]
+  if (!isRecord(modelOverrides))
+    return {}
+
+  return Object.entries(modelOverrides).reduce<Record<string, string>>((result, [fileName, semantic]) => {
+    if (nonEmptyString(semantic))
+      result[fileName] = semantic
+    return result
+  }, {})
+}
+
+/**
+ * Updates the model-scoped map without mutating the caller's state. This also
+ * acts as the small persistence contract used by the store and tests.
+ */
+export function setModelMotionOverride(
+  value: Live2DMotionOverridesByModel | unknown,
+  modelId: string | undefined,
+  fileName: string,
+  semantic: string,
+): Record<string, Record<string, string>> {
+  const next: Record<string, Record<string, string>> = {}
+  if (isRecord(value)) {
+    for (const [key, modelOverrides] of Object.entries(value)) {
+      if (!isRecord(modelOverrides))
+        continue
+      const sanitized = Object.entries(modelOverrides).reduce<Record<string, string>>((result, [fileName, candidate]) => {
+        if (nonEmptyString(candidate))
+          result[fileName] = candidate
+        return result
+      }, {})
+      next[key] = sanitized
+    }
+  }
+
+  if (nonEmptyString(modelId) && nonEmptyString(fileName) && nonEmptyString(semantic)) {
+    const modelMap = next[modelId] ?? {}
+    modelMap[fileName] = semantic
+    next[modelId] = modelMap
+  }
+
+  return next
+}
+
+/**
+ * One-time compatibility migration for the old flat motion map. It requires
+ * an explicit current model identity and never applies the flat map when the
+ * identity is missing. After migration, all reads are model-scoped.
+ */
+export function migrateLegacyMotionOverrides(
+  value: unknown,
+  modelId?: string,
+): Record<string, Record<string, string>> | undefined {
+  if (!nonEmptyString(modelId) || !isRecord(value))
+    return undefined
+
+  const entries = Object.entries(value)
+  if (entries.length === 0 || entries.some(([, candidate]) => isRecord(candidate)))
+    return undefined
+
+  const legacy = entries.reduce<Record<string, string>>((result, [fileName, semantic]) => {
+    if (nonEmptyString(semantic))
+      result[fileName] = semantic
+    return result
+  }, {})
+  return Object.keys(legacy).length > 0 ? { [modelId]: legacy } : undefined
+}
+
+/**
+ * Binds Cubism4InternalModel's built-in focus targets to resolved physical
+ * IDs. Live2DModel.focus() and focusController remain the sole coordinate and
+ * interpolation authority; this only changes where that canonical state is
+ * written for a legacy model.
+ */
+export function bindLive2DFocusParameterTargets(
+  target: Live2DFocusParameterTarget,
+  profile: Pick<Live2DCompatibilityProfile, 'parameterId'>,
+): void {
+  const bindings: Array<[keyof Live2DFocusParameterTarget, Live2DLogicalParameter]> = [
+    ['idParamAngleX', 'angleX'],
+    ['idParamAngleY', 'angleY'],
+    ['idParamAngleZ', 'angleZ'],
+    ['idParamEyeBallX', 'eyeBallX'],
+    ['idParamEyeBallY', 'eyeBallY'],
+    ['idParamBodyAngleX', 'bodyAngleX'],
+  ]
+
+  for (const [key, logical] of bindings) {
+    const id = profile.parameterId(logical)
+    if (id)
+      target[key] = id
+  }
 }
 
 function pickEyeGroupParameter(
