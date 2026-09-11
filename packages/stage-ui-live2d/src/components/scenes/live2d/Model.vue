@@ -3,6 +3,7 @@ import type { Application } from '@pixi/app'
 
 import type { PixiLive2DInternalModel } from '../../../composables/live2d'
 import type { Live2DCompatibilityProfile, Live2DLogicalParameter, Live2DMotionLoopLease } from '../../../utils/live2d-compatibility'
+import type { Live2DLoadRequest } from '../../../utils/live2d-load-ownership'
 
 import { listenBeatSyncBeatSignal } from '@proj-airi/stage-shared/beat-sync'
 import { useTheme } from '@proj-airi/ui'
@@ -41,6 +42,7 @@ import {
   shouldHandoffCompletedSemanticMotionToIdle,
   shouldRestartResolvedIdleMotionOnFinish,
 } from '../../../utils/live2d-compatibility'
+import { createLive2DLoadOwnershipGuard } from '../../../utils/live2d-load-ownership'
 
 const props = withDefaults(defineProps<{
   modelSrc?: string
@@ -97,8 +99,10 @@ const {
 const modelSrcRef = toRef(() => props.modelSrc)
 
 const modelLoading = ref(false)
-// NOTICE: boolean is sufficient; this flag is only used inside loadModel to bail out if the component unmounts mid-load.
+// Every in-flight load is also guarded by a generation. A newer request or
+// unmount invalidates older async results before they can attach to the stage.
 let isUnmounted = false
+const loadOwnership = createLive2DLoadOwnershipGuard()
 
 const modelLoadMutex = new Mutex()
 
@@ -238,18 +242,56 @@ const disposeShouldUpdateView = live2dStore.onShouldUpdateView(() => {
 })
 
 async function loadModel() {
+  const request = loadOwnership.begin(modelSrcRef.value, props.modelId)
+
   await until(modelLoading).not.toBeTruthy()
 
   await modelLoadMutex.acquire()
   try {
-    await performModelLoad()
+    await performModelLoad(request)
   }
   finally {
     modelLoadMutex.release()
   }
 }
 
-async function performModelLoad() {
+function isCurrentLoadRequest(request: Live2DLoadRequest, target?: { app?: Application, stage?: Application['stage'] }) {
+  return loadOwnership.isCurrent(request, {
+    currentModelSrc: modelSrcRef.value,
+    currentModelId: props.modelId,
+    isUnmounted,
+    appIsCurrent: target?.app === undefined ? undefined : pixiApp.value === target.app,
+    stageIsCurrent: target?.stage === undefined ? undefined : pixiApp.value?.stage === target.stage,
+  })
+}
+
+function discardLoadedModel(candidate: Live2DModel<PixiLive2DInternalModel>) {
+  if (model.value === candidate) {
+    expressionController.dispose()
+    internalModelRef.value = undefined
+    compatibilityProfile.value = undefined
+    model.value = undefined
+  }
+
+  try {
+    candidate.parent?.removeChild(candidate)
+  }
+  catch (error) {
+    console.warn('[Live2D] Failed to detach stale model candidate:', error)
+  }
+
+  try {
+    candidate.destroy()
+  }
+  catch (error) {
+    console.warn('[Live2D] Failed to destroy stale model candidate:', error)
+  }
+}
+
+async function performModelLoad(request: Live2DLoadRequest) {
+  if (!isCurrentLoadRequest(request))
+    return
+
   modelLoading.value = true
   componentState.value = 'loading'
   invalidateActiveSemanticMotion()
@@ -267,15 +309,20 @@ async function performModelLoad() {
     }
   }
 
+  const targetApp = pixiApp.value
+  const targetStage = targetApp?.stage
+  if (!targetApp || !targetStage || !isCurrentLoadRequest(request, { app: targetApp, stage: targetStage }))
+    return
+
   // REVIEW: here as await until(...) guarded the pixiApp and stage to be valid.
-  if (model.value && pixiApp.value?.stage) {
+  if (model.value && targetStage) {
     // Dispose expression controller before destroying the old model
     expressionController.dispose()
     internalModelRef.value = undefined
     compatibilityProfile.value = undefined
 
     try {
-      pixiApp.value.stage.removeChild(model.value)
+      targetStage.removeChild(model.value)
       model.value.destroy()
     }
     catch (error) {
@@ -291,7 +338,7 @@ async function performModelLoad() {
   }
 
   try {
-    if (isUnmounted) {
+    if (!isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })) {
       modelLoading.value = false
       componentState.value = 'mounted'
       return
@@ -300,11 +347,17 @@ async function performModelLoad() {
     const live2DModel = new Live2DModel<PixiLive2DInternalModel>()
     await Live2DFactory.setupLive2DModel(live2DModel, { url: modelSrcRef.value, id: props.modelId }, { autoInteract: false })
 
+    // setupLive2DModel is asynchronous. A late candidate must never attach,
+    // install listeners, or reclaim the stage after its request is obsolete.
+    if (!isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })) {
+      discardLoadedModel(live2DModel)
+      return
+    }
+
     // --- Scene
 
     model.value = live2DModel
-    // REVIEW: pixiApp and stage are guaranteed to be valid here due to the until(...) above.
-    pixiApp.value!.stage.addChild(model.value)
+    targetStage.addChild(model.value)
     initialModelWidth.value = model.value.width
     initialModelHeight.value = model.value.height
     model.value.anchor.set(0.5, 0.5)
@@ -403,6 +456,12 @@ async function performModelLoad() {
       if (resolvedNonStandardIdle) {
         const idleMotionObject = motionManager.motionGroups[resolvedNonStandardIdle.group]?.[resolvedNonStandardIdle.index]
           ?? await motionManager.loadMotion(resolvedNonStandardIdle.group, resolvedNonStandardIdle.index)
+        if (!isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })) {
+          if (model.value === live2DModel)
+            model.value = undefined
+          discardLoadedModel(live2DModel)
+          return
+        }
         protectIdleEyeCurves(idleMotionObject)
       }
       else {
@@ -765,7 +824,7 @@ function updateDropShadowFilter() {
   model.value.filters = [dropShadowFilter.value]
 }
 
-watch(modelSrcRef, async () => await loadModel(), { immediate: true })
+watch([modelSrcRef, () => props.modelId], async () => await loadModel(), { immediate: true })
 watch(dark, updateDropShadowFilter, { immediate: true })
 watch([model, themeColorsHue], updateDropShadowFilter)
 watch(live2dShadowEnabled, updateDropShadowFilter)
@@ -947,6 +1006,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true
+  loadOwnership.invalidate()
   invalidateActiveSemanticMotion()
   resizeAnimation?.pause()
   disposeShouldUpdateView?.()

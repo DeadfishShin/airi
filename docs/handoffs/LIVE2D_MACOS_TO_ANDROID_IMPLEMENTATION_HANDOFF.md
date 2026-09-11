@@ -380,3 +380,15 @@ Known limitations:
   render-scale/offset mapping, but not a full GPU visual assertion;
 - visual quality and physics preservation cannot be truthfully marked PASS by
   automated source tests alone.
+
+## Async model-load ownership
+
+Model loading is asynchronous. Every load request receives a generation and
+captures the requested model identity. A loaded result may attach only when its
+generation, model source/id, component, PIXI application, and stage are still
+current. A late result after model replacement or unmount is discarded and its
+newly-created model is destroyed. The latest model selection is authoritative;
+stale completions must never attach, install listeners, or reclaim the stage.
+
+Android should preserve this lifecycle invariant with its own coroutine/job or
+generation mechanism rather than copying Vue, Pixi, or Electron plumbing.
