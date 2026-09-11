@@ -432,18 +432,22 @@ function normalizeSemanticMotion(value: string): Live2DSemanticMotion | undefine
 
 function semanticFromFile(fileName: string): { semantic: Live2DSemanticMotion, confidence: Live2DMotionConfidence } | undefined {
   const key = normalizeKey(motionBaseName(fileName))
+  // Cubism expression clips can be exposed alongside authored body motions.
+  // They may contain an emotion word, but are not the preferred semantic
+  // action candidate when a matching full motion exists in the same model.
+  const confidence = key.includes('expression') ? 'low' : 'high'
   if (/(?:^|\d)(?:idle|wait|standby|normal|breath)(?:\d|$)/.test(key))
-    return { semantic: 'idle', confidence: 'high' }
+    return { semantic: 'idle', confidence }
   if (key.includes('happy'))
-    return { semantic: 'happy', confidence: 'high' }
+    return { semantic: 'happy', confidence }
   if (key.includes('anger') || key.includes('angry'))
-    return { semantic: 'angry', confidence: 'high' }
+    return { semantic: 'angry', confidence }
   if (key.includes('sad'))
-    return { semantic: 'sad', confidence: 'high' }
+    return { semantic: 'sad', confidence }
   if (key.includes('surprise'))
-    return { semantic: 'surprise', confidence: 'high' }
+    return { semantic: 'surprise', confidence }
   if (key.includes('awkward'))
-    return { semantic: 'awkward', confidence: 'high' }
+    return { semantic: 'awkward', confidence }
   if (key.includes('puzzle') || key.includes('doubt'))
     return { semantic: 'think', confidence: 'low' }
   return undefined

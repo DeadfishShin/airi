@@ -279,14 +279,42 @@ describe('live2d compatibility resolver', () => {
   })
 
   it('resolves each Aqua semantic emotion to its authored physical identity', () => {
+    const aquaMotionFiles = [
+      'motions/00_Anger_03.motion3.json',
+      'motions/00_Happy_03.motion3.json',
+      'motions/00_Happy_01.motion3.json',
+      'motions/20_Expression_Tooth_01.motion3.json',
+      'motions/20_Expression_Upset_02.motion3.json',
+      'motions/00_Puzzle_01.motion3.json',
+      'motions/00_Cry_03.motion3.json',
+      'motions/00_Cry_04.motion3.json',
+      'motions/bound.motion3.json',
+      'motions/00_Cry_01.motion3.json',
+      'motions/20_Expression_Serious_01.motion3.json',
+      'motions/20_Expression_Anger_01.motion3.json',
+      'motions/00_Pride_01.motion3.json',
+      'motions/00_Shame_01.motion3.json',
+      'motions/00_Wait_01.motion3.json',
+      'motions/20_Expression_Sad_01.motion3.json',
+      'motions/20_Expression_Shame_01.motion3.json',
+      'motions/20_Expression_Puzzle_01.motion3.json',
+      'motions/00_Serious_01.motion3.json',
+      'motions/00_Upset_01.motion3.json',
+      'motions/20_Expression_Crymouth_01.motion3.json',
+      'motions/bound_double.motion3.json',
+      'motions/00_Doubt_01.motion3.json',
+      'motions/00_Anger_01.motion3.json',
+      'motions/00_Happy_02.motion3.json',
+      'motions/20_Expression_Upset_01.motion3.json',
+      'motions/00_Sad_01.motion3.json',
+      'motions/00_Cry_02.motion3.json',
+      'motions/bound_down.motion3.json',
+      'motions/00_Surprise_01.motion3.json',
+      'motions/00_Anger_02.motion3.json',
+      'motions/20_Expression_Smile_01.motion3.json',
+    ]
     const motionDefinitions = {
-      '': [
-        { File: 'motions/00_Anger_03.motion3.json' },
-        { File: 'motions/00_Happy_03.motion3.json' },
-        { File: 'motions/00_Sad_01.motion3.json' },
-        { File: 'motions/00_Wait_01.motion3.json' },
-        { File: 'motions/00_Surprise_01.motion3.json' },
-      ],
+      '': aquaMotionFiles.map(File => ({ File })),
     }
     const profile = createLive2DCompatibilityProfile({
       parameterIds: [],
@@ -308,13 +336,13 @@ describe('live2d compatibility resolver', () => {
     expect(resolveLive2DMotionRequest(profile, 'Sad', 0, motionDefinitions)).toMatchObject({
       source: 'semantic',
       group: '',
-      index: 2,
+      index: 26,
       fileName: 'motions/00_Sad_01.motion3.json',
     })
     expect(resolveLive2DMotionRequest(profile, 'Surprise', 0, motionDefinitions)).toMatchObject({
       source: 'semantic',
       group: '',
-      index: 4,
+      index: 29,
       fileName: 'motions/00_Surprise_01.motion3.json',
     })
   })

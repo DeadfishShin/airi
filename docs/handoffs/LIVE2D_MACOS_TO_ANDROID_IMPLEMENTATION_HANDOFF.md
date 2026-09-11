@@ -168,6 +168,11 @@ unresolved. Existing runtime motion selection and persistence remain the
 override path: `settings/live2d/current-motion` and the selected runtime motion
 keys remain unchanged. `settings/live2d/motion-map` is now a model-scoped map:
 
+Expression clips can be listed beside body motions and may contain words such
+as `Sad` or `Anger`. Treat those filename matches as lower-confidence than a
+matching authored body motion, so an expression clip does not replace the
+model's actual semantic action candidate.
+
 ~~~text
 modelId → motion filename → semantic motion
 ~~~
