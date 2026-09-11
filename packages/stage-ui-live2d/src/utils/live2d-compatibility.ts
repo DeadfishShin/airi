@@ -34,6 +34,10 @@ export interface Live2DMotionCandidate {
   reason: string
 }
 
+export interface Live2DMotionRequest extends Live2DMotionCandidate {
+  source: 'semantic' | 'physical'
+}
+
 export interface Live2DCompatibilityCapabilities {
   gazeTracking: boolean
   blinking: boolean
@@ -474,6 +478,69 @@ function resolveMotionMap(
   return map
 }
 
+/**
+ * Resolves either an AIRI semantic motion or a direct model motion request.
+ *
+ * A semantic candidate owns its physical group/index. The optional index is
+ * only meaningful for a direct physical group request; it must not turn
+ * `Happy` into another motion merely because its caller used index 0.
+ */
+export function resolveLive2DMotionRequest(
+  profile: Live2DCompatibilityProfile | undefined,
+  motionName: string,
+  requestedIndex: number | undefined,
+  motionDefinitions: unknown,
+): Live2DMotionRequest | undefined {
+  const hasPhysicalGroup = isRecord(motionDefinitions) && Object.hasOwn(motionDefinitions, motionName)
+
+  // A declared group plus an explicit index is the runtime motion picker
+  // contract. This must win over a same-named semantic candidate.
+  if (hasPhysicalGroup && requestedIndex !== undefined) {
+    return {
+      group: motionName,
+      index: requestedIndex,
+      fileName: '',
+      confidence: 'high',
+      reason: 'direct physical motion group request',
+      source: 'physical',
+    }
+  }
+
+  const semanticCandidate = profile?.resolveMotion(motionName, requestedIndex)
+  if (semanticCandidate)
+    return { ...semanticCandidate, source: 'semantic' }
+
+  if (hasPhysicalGroup) {
+    return {
+      group: motionName,
+      index: requestedIndex ?? 0,
+      fileName: '',
+      confidence: 'high',
+      reason: 'direct physical motion group request',
+      source: 'physical',
+    }
+  }
+
+  return undefined
+}
+
+export function shouldRestartResolvedIdleMotionOnFinish(options: {
+  enabled: boolean
+  manualMotionSelected: boolean
+  looping?: boolean
+  canonicalIdleGroup?: string
+  candidate?: Pick<Live2DMotionCandidate, 'group' | 'index'>
+  finishedGroup?: string
+  finishedIndex?: number
+}): boolean {
+  const { enabled, manualMotionSelected, looping, canonicalIdleGroup, candidate, finishedGroup, finishedIndex } = options
+  if (!enabled || manualMotionSelected || looping || !candidate)
+    return false
+  if (candidate.group === canonicalIdleGroup)
+    return false
+  return candidate.group === finishedGroup && candidate.index === finishedIndex
+}
+
 export function createLive2DCompatibilityProfile(options: Live2DCompatibilityProfileOptions = {}): Live2DCompatibilityProfile {
   const parameterIds = uniqueStrings(options.parameterIds ?? discoverLive2DParameterIds(options.coreModel))
   const groups = readGroupEntries(options.groups)
@@ -515,12 +582,10 @@ export function createLive2DCompatibilityProfile(options: Live2DCompatibilityPro
       model.setParameterValueById(id, value)
       return true
     },
-    resolveMotion: (semantic, requestedIndex) => {
+    resolveMotion: (semantic) => {
       const normalized = normalizeSemanticMotion(semantic)
       const candidate = normalized ? motionMap[normalized] : undefined
-      if (!candidate)
-        return undefined
-      return requestedIndex === undefined ? candidate : { ...candidate, index: requestedIndex }
+      return candidate
     },
   }
 }

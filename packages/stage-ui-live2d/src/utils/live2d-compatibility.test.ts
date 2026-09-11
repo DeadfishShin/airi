@@ -5,8 +5,10 @@ import {
   createLive2DCompatibilityProfile,
   discoverLive2DParameterIds,
   migrateLegacyMotionOverrides,
+  resolveLive2DMotionRequest,
   resolveModelMotionOverrides,
   setModelMotionOverride,
+  shouldRestartResolvedIdleMotionOnFinish,
 } from './live2d-compatibility'
 
 function createCoreModel(parameterIds: string[]) {
@@ -241,5 +243,90 @@ describe('live2d compatibility resolver', () => {
     })
     expect(resolveModelMotionOverrides(migrated, 'model-b')).toEqual({})
     expect(migrateLegacyMotionOverrides({ 'motions/foo.motion3.json': 'Happy' })).toBeUndefined()
+  })
+
+  it('keeps a semantic candidate physical index and preserves direct group indices', () => {
+    const motionDefinitions = {
+      '': Array.from({ length: 30 }, (_, index) => ({
+        File: index === 0
+          ? 'motions/00_Anger_03.motion3.json'
+          : index === 1
+            ? 'motions/00_Happy_03.motion3.json'
+            : index === 14
+              ? 'motions/00_Wait_01.motion3.json'
+              : index === 29
+                ? 'motions/00_Surprise_01.motion3.json'
+                : `motions/other_${index}.motion3.json`,
+      })),
+    }
+    const profile = createLive2DCompatibilityProfile({
+      parameterIds: [],
+      motionDefinitions,
+    })
+
+    expect(resolveLive2DMotionRequest(profile, 'Happy', 0, motionDefinitions)).toMatchObject({
+      source: 'semantic',
+      group: '',
+      index: 1,
+    })
+    expect(resolveLive2DMotionRequest(profile, '', 2, motionDefinitions)).toMatchObject({
+      source: 'physical',
+      group: '',
+      index: 2,
+    })
+  })
+
+  it('restarts only the exact finite non-standard idle candidate', () => {
+    const candidate = { group: '', index: 14 }
+
+    expect(shouldRestartResolvedIdleMotionOnFinish({
+      enabled: true,
+      manualMotionSelected: false,
+      canonicalIdleGroup: 'Idle',
+      candidate,
+      finishedGroup: '',
+      finishedIndex: 14,
+    })).toBe(true)
+    expect(shouldRestartResolvedIdleMotionOnFinish({
+      enabled: true,
+      manualMotionSelected: false,
+      canonicalIdleGroup: 'Idle',
+      candidate,
+      finishedGroup: '',
+      finishedIndex: 1,
+    })).toBe(false)
+    expect(shouldRestartResolvedIdleMotionOnFinish({
+      enabled: false,
+      manualMotionSelected: false,
+      canonicalIdleGroup: 'Idle',
+      candidate,
+      finishedGroup: '',
+      finishedIndex: 14,
+    })).toBe(false)
+    expect(shouldRestartResolvedIdleMotionOnFinish({
+      enabled: true,
+      manualMotionSelected: false,
+      looping: true,
+      canonicalIdleGroup: 'Idle',
+      candidate,
+      finishedGroup: '',
+      finishedIndex: 14,
+    })).toBe(false)
+    expect(shouldRestartResolvedIdleMotionOnFinish({
+      enabled: true,
+      manualMotionSelected: true,
+      canonicalIdleGroup: 'Idle',
+      candidate,
+      finishedGroup: '',
+      finishedIndex: 14,
+    })).toBe(false)
+    expect(shouldRestartResolvedIdleMotionOnFinish({
+      enabled: true,
+      manualMotionSelected: false,
+      canonicalIdleGroup: 'Idle',
+      candidate: { group: 'Idle', index: 0 },
+      finishedGroup: 'Idle',
+      finishedIndex: 0,
+    })).toBe(false)
   })
 })

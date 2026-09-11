@@ -69,6 +69,32 @@ export function disableLive2DSdkBreath(internalModel: { breath?: unknown }) {
   delete internalModel.breath
 }
 
+export function isLive2DIdleMotion(options: {
+  currentGroup?: string
+  currentIndex?: number
+  canonicalIdleGroup?: string
+  selectedMotion?: { group: string, index?: number }
+  compatibilityIdle?: { group: string, index: number }
+}): boolean {
+  const { currentGroup, currentIndex, canonicalIdleGroup, selectedMotion, compatibilityIdle } = options
+  if (currentGroup === undefined)
+    return true
+  if (canonicalIdleGroup && currentGroup === canonicalIdleGroup)
+    return true
+
+  const selectedMatches = selectedMotion
+    && currentGroup === selectedMotion.group
+    && (selectedMotion.index === undefined || currentIndex === selectedMotion.index)
+  if (selectedMatches)
+    return true
+
+  return Boolean(
+    compatibilityIdle
+    && currentGroup === compatibilityIdle.group
+    && currentIndex === compatibilityIdle.index,
+  )
+}
+
 function setLogicalParameter(
   ctx: MotionManagerPluginContext,
   logical: Live2DLogicalParameter,
@@ -159,10 +185,20 @@ export function useLive2DMotionManagerUpdate(options: UseLive2DMotionManagerUpda
   function hookUpdate(model: CubismModel, now: number, hookedUpdate?: (model: CubismModel, now: number) => boolean) {
     const timeDelta = lastUpdateTime.value ? now - lastUpdateTime.value : 0
     const selectedMotionGroup = localStorage.getItem('selected-runtime-motion-group')
-    const isIdleMotion = !motionManager.state.currentGroup
-      || motionManager.state.currentGroup === motionManager.groups.idle
-      || (!!selectedMotionGroup && motionManager.state.currentGroup === selectedMotionGroup)
-      || (!!compatibility?.motionMap.idle && motionManager.state.currentGroup === compatibility.motionMap.idle.group)
+    const selectedMotionIndex = localStorage.getItem('selected-runtime-motion-index')
+    const selectedMotion = selectedMotionGroup === null
+      ? undefined
+      : {
+          group: selectedMotionGroup,
+          index: selectedMotionIndex === null ? undefined : Number.parseInt(selectedMotionIndex),
+        }
+    const isIdleMotion = isLive2DIdleMotion({
+      currentGroup: motionManager.state.currentGroup,
+      currentIndex: motionManager.state.currentIndex,
+      canonicalIdleGroup: motionManager.groups.idle,
+      selectedMotion,
+      compatibilityIdle: compatibility?.motionMap.idle,
+    })
 
     const ctx: MotionManagerPluginContext = {
       model,

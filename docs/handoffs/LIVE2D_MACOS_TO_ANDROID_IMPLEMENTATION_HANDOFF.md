@@ -139,6 +139,20 @@ high-confidence candidate, leave idle unresolved and keep the existing manual
 motion selection path. Never select the first Anger/Cry motion as idle merely
 because it exists.
 
+When a semantic name resolves to a candidate, the candidate's exact physical
+group and index are authoritative. A caller-supplied index is only honored for
+a direct physical group request; it must not turn a resolved Happy candidate
+into the first Anger motion. A non-standard idle candidate owns its own
+lifecycle: a finite Wait/Standby motion is restarted with the same group and
+index after completion, while a looping motion is left alone and does not
+create a restart storm. The canonical `Idle` group remains owned by the SDK.
+
+Never promote a mixed source group such as `""` to the SDK Idle group. Idle
+eye-curve suppression is applied only to the resolved idle motion object, so
+sibling Happy/Angry/Sad/Surprise motions retain their authored eye curves.
+Manual runtime motion selection remains higher priority, and disabling idle
+animation prevents automatic restarts.
+
 Semantic mappings are candidates, not facts. Opaque filenames remain
 unresolved. Existing runtime motion selection and persistence remain the
 override path: `settings/live2d/current-motion` and the selected runtime motion
@@ -267,7 +281,7 @@ branch wholesale.
 | Logical parameter, runtime discovery, focus binding, and motion resolver | packages/stage-ui-live2d/src/utils/live2d-compatibility.ts | Runtime model profile |
 | Compatibility tests and synthetic fixtures | packages/stage-ui-live2d/src/utils/live2d-compatibility.test.ts | Real-runtime-shape/modern/legacy/partial/ambiguous test fixtures |
 | Parameter application and model lifecycle | packages/stage-ui-live2d/src/components/scenes/live2d/Model.vue | Renderer model binder |
-| Motion plugins, blink, lip sync, breath, beat sync | packages/stage-ui-live2d/src/composables/live2d/motion-manager.ts | Frame/update control layer |
+| Motion plugins, blink, lip sync, breath, beat sync, exact idle ownership | packages/stage-ui-live2d/src/composables/live2d/motion-manager.ts | Frame/update control layer |
 | Idle eye focus and pointer-compatible gaze | packages/stage-ui-live2d/src/composables/live2d/animation.ts and eye-tracking.ts | Touch/pointer focus adapter |
 | Motion selection persistence | packages/stage-ui-live2d/src/stores/model-parameters.ts and packages/stage-ui/src/components/scenarios/settings/model-settings/live2d.vue | Model-identity mapping storage/UI |
 | Archive/model validation | packages/stage-ui-live2d/src/utils/live2d-validator.ts and live2d-zip-loader.ts | Android import validation |
@@ -285,9 +299,10 @@ is:
 4. an opaque-motion model with no defensible idle candidate.
 
 The resolver tests must assert parameter IDs, capability flags, motion
-confidence, empty-group/index selection, safe unsupported writes, manual
-override precedence, and the actual runtime-shaped `getModel().parameters`
-fixture. The runtime-shaped fixture intentionally has no
+confidence, empty-group/index selection, semantic-index ownership, direct
+physical-index behavior, exact finite-idle restart decisions, mixed-group eye
+ownership, safe unsupported writes, manual override precedence, and the actual
+runtime-shaped `getModel().parameters` fixture. The runtime-shaped fixture intentionally has no
 `getParameterIds()`/`getParameterId()` helpers. Add a two-model same-filename
 mapping test whenever the mapping contract is ported.
 

@@ -36,6 +36,8 @@ import { getLive2DMotionControlModelOffset, useL2dViewControl, useLive2DMotionCo
 import {
   bindLive2DFocusParameterTargets,
   createLive2DCompatibilityProfile,
+  resolveLive2DMotionRequest,
+  shouldRestartResolvedIdleMotionOnFinish,
 } from '../../../utils/live2d-compatibility'
 
 const props = withDefaults(defineProps<{
@@ -352,31 +354,40 @@ async function performModelLoad() {
     }
 
     const idleMotion = compatibilityProfile.value.motionMap.idle
-    if (idleMotion && selectedMotionGroup === null && live2dIdleAnimationEnabled.value) {
+    const resolvedNonStandardIdle = idleMotion
+      && idleMotion.confidence === 'high'
+      && idleMotion.group !== motionManager.groups.idle
+      ? idleMotion
+      : undefined
+    if (idleMotion && idleMotion.confidence === 'high' && selectedMotionGroup === null && live2dIdleAnimationEnabled.value) {
       setTimeout(() => {
         currentMotion.value = { group: idleMotion.group, index: idleMotion.index }
       }, 300)
     }
 
-    // Remove eye ball movements from idle motion group to prevent conflicts
-    // This is too hacky
-    // FIXME: it cannot blink if loading a model only have idle motion
-    const idleMotionGroup = compatibilityProfile.value.motionMap.idle?.group
-    const idleGroupIndex = motionManager.groups.idle
-      ?? (idleMotionGroup !== undefined ? (motionManager.groups as Record<string, any>)[idleMotionGroup] : undefined)
-    if (idleGroupIndex !== undefined) {
-      const eyeBallIds = new Set([
-        compatibilityProfile.value.parameterId('eyeBallX'),
-        compatibilityProfile.value.parameterId('eyeBallY'),
-      ].filter(Boolean))
-      motionManager.motionGroups[idleGroupIndex]?.forEach((motion) => {
-        motion._motionData.curves.forEach((curve: any) => {
-        // TODO: After emotion mapper, stage editor, eye related parameters should be take cared to be dynamical instead of hardcoding
-          if (eyeBallIds.has(curve.id)) {
-            curve.id = `_${curve.id}`
-          }
-        })
+    // Prevent idle eye curves from fighting pointer focus. For a mixed
+    // non-standard source group, only protect the resolved idle candidate;
+    // sibling Happy/Angry/etc. motions must keep their authored curves.
+    const eyeBallIds = new Set([
+      compatibilityProfile.value.parameterId('eyeBallX'),
+      compatibilityProfile.value.parameterId('eyeBallY'),
+    ].filter(Boolean))
+    const protectIdleEyeCurves = (motion: any) => {
+      motion?._motionData?.curves?.forEach((curve: any) => {
+        if (eyeBallIds.has(curve.id))
+          curve.id = `_${curve.id}`
       })
+    }
+    if (eyeBallIds.size > 0) {
+      if (resolvedNonStandardIdle) {
+        const idleMotionObject = motionManager.motionGroups[resolvedNonStandardIdle.group]?.[resolvedNonStandardIdle.index]
+          ?? await motionManager.loadMotion(resolvedNonStandardIdle.group, resolvedNonStandardIdle.index)
+        protectIdleEyeCurves(idleMotionObject)
+      }
+      else {
+        const canonicalIdleGroup = motionManager.groups.idle
+        motionManager.motionGroups[canonicalIdleGroup]?.forEach(protectIdleEyeCurves)
+      }
     }
 
     // This is hacky too
@@ -416,7 +427,9 @@ async function performModelLoad() {
       localCurrentMotion.value = { group, index }
     })
 
-    // Listen for motion finish to restart runtime motion for looping
+    // Listen for motion finish to restart selected runtime motion or a
+    // finite, non-standard compatibility idle. The latter is restarted by
+    // exact group+index; the whole mixed source group is never randomized.
     motionManager.on('motionFinish', () => {
       const selectedMotionGroup = localStorage.getItem('selected-runtime-motion-group')
       const selectedMotionIndex = localStorage.getItem('selected-runtime-motion-index')
@@ -431,8 +444,41 @@ async function performModelLoad() {
             index: Number.parseInt(selectedMotionIndex),
           }
         })
+        return
       }
+
+      if (!resolvedNonStandardIdle)
+        return
+
+      const shouldRestartIdle = shouldRestartResolvedIdleMotionOnFinish({
+        enabled: live2dIdleAnimationEnabled.value,
+        manualMotionSelected: selectedMotionGroup !== null,
+        canonicalIdleGroup: motionManager.groups.idle,
+        candidate: resolvedNonStandardIdle,
+        finishedGroup: motionManager.state.currentGroup,
+        finishedIndex: motionManager.state.currentIndex,
+      })
+      if (!shouldRestartIdle)
+        return
+
+      requestAnimationFrame(() => {
+        if (!live2dIdleAnimationEnabled.value)
+          return
+        if (localStorage.getItem('selected-runtime-motion-group') !== null)
+          return
+        const activeGroup = motionManager.state.currentGroup
+        if (activeGroup && (activeGroup !== resolvedNonStandardIdle.group || motionManager.state.currentIndex !== resolvedNonStandardIdle.index))
+          return
+        currentMotion.value = {
+          group: resolvedNonStandardIdle.group,
+          index: resolvedNonStandardIdle.index,
+        }
+      })
     })
+
+    // The SDK's own idle fallback only knows the canonical `Idle` group. A
+    // resolved non-standard candidate therefore needs the listener above;
+    // canonical groups remain owned by pixi-live2d-display.
 
     // Apply all stored parameters through the resolved logical compatibility map.
     const setLogical = (logical: Live2DLogicalParameter, value: number) => {
@@ -543,16 +589,20 @@ async function setMotion(motionName: string, index?: number) {
     return
   }
 
-  const resolvedMotion = compatibilityProfile.value?.resolveMotion(motionName, index)
-  const resolvedGroup = resolvedMotion?.group ?? motionName
-  const resolvedIndex = resolvedMotion?.index ?? index
   const motionDefinitions = model.value.internalModel.motionManager.definitions
-  const hasDeclaredGroup = Object.hasOwn(motionDefinitions, resolvedGroup)
-  if (!resolvedMotion && !hasDeclaredGroup) {
+  const resolvedRequest = resolveLive2DMotionRequest(
+    compatibilityProfile.value,
+    motionName,
+    index,
+    motionDefinitions,
+  )
+  if (!resolvedRequest) {
     console.warn('Cannot resolve Live2D motion:', motionName)
     return
   }
 
+  const resolvedGroup = resolvedRequest.group
+  const resolvedIndex = resolvedRequest.index
   console.info('Setting motion:', resolvedGroup, 'index:', resolvedIndex)
   try {
     await model.value.motion(resolvedGroup, resolvedIndex, MotionPriority.FORCE)
