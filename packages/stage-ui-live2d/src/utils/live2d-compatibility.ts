@@ -38,6 +38,24 @@ export interface Live2DMotionRequest extends Live2DMotionCandidate {
   source: 'semantic' | 'physical'
 }
 
+/**
+ * The Cubism 4 motion surface used by pixi-live2d-display 0.4.0.  Keeping
+ * this deliberately small lets the semantic-motion policy work without
+ * reaching into Cubism's private queue objects.
+ */
+export interface Live2DMotionLoopSurface {
+  isLoop?: () => boolean
+  setIsLoop?: (loop: boolean) => void
+  getIsLoop?: () => boolean
+  setLoop?: (loop: boolean) => void
+}
+
+export interface Live2DMotionLoopLease {
+  readonly originalLoop: boolean | undefined
+  readonly changed: boolean
+  restore: () => void
+}
+
 export interface Live2DCompatibilityCapabilities {
   gazeTracking: boolean
   blinking: boolean
@@ -522,6 +540,91 @@ export function resolveLive2DMotionRequest(
   }
 
   return undefined
+}
+
+/**
+ * Reads the public loop flag exposed by the installed Cubism motion object.
+ * No private `_motionData`/`_looper` probing is used by production code.
+ */
+export function readLive2DMotionLoopState(motion: unknown): boolean | undefined {
+  if (!isRecord(motion))
+    return undefined
+
+  const surface = motion as Live2DMotionLoopSurface
+  try {
+    if (typeof surface.isLoop === 'function')
+      return surface.isLoop()
+    if (typeof surface.getIsLoop === 'function')
+      return surface.getIsLoop()
+  }
+  catch {
+    return undefined
+  }
+  return undefined
+}
+
+/**
+ * Changes a motion's loop policy through its public runtime API, when one is
+ * available. This is used only for a temporary semantic-action lease.
+ */
+export function writeLive2DMotionLoopState(motion: unknown, loop: boolean): boolean {
+  if (!isRecord(motion))
+    return false
+
+  const surface = motion as Live2DMotionLoopSurface
+  try {
+    if (typeof surface.setIsLoop === 'function') {
+      surface.setIsLoop(loop)
+      return true
+    }
+    if (typeof surface.setLoop === 'function') {
+      surface.setLoop(loop)
+      return true
+    }
+  }
+  catch {
+    return false
+  }
+  return false
+}
+
+/**
+ * Semantic emotion motions are transient AIRI actions even when an asset's
+ * author marked the motion as looping. The lease makes that policy temporary
+ * and restores the author's loop intent when the action ends or is replaced.
+ */
+export function acquireLive2DSemanticMotionLoopLease(motion: unknown): Live2DMotionLoopLease {
+  const originalLoop = readLive2DMotionLoopState(motion)
+  const changed = originalLoop === true && writeLive2DMotionLoopState(motion, false)
+  let restored = false
+
+  return {
+    originalLoop,
+    changed,
+    restore: () => {
+      if (restored || !changed || originalLoop === undefined)
+        return
+      restored = true
+      writeLive2DMotionLoopState(motion, originalLoop)
+    },
+  }
+}
+
+export function shouldHandoffCompletedSemanticMotionToIdle(options: {
+  enabled: boolean
+  manualMotionSelected: boolean
+  active?: Pick<Live2DMotionCandidate, 'group' | 'index'>
+  finishedGroup?: string
+  finishedIndex?: number
+}): boolean {
+  const { enabled, manualMotionSelected, active, finishedGroup, finishedIndex } = options
+  return Boolean(
+    enabled
+    && !manualMotionSelected
+    && active
+    && active.group === finishedGroup
+    && active.index === finishedIndex,
+  )
 }
 
 export function shouldRestartResolvedIdleMotionOnFinish(options: {

@@ -5,7 +5,8 @@
 ~~~text
 PROJECT=DeadfishShin/airi
 MACOS_SOURCE_PR=15
-MACOS_SOURCE_BASE_HEAD=ee4b71853f93f8aa098eba7125d16af3c0a8322d
+MACOS_SOURCE_HEAD=7382e49bec4db8308eb3099c1349b167fca7765c
+MACOS_SOURCE_TREE=69d12a49c9ae63a9cfad41c839001a29bca9a1c1
 COMPATIBILITY_BRANCH=codex/macos-live2d-generic-compatibility-v1
 ~~~
 
@@ -146,6 +147,15 @@ into the first Anger motion. A non-standard idle candidate owns its own
 lifecycle: a finite Wait/Standby motion is restarted with the same group and
 index after completion, while a looping motion is left alone and does not
 create a restart storm. The canonical `Idle` group remains owned by the SDK.
+
+Semantic emotion motions are transient actions. An asset's `Loop=true` flag is
+not permission for a Happy/Angry/Sad/Surprise action to own the model forever:
+the runtime takes a temporary one-shot loop lease, then restores the author's
+loop flag after completion, cancellation, or replacement. Completion hands off
+to the exact resolved idle candidate (for example `""[14]` Wait), never to a
+random member of a mixed source group. A newer semantic action invalidates the
+older completion, so a late callback cannot interrupt the newer owner. Direct
+physical/runtime-picker playback keeps its original user/asset loop policy.
 
 Never promote a mixed source group such as `""` to the SDK Idle group. Idle
 eye-curve suppression is applied only to the resolved idle motion object, so
@@ -322,6 +332,10 @@ mapping test whenever the mapping contract is ported.
    not only provider lifecycle telemetry.
 10. Synthetic mocks that expose convenient SDK methods can give false
     confidence; fixtures must match the installed runtime object shape.
+11. Semantic emotion playback must be one-shot even when third-party motion
+    metadata says `Loop=true`; returning to idle must use the exact resolved
+    candidate rather than randomizing a mixed source group.
+12. A stale motion completion must not reclaim ownership from a newer motion.
 
 ## Evidence and known limits
 

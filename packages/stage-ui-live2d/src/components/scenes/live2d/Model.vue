@@ -2,7 +2,7 @@
 import type { Application } from '@pixi/app'
 
 import type { PixiLive2DInternalModel } from '../../../composables/live2d'
-import type { Live2DCompatibilityProfile, Live2DLogicalParameter } from '../../../utils/live2d-compatibility'
+import type { Live2DCompatibilityProfile, Live2DLogicalParameter, Live2DMotionLoopLease } from '../../../utils/live2d-compatibility'
 
 import { listenBeatSyncBeatSignal } from '@proj-airi/stage-shared/beat-sync'
 import { useTheme } from '@proj-airi/ui'
@@ -34,9 +34,11 @@ import {
 import { useFitModel } from '../../../composables/live2d/fit-model'
 import { getLive2DMotionControlModelOffset, useL2dViewControl, useLive2DMotionControl, useLive2dParams } from '../../../stores'
 import {
+  acquireLive2DSemanticMotionLoopLease,
   bindLive2DFocusParameterTargets,
   createLive2DCompatibilityProfile,
   resolveLive2DMotionRequest,
+  shouldHandoffCompletedSemanticMotionToIdle,
   shouldRestartResolvedIdleMotionOnFinish,
 } from '../../../utils/live2d-compatibility'
 
@@ -203,6 +205,24 @@ const savedEyeBlink = shallowRef<any>(null)
 const savedExpressionManager = shallowRef<any>(null)
 
 const localCurrentMotion = ref<{ group: string, index: number }>({ group: 'Idle', index: 0 })
+interface ActiveSemanticMotion {
+  token: number
+  group: string
+  index: number
+  loopLease: Live2DMotionLoopLease
+}
+
+let semanticMotionToken = 0
+let activeSemanticMotion: ActiveSemanticMotion | undefined
+let pendingSemanticMotion: Pick<ActiveSemanticMotion, 'token' | 'group' | 'index'> | undefined
+
+function invalidateActiveSemanticMotion() {
+  semanticMotionToken += 1
+  activeSemanticMotion?.loopLease.restore()
+  activeSemanticMotion = undefined
+  pendingSemanticMotion = undefined
+}
+
 const beatSync = createBeatSyncController({
   baseAngles: () => ({
     x: modelParameters.value.angleX,
@@ -232,6 +252,7 @@ async function loadModel() {
 async function performModelLoad() {
   modelLoading.value = true
   componentState.value = 'loading'
+  invalidateActiveSemanticMotion()
 
   if (!pixiApp.value || !pixiApp.value.stage) {
     try {
@@ -427,12 +448,61 @@ async function performModelLoad() {
       localCurrentMotion.value = { group, index }
     })
 
-    // Listen for motion finish to restart selected runtime motion or a
-    // finite, non-standard compatibility idle. The latter is restarted by
+    // Listen for semantic-action completion, selected runtime motion restart,
+    // or a finite, non-standard compatibility idle. Every handoff is made by
     // exact group+index; the whole mixed source group is never randomized.
     motionManager.on('motionFinish', () => {
       const selectedMotionGroup = localStorage.getItem('selected-runtime-motion-group')
       const selectedMotionIndex = localStorage.getItem('selected-runtime-motion-index')
+      const finishedGroup = motionManager.state.currentGroup
+      const finishedIndex = motionManager.state.currentIndex
+
+      if (activeSemanticMotion) {
+        const completedSemantic = activeSemanticMotion
+        const isCurrentSemanticMotion = completedSemantic.group === finishedGroup
+          && completedSemantic.index === finishedIndex
+
+        // A completion from an older motion must never steal ownership from a
+        // newer semantic action. The SDK emits this event without the motion
+        // identity, so the current manager state is the authoritative check.
+        if (!isCurrentSemanticMotion)
+          return
+
+        activeSemanticMotion = undefined
+        completedSemantic.loopLease.restore()
+
+        const completionToken = completedSemantic.token
+        const queueExactMotion = (group: string, index: number) => {
+          requestAnimationFrame(() => {
+            if (semanticMotionToken !== completionToken)
+              return
+            currentMotion.value = { group, index }
+          })
+        }
+
+        if (selectedMotionGroup !== null && selectedMotionIndex) {
+          queueExactMotion(selectedMotionGroup, Number.parseInt(selectedMotionIndex))
+          return
+        }
+
+        if (shouldHandoffCompletedSemanticMotionToIdle({
+          enabled: live2dIdleAnimationEnabled.value,
+          manualMotionSelected: selectedMotionGroup !== null,
+          active: completedSemantic,
+          finishedGroup,
+          finishedIndex,
+        }) && resolvedNonStandardIdle) {
+          queueExactMotion(resolvedNonStandardIdle.group, resolvedNonStandardIdle.index)
+        }
+        return
+      }
+
+      // A newer semantic request may still be loading its physical motion.
+      // Ignore the older motion's finish event until that request establishes
+      // its ownership; otherwise the SDK finish callback could queue idle and
+      // steal playback from the newer semantic action.
+      if (pendingSemanticMotion)
+        return
 
       if (selectedMotionGroup !== null && selectedMotionIndex && live2dIdleAnimationEnabled.value) {
         // Restart the selected runtime motion immediately for seamless looping
@@ -455,8 +525,8 @@ async function performModelLoad() {
         manualMotionSelected: selectedMotionGroup !== null,
         canonicalIdleGroup: motionManager.groups.idle,
         candidate: resolvedNonStandardIdle,
-        finishedGroup: motionManager.state.currentGroup,
-        finishedIndex: motionManager.state.currentIndex,
+        finishedGroup,
+        finishedIndex,
       })
       if (!shouldRestartIdle)
         return
@@ -584,12 +654,13 @@ async function initExpressionController(internalModel?: PixiLive2DInternalModel)
 
 async function setMotion(motionName: string, index?: number) {
   // TODO: motion? Not every Live2D model has motion, we do need to help users to set motion
-  if (!model.value) {
+  const currentModel = model.value
+  if (!currentModel) {
     console.warn('Cannot set motion: model not loaded')
     return
   }
 
-  const motionDefinitions = model.value.internalModel.motionManager.definitions
+  const motionDefinitions = currentModel.internalModel.motionManager.definitions
   const resolvedRequest = resolveLive2DMotionRequest(
     compatibilityProfile.value,
     motionName,
@@ -601,14 +672,75 @@ async function setMotion(motionName: string, index?: number) {
     return
   }
 
+  invalidateActiveSemanticMotion()
+  const requestToken = semanticMotionToken
+
   const resolvedGroup = resolvedRequest.group
   const resolvedIndex = resolvedRequest.index
   console.info('Setting motion:', resolvedGroup, 'index:', resolvedIndex)
+
+  // The model's motion metadata is authoritative for direct/manual playback,
+  // but AIRI semantic emotions are transient actions. Temporarily disabling a
+  // looping semantic motion lets the normal SDK finish path run, after which
+  // the listener above hands the model back to the exact resolved idle motion.
+  let loopLease: Live2DMotionLoopLease | undefined
+  if (resolvedRequest.source === 'semantic') {
+    pendingSemanticMotion = {
+      token: requestToken,
+      group: resolvedGroup,
+      index: resolvedIndex,
+    }
+    let motion: Awaited<ReturnType<typeof currentModel.internalModel.motionManager.loadMotion>> | undefined
+    try {
+      motion = await currentModel.internalModel.motionManager.loadMotion(resolvedGroup, resolvedIndex)
+    }
+    catch (error) {
+      if (pendingSemanticMotion?.token === requestToken)
+        pendingSemanticMotion = undefined
+      console.error('Failed to load semantic Live2D motion:', resolvedGroup, resolvedIndex, error)
+      return
+    }
+    if (semanticMotionToken !== requestToken) {
+      return
+    }
+    if (!motion) {
+      if (pendingSemanticMotion?.token === requestToken)
+        pendingSemanticMotion = undefined
+      console.warn('Cannot load Live2D motion:', resolvedGroup, resolvedIndex)
+      return
+    }
+    pendingSemanticMotion = undefined
+    loopLease = acquireLive2DSemanticMotionLoopLease(motion)
+    activeSemanticMotion = {
+      token: requestToken,
+      group: resolvedGroup,
+      index: resolvedIndex,
+      loopLease,
+    }
+  }
+
   try {
-    await model.value.motion(resolvedGroup, resolvedIndex, MotionPriority.FORCE)
+    if (semanticMotionToken !== requestToken) {
+      loopLease?.restore()
+      return
+    }
+    const started = await currentModel.motion(resolvedGroup, resolvedIndex, MotionPriority.FORCE)
+    if (semanticMotionToken !== requestToken) {
+      loopLease?.restore()
+      return
+    }
+    if (!started) {
+      loopLease?.restore()
+      if (activeSemanticMotion?.token === requestToken)
+        activeSemanticMotion = undefined
+      return
+    }
     console.info('Motion started successfully:', resolvedGroup)
   }
   catch (error) {
+    loopLease?.restore()
+    if (activeSemanticMotion?.token === requestToken)
+      activeSemanticMotion = undefined
     console.error('Failed to start motion:', resolvedGroup, error)
   }
 }
@@ -815,6 +947,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true
+  invalidateActiveSemanticMotion()
   resizeAnimation?.pause()
   disposeShouldUpdateView?.()
   expressionController.dispose()

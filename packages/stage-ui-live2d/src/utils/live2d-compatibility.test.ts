@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  acquireLive2DSemanticMotionLoopLease,
   bindLive2DFocusParameterTargets,
   createLive2DCompatibilityProfile,
   discoverLive2DParameterIds,
@@ -8,6 +9,7 @@ import {
   resolveLive2DMotionRequest,
   resolveModelMotionOverrides,
   setModelMotionOverride,
+  shouldHandoffCompletedSemanticMotionToIdle,
   shouldRestartResolvedIdleMotionOnFinish,
 } from './live2d-compatibility'
 
@@ -276,6 +278,47 @@ describe('live2d compatibility resolver', () => {
     })
   })
 
+  it('resolves each Aqua semantic emotion to its authored physical identity', () => {
+    const motionDefinitions = {
+      '': [
+        { File: 'motions/00_Anger_03.motion3.json' },
+        { File: 'motions/00_Happy_03.motion3.json' },
+        { File: 'motions/00_Sad_01.motion3.json' },
+        { File: 'motions/00_Wait_01.motion3.json' },
+        { File: 'motions/00_Surprise_01.motion3.json' },
+      ],
+    }
+    const profile = createLive2DCompatibilityProfile({
+      parameterIds: [],
+      motionDefinitions,
+    })
+
+    expect(resolveLive2DMotionRequest(profile, 'Happy', 0, motionDefinitions)).toMatchObject({
+      source: 'semantic',
+      group: '',
+      index: 1,
+      fileName: 'motions/00_Happy_03.motion3.json',
+    })
+    expect(resolveLive2DMotionRequest(profile, 'Angry', 0, motionDefinitions)).toMatchObject({
+      source: 'semantic',
+      group: '',
+      index: 0,
+      fileName: 'motions/00_Anger_03.motion3.json',
+    })
+    expect(resolveLive2DMotionRequest(profile, 'Sad', 0, motionDefinitions)).toMatchObject({
+      source: 'semantic',
+      group: '',
+      index: 2,
+      fileName: 'motions/00_Sad_01.motion3.json',
+    })
+    expect(resolveLive2DMotionRequest(profile, 'Surprise', 0, motionDefinitions)).toMatchObject({
+      source: 'semantic',
+      group: '',
+      index: 4,
+      fileName: 'motions/00_Surprise_01.motion3.json',
+    })
+  })
+
   it('restarts only the exact finite non-standard idle candidate', () => {
     const candidate = { group: '', index: 14 }
 
@@ -327,6 +370,61 @@ describe('live2d compatibility resolver', () => {
       candidate: { group: 'Idle', index: 0 },
       finishedGroup: 'Idle',
       finishedIndex: 0,
+    })).toBe(false)
+  })
+
+  it('temporarily makes a looping semantic motion transient and restores author intent', () => {
+    const motion = {
+      loop: true,
+      isLoop: vi.fn(function (this: { loop: boolean }) { return this.loop }),
+      setIsLoop: vi.fn(function (this: { loop: boolean }, loop: boolean) { this.loop = loop }),
+    }
+
+    const lease = acquireLive2DSemanticMotionLoopLease(motion)
+
+    expect(lease.originalLoop).toBe(true)
+    expect(lease.changed).toBe(true)
+    expect(motion.loop).toBe(false)
+    expect(motion.setIsLoop).toHaveBeenCalledWith(false)
+
+    lease.restore()
+    lease.restore()
+
+    expect(motion.loop).toBe(true)
+    expect(motion.setIsLoop).toHaveBeenLastCalledWith(true)
+    expect(motion.setIsLoop).toHaveBeenCalledTimes(2)
+  })
+
+  it('hands a completed semantic action to the exact idle candidate only when still current', () => {
+    const candidate = { group: '', index: 14 }
+
+    expect(shouldHandoffCompletedSemanticMotionToIdle({
+      enabled: true,
+      manualMotionSelected: false,
+      active: { group: '', index: 1 },
+      finishedGroup: '',
+      finishedIndex: 1,
+    })).toBe(true)
+    expect(shouldHandoffCompletedSemanticMotionToIdle({
+      enabled: true,
+      manualMotionSelected: false,
+      active: { group: '', index: 1 },
+      finishedGroup: '',
+      finishedIndex: 14,
+    })).toBe(false)
+    expect(shouldHandoffCompletedSemanticMotionToIdle({
+      enabled: true,
+      manualMotionSelected: true,
+      active: candidate,
+      finishedGroup: '',
+      finishedIndex: 14,
+    })).toBe(false)
+    expect(shouldHandoffCompletedSemanticMotionToIdle({
+      enabled: false,
+      manualMotionSelected: false,
+      active: candidate,
+      finishedGroup: '',
+      finishedIndex: 14,
     })).toBe(false)
   })
 })
