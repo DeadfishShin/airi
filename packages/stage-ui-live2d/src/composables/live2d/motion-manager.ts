@@ -2,6 +2,7 @@ import type { Cubism4InternalModel, InternalModel } from 'pixi-live2d-display/cu
 import type { Ref } from 'vue'
 
 import type { Live2DBreathControlState, Live2DMotionControlState } from '../../stores/motion-control'
+import type { Live2DCompatibilityProfile, Live2DFocusParameterTarget, Live2DLogicalParameter } from '../../utils/live2d-compatibility'
 import type { BeatSyncController } from './beat-sync'
 import type { useExpressionController } from './expression-controller'
 import type { Live2DMotionSpringController } from './motion-control-spring'
@@ -13,7 +14,7 @@ type CubismModel = Cubism4InternalModel['coreModel']
 type CubismEyeBlink = Cubism4InternalModel['eyeBlink']
 
 /** The Pixi internal-model surface that AIRI motion plugins consume. */
-export type PixiLive2DInternalModel = InternalModel & {
+export type PixiLive2DInternalModel = InternalModel & Live2DFocusParameterTarget & {
   /** Cubism's breath controller, which AIRI removes before it applies its own curve. */
   breath?: unknown
   eyeBlink?: CubismEyeBlink
@@ -32,6 +33,7 @@ export interface MotionManagerUpdateContext {
 export type MotionManagerPluginContext = MotionManagerUpdateContext & {
   internalModel: PixiLive2DInternalModel
   motionManager: PixiLive2DInternalModel['motionManager']
+  compatibility?: Live2DCompatibilityProfile
   modelParameters: Ref<any>
   live2dEyeTrackingEnabled: Ref<boolean>
   live2dEyeFocusSourceActive: Ref<boolean>
@@ -49,6 +51,7 @@ export type MotionManagerPlugin = (ctx: MotionManagerPluginContext) => void
 export interface UseLive2DMotionManagerUpdateOptions {
   internalModel: PixiLive2DInternalModel
   motionManager: PixiLive2DInternalModel['motionManager']
+  compatibility?: Live2DCompatibilityProfile
   modelParameters: Ref<any>
   live2dEyeTrackingEnabled: Ref<boolean>
   live2dEyeFocusSourceActive: Ref<boolean>
@@ -64,6 +67,55 @@ export interface UseLive2DMotionManagerUpdateOptions {
  */
 export function disableLive2DSdkBreath(internalModel: { breath?: unknown }) {
   delete internalModel.breath
+}
+
+export function isLive2DIdleMotion(options: {
+  currentGroup?: string
+  currentIndex?: number
+  canonicalIdleGroup?: string
+  selectedMotion?: { group: string, index?: number }
+  compatibilityIdle?: { group: string, index: number }
+}): boolean {
+  const { currentGroup, currentIndex, canonicalIdleGroup, selectedMotion, compatibilityIdle } = options
+  if (currentGroup === undefined)
+    return true
+  if (canonicalIdleGroup && currentGroup === canonicalIdleGroup)
+    return true
+
+  const selectedMatches = selectedMotion
+    && currentGroup === selectedMotion.group
+    && (selectedMotion.index === undefined || currentIndex === selectedMotion.index)
+  if (selectedMatches)
+    return true
+
+  return Boolean(
+    compatibilityIdle
+    && currentGroup === compatibilityIdle.group
+    && currentIndex === compatibilityIdle.index,
+  )
+}
+
+function setLogicalParameter(
+  ctx: MotionManagerPluginContext,
+  logical: Live2DLogicalParameter,
+  modernId: string,
+  value: number,
+): boolean {
+  if (ctx.compatibility)
+    return ctx.compatibility.setParameter(ctx.model, logical, value)
+  ctx.model.setParameterValueById(modernId, value)
+  return true
+}
+
+function getLogicalParameter(
+  ctx: MotionManagerPluginContext,
+  logical: Live2DLogicalParameter,
+  modernId: string,
+  fallback = 0,
+): number {
+  if (ctx.compatibility)
+    return ctx.compatibility.getParameter(ctx.model, logical, fallback)
+  return ctx.model.getParameterValueById(modernId) as number
 }
 
 /**
@@ -82,7 +134,7 @@ export function useMotionUpdatePluginBreathControl(
     const state = control.value
     if (!state.active) {
       if (activeOwnerId !== null)
-        ctx.model.setParameterValueById('ParamBreath', ctx.modelParameters.value.breath)
+        setLogicalParameter(ctx, 'breath', 'ParamBreath', ctx.modelParameters.value.breath)
       activeOwnerId = null
       return
     }
@@ -90,7 +142,7 @@ export function useMotionUpdatePluginBreathControl(
     activeOwnerId = state.ownerId
     const elapsedSeconds = Math.max(0, nowMs() - state.startedAtMs) / 1000
     const sample = sampleLive2DBreath(state.options, elapsedSeconds)
-    ctx.model.setParameterValueById('ParamBreath', sample.value)
+    setLogicalParameter(ctx, 'breath', 'ParamBreath', sample.value)
   }
 }
 
@@ -98,6 +150,7 @@ export function useLive2DMotionManagerUpdate(options: UseLive2DMotionManagerUpda
   const {
     internalModel,
     motionManager,
+    compatibility,
     modelParameters,
     live2dEyeTrackingEnabled,
     live2dEyeFocusSourceActive,
@@ -132,9 +185,20 @@ export function useLive2DMotionManagerUpdate(options: UseLive2DMotionManagerUpda
   function hookUpdate(model: CubismModel, now: number, hookedUpdate?: (model: CubismModel, now: number) => boolean) {
     const timeDelta = lastUpdateTime.value ? now - lastUpdateTime.value : 0
     const selectedMotionGroup = localStorage.getItem('selected-runtime-motion-group')
-    const isIdleMotion = !motionManager.state.currentGroup
-      || motionManager.state.currentGroup === motionManager.groups.idle
-      || (!!selectedMotionGroup && motionManager.state.currentGroup === selectedMotionGroup)
+    const selectedMotionIndex = localStorage.getItem('selected-runtime-motion-index')
+    const selectedMotion = selectedMotionGroup === null
+      ? undefined
+      : {
+          group: selectedMotionGroup,
+          index: selectedMotionIndex === null ? undefined : Number.parseInt(selectedMotionIndex),
+        }
+    const isIdleMotion = isLive2DIdleMotion({
+      currentGroup: motionManager.state.currentGroup,
+      currentIndex: motionManager.state.currentIndex,
+      canonicalIdleGroup: motionManager.groups.idle,
+      selectedMotion,
+      compatibilityIdle: compatibility?.motionMap.idle,
+    })
 
     const ctx: MotionManagerPluginContext = {
       model,
@@ -143,6 +207,7 @@ export function useLive2DMotionManagerUpdate(options: UseLive2DMotionManagerUpda
       hookedUpdate,
       internalModel,
       motionManager,
+      compatibility,
       modelParameters,
       live2dEyeTrackingEnabled,
       live2dEyeFocusSourceActive,
@@ -193,9 +258,9 @@ export function useMotionUpdatePluginBeatSync(beatSync: BeatSyncController): Mot
     const damping = 16 // Higher -> Less bounce
     const mass = 1
 
-    let paramAngleX = ctx.model.getParameterValueById('ParamAngleX') as number
-    let paramAngleY = ctx.model.getParameterValueById('ParamAngleY') as number
-    let paramAngleZ = ctx.model.getParameterValueById('ParamAngleZ') as number
+    let paramAngleX = getLogicalParameter(ctx, 'angleX', 'ParamAngleX')
+    let paramAngleY = getLogicalParameter(ctx, 'angleY', 'ParamAngleY')
+    let paramAngleZ = getLogicalParameter(ctx, 'angleZ', 'ParamAngleZ')
 
     // X
     {
@@ -244,9 +309,9 @@ export function useMotionUpdatePluginBeatSync(beatSync: BeatSyncController): Mot
       }
     }
 
-    ctx.model.setParameterValueById('ParamAngleX', paramAngleX)
-    ctx.model.setParameterValueById('ParamAngleY', paramAngleY)
-    ctx.model.setParameterValueById('ParamAngleZ', paramAngleZ)
+    setLogicalParameter(ctx, 'angleX', 'ParamAngleX', paramAngleX)
+    setLogicalParameter(ctx, 'angleY', 'ParamAngleY', paramAngleY)
+    setLogicalParameter(ctx, 'angleZ', 'ParamAngleZ', paramAngleZ)
   }
 }
 
@@ -266,8 +331,8 @@ export function useMotionUpdatePluginIdleDisable(idleEyeFocus = useLive2DIdleEye
       }
 
       // Apply manual eye parameters after auto eye blink
-      ctx.model.setParameterValueById('ParamEyeLOpen', ctx.modelParameters.value.leftEyeOpen)
-      ctx.model.setParameterValueById('ParamEyeROpen', ctx.modelParameters.value.rightEyeOpen)
+      setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', ctx.modelParameters.value.leftEyeOpen)
+      setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', ctx.modelParameters.value.rightEyeOpen)
 
       ctx.markHandled()
     }
@@ -385,8 +450,8 @@ export function useMotionUpdatePluginAutoEyeBlink(
       // Auto-blink OFF: absolute write + markHandled (same as main).
       if (!ctx.live2dAutoBlinkEnabled.value) {
         resetBlinkState()
-        ctx.model.setParameterValueById('ParamEyeLOpen', baseLeft)
-        ctx.model.setParameterValueById('ParamEyeROpen', baseRight)
+        setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', baseLeft)
+        setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', baseRight)
         ctx.markHandled()
         return
       }
@@ -395,18 +460,18 @@ export function useMotionUpdatePluginAutoEyeBlink(
       if (ctx.live2dForceAutoBlinkEnabled.value || !ctx.internalModel.eyeBlink) {
         const safeDt = ctx.timeDelta * 1000 || 16
         const { eyeLOpen, eyeROpen } = updateForcedBlink(safeDt, baseLeft, baseRight)
-        ctx.model.setParameterValueById('ParamEyeLOpen', eyeLOpen)
-        ctx.model.setParameterValueById('ParamEyeROpen', eyeROpen)
+        setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', eyeLOpen)
+        setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', eyeROpen)
         ctx.markHandled()
         return
       }
 
       // SDK eyeBlink path: explicit call → read back → multiply by base → markHandled.
       ctx.internalModel.eyeBlink!.updateParameters(ctx.model, ctx.timeDelta / 1000)
-      const blinkLeft = ctx.model.getParameterValueById('ParamEyeLOpen') as number
-      const blinkRight = ctx.model.getParameterValueById('ParamEyeROpen') as number
-      ctx.model.setParameterValueById('ParamEyeLOpen', clamp01(blinkLeft * baseLeft))
-      ctx.model.setParameterValueById('ParamEyeROpen', clamp01(blinkRight * baseRight))
+      const blinkLeft = getLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', baseLeft)
+      const blinkRight = getLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', baseRight)
+      setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', clamp01(blinkLeft * baseLeft))
+      setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', clamp01(blinkRight * baseRight))
       ctx.markHandled()
       return
     }
@@ -422,10 +487,10 @@ export function useMotionUpdatePluginAutoEyeBlink(
     // Auto-blink OFF: apply manual base values only (multiply with current).
     if (!ctx.live2dAutoBlinkEnabled.value) {
       resetBlinkState()
-      const currentLeft = ctx.model.getParameterValueById('ParamEyeLOpen') as number
-      const currentRight = ctx.model.getParameterValueById('ParamEyeROpen') as number
-      ctx.model.setParameterValueById('ParamEyeLOpen', clamp01(currentLeft * baseLeft))
-      ctx.model.setParameterValueById('ParamEyeROpen', clamp01(currentRight * baseRight))
+      const currentLeft = getLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', baseLeft)
+      const currentRight = getLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', baseRight)
+      setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', clamp01(currentLeft * baseLeft))
+      setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', clamp01(currentRight * baseRight))
       return
     }
 
@@ -433,17 +498,17 @@ export function useMotionUpdatePluginAutoEyeBlink(
     // (eyeBlink is nullified), but guard defensively — just apply multiplier.
     if (!ctx.live2dForceAutoBlinkEnabled.value && ctx.internalModel.eyeBlink != null) {
       resetBlinkState()
-      const currentLeft = ctx.model.getParameterValueById('ParamEyeLOpen') as number
-      const currentRight = ctx.model.getParameterValueById('ParamEyeROpen') as number
-      ctx.model.setParameterValueById('ParamEyeLOpen', clamp01(currentLeft * baseLeft))
-      ctx.model.setParameterValueById('ParamEyeROpen', clamp01(currentRight * baseRight))
+      const currentLeft = getLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', baseLeft)
+      const currentRight = getLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', baseRight)
+      setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', clamp01(currentLeft * baseLeft))
+      setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', clamp01(currentRight * baseRight))
       return
     }
 
     // --- Force Auto Blink: stateful blink for models without idle blink curves ---
 
-    const currentLeft = ctx.model.getParameterValueById('ParamEyeLOpen') as number
-    const currentRight = ctx.model.getParameterValueById('ParamEyeROpen') as number
+    const currentLeft = getLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', baseLeft)
+    const currentRight = getLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', baseRight)
 
     // Skip blink when eyes are already nearly/fully closed (e.g. by expression).
     const BLINK_THRESHOLD = 0.15
@@ -465,8 +530,8 @@ export function useMotionUpdatePluginAutoEyeBlink(
 
     // Blink cycle complete: restore exact pre-blink values.
     if (wasActive && blinkState.phase === 'idle') {
-      ctx.model.setParameterValueById('ParamEyeLOpen', clamp01(preBlinkLeft * baseLeft))
-      ctx.model.setParameterValueById('ParamEyeROpen', clamp01(preBlinkRight * baseRight))
+      setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', clamp01(preBlinkLeft * baseLeft))
+      setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', clamp01(preBlinkRight * baseRight))
       return
     }
 
@@ -475,8 +540,8 @@ export function useMotionUpdatePluginAutoEyeBlink(
       return
 
     // Active blink: saved pre-blink values × blinkFactor.
-    ctx.model.setParameterValueById('ParamEyeLOpen', clamp01(preBlinkLeft * blinkFactorL * baseLeft))
-    ctx.model.setParameterValueById('ParamEyeROpen', clamp01(preBlinkRight * blinkFactorR * baseRight))
+    setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', clamp01(preBlinkLeft * blinkFactorL * baseLeft))
+    setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', clamp01(preBlinkRight * blinkFactorR * baseRight))
   }
 }
 
@@ -513,19 +578,19 @@ export function useMotionUpdatePluginManualControl(
       return
 
     const { eyeX, eyeY, eyeSquint, headX, headY, headZ, bodyX, bodyY, bodyZ, mouthForm, mouthOpen } = output.pose
-    ctx.model.setParameterValueById('ParamEyeBallX', eyeX)
-    ctx.model.setParameterValueById('ParamEyeBallY', eyeY)
+    setLogicalParameter(ctx, 'eyeBallX', 'ParamEyeBallX', eyeX)
+    setLogicalParameter(ctx, 'eyeBallY', 'ParamEyeBallY', eyeY)
     const remainingEyeOpen = 1 - eyeSquint
-    ctx.model.setParameterValueById('ParamEyeLOpen', ctx.model.getParameterValueById('ParamEyeLOpen') * remainingEyeOpen)
-    ctx.model.setParameterValueById('ParamEyeROpen', ctx.model.getParameterValueById('ParamEyeROpen') * remainingEyeOpen)
-    ctx.model.setParameterValueById('ParamAngleX', headX * 30)
-    ctx.model.setParameterValueById('ParamAngleY', headY * 30)
-    ctx.model.setParameterValueById('ParamAngleZ', headZ * 30)
-    ctx.model.setParameterValueById('ParamBodyAngleX', bodyX * 10)
-    ctx.model.setParameterValueById('ParamBodyAngleY', bodyY * 10)
-    ctx.model.setParameterValueById('ParamBodyAngleZ', bodyZ * 10)
-    ctx.model.setParameterValueById('ParamMouthForm', mouthForm)
-    ctx.model.setParameterValueById('ParamMouthOpenY', mouthOpen)
+    setLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', getLogicalParameter(ctx, 'eyeLeftOpen', 'ParamEyeLOpen', 1) * remainingEyeOpen)
+    setLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', getLogicalParameter(ctx, 'eyeRightOpen', 'ParamEyeROpen', 1) * remainingEyeOpen)
+    setLogicalParameter(ctx, 'angleX', 'ParamAngleX', headX * 30)
+    setLogicalParameter(ctx, 'angleY', 'ParamAngleY', headY * 30)
+    setLogicalParameter(ctx, 'angleZ', 'ParamAngleZ', headZ * 30)
+    setLogicalParameter(ctx, 'bodyAngleX', 'ParamBodyAngleX', bodyX * 10)
+    setLogicalParameter(ctx, 'bodyAngleY', 'ParamBodyAngleY', bodyY * 10)
+    setLogicalParameter(ctx, 'bodyAngleZ', 'ParamBodyAngleZ', bodyZ * 10)
+    setLogicalParameter(ctx, 'mouthForm', 'ParamMouthForm', mouthForm)
+    setLogicalParameter(ctx, 'mouthOpen', 'ParamMouthOpenY', mouthOpen)
   }
 }
 
@@ -567,7 +632,7 @@ export function useMotionUpdatePluginLipSync(
       lastForcedValue = mouthOpenSize.value
       releaseRemainingMs = RELEASE_DURATION_MS
       handoffRemainingMs = HANDOFF_HOLD_MS
-      ctx.model.setParameterValueById('ParamMouthOpenY', mouthOpenSize.value)
+      setLogicalParameter(ctx, 'mouthOpen', 'ParamMouthOpenY', mouthOpenSize.value)
       return
     }
 
@@ -578,7 +643,7 @@ export function useMotionUpdatePluginLipSync(
         // idle frame. After the hold we stop owning the parameter and let
         // motion/expression plugins drive it again.
         handoffRemainingMs = Math.max(0, handoffRemainingMs - ctx.timeDelta * 1000)
-        ctx.model.setParameterValueById('ParamMouthOpenY', 0)
+        setLogicalParameter(ctx, 'mouthOpen', 'ParamMouthOpenY', 0)
       }
       return
     }
@@ -587,9 +652,9 @@ export function useMotionUpdatePluginLipSync(
     const blend = smoothstep(1 - releaseRemainingMs / RELEASE_DURATION_MS)
 
     // ParamMouthOpenY was already written by motion + expression plugins this frame.
-    const motionValue = ctx.model.getParameterValueById('ParamMouthOpenY') as number
+    const motionValue = getLogicalParameter(ctx, 'mouthOpen', 'ParamMouthOpenY')
     const blended = lastForcedValue * (1 - blend) + motionValue * blend
 
-    ctx.model.setParameterValueById('ParamMouthOpenY', blended)
+    setLogicalParameter(ctx, 'mouthOpen', 'ParamMouthOpenY', blended)
   }
 }

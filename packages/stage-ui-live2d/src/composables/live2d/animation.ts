@@ -1,5 +1,7 @@
 import type { InternalModel } from 'pixi-live2d-display/cubism4'
 
+import type { Live2DCompatibilityProfile, Live2DCoreModelParameterTarget } from '../../utils/live2d-compatibility'
+
 import { MathUtils } from 'three'
 
 import { randomSaccadeInterval } from '../../utils'
@@ -9,7 +11,7 @@ import { randomSaccadeInterval } from '../../utils'
  * Not using any reactivity here as it's not yet needed.
  * Keeping it here as a composable for future extension.
  */
-export function useLive2DIdleEyeFocus() {
+export function useLive2DIdleEyeFocus(compatibility?: Live2DCompatibilityProfile) {
   let nextSaccadeAfter = -1
   let focusTarget: [number, number] | undefined
   let lastSaccadeAt = -1
@@ -24,10 +26,19 @@ export function useLive2DIdleEyeFocus() {
     }
 
     model.focusController.update(now - lastSaccadeAt)
-    const coreModel = model.coreModel as any
-    // TODO: After emotion mapper, stage editor, eye related parameters should be take cared to be dynamical instead of hardcoding
-    coreModel.setParameterValueById('ParamEyeBallX', MathUtils.lerp(coreModel.getParameterValueById('ParamEyeBallX'), focusTarget![0], 0.3))
-    coreModel.setParameterValueById('ParamEyeBallY', MathUtils.lerp(coreModel.getParameterValueById('ParamEyeBallY'), focusTarget![1], 0.3))
+    const coreModel = model.coreModel as unknown as Live2DCoreModelParameterTarget
+    const currentX = compatibility?.getParameter(coreModel, 'eyeBallX', 0)
+      ?? coreModel.getParameterValueById('ParamEyeBallX')
+    const currentY = compatibility?.getParameter(coreModel, 'eyeBallY', 0)
+      ?? coreModel.getParameterValueById('ParamEyeBallY')
+    if (compatibility) {
+      compatibility.setParameter(coreModel, 'eyeBallX', MathUtils.lerp(currentX, focusTarget![0], 0.3))
+      compatibility.setParameter(coreModel, 'eyeBallY', MathUtils.lerp(currentY, focusTarget![1], 0.3))
+    }
+    else {
+      coreModel.setParameterValueById('ParamEyeBallX', MathUtils.lerp(currentX, focusTarget![0], 0.3))
+      coreModel.setParameterValueById('ParamEyeBallY', MathUtils.lerp(currentY, focusTarget![1], 0.3))
+    }
   }
 
   return { update }
