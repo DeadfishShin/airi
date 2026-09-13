@@ -62,6 +62,17 @@ removes duplicates. It does not probe by writing unknown IDs. Do not assume
 that every SDK has `getParameterIds()` or `getParameterId(index)`; those are
 only compatibility/test adapters here, not the production authority.
 
+## Model cache identity
+
+A cached model payload must be bound to its actual source or revision. A
+logical model ID alone is not sufficient cache identity: imported models may
+reuse an ID while their blob source changes. The macOS OPFS cache therefore
+requires a current schema and an exact recorded source URL for every hit,
+including `blob:` URLs; missing source metadata and older schemas are misses
+and are rebuilt from the current payload. Stale asynchronous loads must not
+poison the cache for a newer source. Android should apply the same invariant
+with its own persistence layer rather than copying OPFS or Electron details.
+
 ## Production flow
 
 The platform-neutral flow is:
@@ -301,6 +312,7 @@ branch wholesale.
 | Motion selection persistence | packages/stage-ui-live2d/src/stores/model-parameters.ts and packages/stage-ui/src/components/scenarios/settings/model-settings/live2d.vue | Model-identity mapping storage/UI |
 | Archive/model validation | packages/stage-ui-live2d/src/utils/live2d-validator.ts and live2d-zip-loader.ts | Android import validation |
 | Existing expression semantics | packages/stage-ui-live2d/src/composables/live2d/expression-controller.ts | Preserve existing expression ownership |
+| Source-bound OPFS model cache | packages/stage-ui-live2d/src/utils/opfs-loader.ts and opfs-loader.test.ts | Bind cached payloads to source/revision; invalidate stale entries |
 
 ## Synthetic fixtures and tests
 
