@@ -407,3 +407,10 @@ generation mechanism rather than copying Vue, Pixi, or Electron plumbing.
 Every terminal stale, invalid-target, error, or successful path must also
 release the loading latch; a late result must not leave the model loader
 permanently waiting.
+
+The renderer-facing model identity is a single resolved ownership unit: the
+model ID and its resolved source must be committed together after source
+resolution. A requested selection must not be exposed as the active render
+identity before its source is ready, and a superseded asynchronous load failure
+must not surface as the current user-visible render error. Durable selection
+state remains separate from this resolved runtime pair.

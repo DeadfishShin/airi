@@ -31,6 +31,15 @@ export function finalizeLive2DLoadState(state: Live2DLoadState, isUnmounted: boo
 }
 
 /**
+ * Load failures are renderer-visible only while the corresponding request
+ * still owns the current model slot. Ownership itself is evaluated by the
+ * generation/identity/app/stage guard at the call site.
+ */
+export function shouldEmitLive2DLoadError(requestIsCurrent: boolean): boolean {
+  return requestIsCurrent
+}
+
+/**
  * Gives every model-load attempt an ownership generation. A completed async
  * load may commit only while its generation and model identity are current.
  */

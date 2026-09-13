@@ -91,6 +91,7 @@ const {
   stageViewControlsEnabled,
   stageModelSelectedUrl,
   stageModelSelected,
+  stageModelResolved,
   themeColorsHue,
   themeColorsHueDynamic,
 
@@ -206,7 +207,7 @@ async function retryStageRenderer() {
   showStage.value = true
 }
 
-watch([stageModelRenderer, stageModelSelected, stageModelSelectedUrl], () => {
+watch([stageModelRenderer, stageModelSelected, stageModelSelectedUrl, stageModelResolved], () => {
   stageRenderError.value = undefined
 })
 
@@ -1263,13 +1264,13 @@ defineExpose({
 
     <div relative h-full w-full>
       <Live2DScene
-        v-if="stageModelRenderer === 'live2d' && showStage"
+        v-if="stageModelRenderer === 'live2d' && stageModelResolved?.renderer === 'live2d' && showStage"
         ref="live2dSceneRef"
         v-model:state="componentState"
         min-w="50% <lg:full" min-h="100 sm:100"
         h-full w-full flex-1
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
+        :model-src="stageModelResolved?.modelSrc"
+        :model-id="stageModelResolved?.modelId"
         :cursor-position="cursorPosition"
         :mouth-open-size="mouthOpenSize"
         :now-speaking="nowSpeaking"
@@ -1282,11 +1283,11 @@ defineExpose({
         @error="handleStageRenderError"
       />
       <ThreeScene
-        v-if="stageModelRenderer === 'vrm' && showStage"
+        v-if="stageModelRenderer === 'vrm' && stageModelResolved?.renderer === 'vrm' && showStage"
         ref="vrmViewerRef"
         v-model:state="componentState"
         min-w="50% <lg:full" min-h="100 sm:100" h-full w-full flex-1
-        :model-src="stageModelSelectedUrl"
+        :model-src="stageModelResolved?.modelSrc"
         :cursor-position="cursorPosition"
         :idle-animation="animations.idleLoop.toString()"
         :paused="paused"
@@ -1297,13 +1298,13 @@ defineExpose({
         @vrm-interact="onVRMInteract"
       />
       <SpineScene
-        v-if="stageModelRenderer === 'spine' && showStage"
+        v-if="stageModelRenderer === 'spine' && stageModelResolved?.renderer === 'spine' && showStage"
         ref="spineSceneRef"
         v-model:state="componentState"
         min-w="50% <lg:full" min-h="100 sm:100"
         h-full w-full flex-1
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
+        :model-src="stageModelResolved?.modelSrc"
+        :model-id="stageModelResolved?.modelId"
         :paused="paused"
         :premultiplied-alpha="spinePremultipliedAlpha"
         :default-mix-duration="spineDefaultMixDuration"
@@ -1312,26 +1313,26 @@ defineExpose({
         :render-scale="spineRenderScale"
       />
       <TachieScene
-        v-if="stageModelRenderer === 'tachie' && showStage"
+        v-if="stageModelRenderer === 'tachie' && stageModelResolved?.renderer === 'tachie' && showStage"
         ref="tachieSceneRef"
         v-model:state="componentState"
         min-w="50% <lg:full" min-h="100 sm:100"
         h-full w-full flex-1
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
+        :model-src="stageModelResolved?.modelSrc"
+        :model-id="stageModelResolved?.modelId"
         :paused="paused"
         :theme-colors-hue="themeColorsHue"
         :theme-colors-hue-dynamic="themeColorsHueDynamic"
         @error="console.error"
       />
       <MMDScene
-        v-if="stageModelRenderer === 'mmd' && showStage"
+        v-if="stageModelRenderer === 'mmd' && stageModelResolved?.renderer === 'mmd' && showStage"
         ref="mmdSceneRef"
         v-model:state="componentState"
         min-w="50% <lg:full" min-h="100 sm:100"
         h-full w-full flex-1
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
+        :model-src="stageModelResolved?.modelSrc"
+        :model-id="stageModelResolved?.modelId"
         :paused="paused"
         :cursor-position="cursorPosition"
         :enable-orbit-controls="props.enableOrbitControls"
@@ -1363,7 +1364,7 @@ defineExpose({
         v-if="stageRenderError"
         :error="stageRenderError"
         renderer="Live2D"
-        :model-id="stageModelSelected"
+        :model-id="stageModelResolved?.modelId ?? stageModelSelected"
         @retry="retryStageRenderer"
       />
     </div>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createLive2DLoadOwnershipGuard, finalizeLive2DLoadState } from './live2d-load-ownership'
+import { createLive2DLoadOwnershipGuard, finalizeLive2DLoadState, shouldEmitLive2DLoadError } from './live2d-load-ownership'
 
 type LoadState = Parameters<ReturnType<typeof createLive2DLoadOwnershipGuard>['isCurrent']>[1]
 
@@ -108,5 +108,43 @@ describe('live2d load ownership', () => {
     const request = ownership.begin('model-a', 'a')
 
     expect(ownership.isCurrent(request, state({ currentModelSrc: 'model-b', currentModelId: 'b' }))).toBe(false)
+  })
+
+  it('does not emit a failed fetch error after the request becomes stale', () => {
+    const ownership = createLive2DLoadOwnershipGuard()
+    const requestA = ownership.begin('model-a', 'a')
+    ownership.begin('model-b', 'b')
+    const emitError = () => 'stale error emitted'
+
+    const error = shouldEmitLive2DLoadError(ownership.isCurrent(requestA, state()))
+      ? emitError()
+      : undefined
+
+    expect(error).toBeUndefined()
+  })
+
+  it('emits a load error while the current request still owns the slot', () => {
+    const ownership = createLive2DLoadOwnershipGuard()
+    const request = ownership.begin('model-a', 'a')
+    const emitError = () => 'current error emitted'
+
+    const error = shouldEmitLive2DLoadError(ownership.isCurrent(request, state()))
+      ? emitError()
+      : undefined
+
+    expect(error).toBe('current error emitted')
+  })
+
+  it('keeps a stale failure from affecting a newer successful request', () => {
+    const ownership = createLive2DLoadOwnershipGuard()
+    const requestA = ownership.begin('model-a', 'a')
+    const requestB = ownership.begin('model-b', 'b')
+    const staleError = shouldEmitLive2DLoadError(ownership.isCurrent(requestA, state()))
+      ? new Error('stale failure')
+      : undefined
+    const currentResult = ownership.isCurrent(requestB, state({ currentModelSrc: 'model-b', currentModelId: 'b' }))
+
+    expect(staleError).toBeUndefined()
+    expect(currentResult).toBe(true)
   })
 })

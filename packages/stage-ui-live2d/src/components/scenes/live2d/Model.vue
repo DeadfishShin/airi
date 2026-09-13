@@ -42,7 +42,7 @@ import {
   shouldHandoffCompletedSemanticMotionToIdle,
   shouldRestartResolvedIdleMotionOnFinish,
 } from '../../../utils/live2d-compatibility'
-import { createLive2DLoadOwnershipGuard, finalizeLive2DLoadState } from '../../../utils/live2d-load-ownership'
+import { createLive2DLoadOwnershipGuard, finalizeLive2DLoadState, shouldEmitLive2DLoadError } from '../../../utils/live2d-load-ownership'
 
 const props = withDefaults(defineProps<{
   modelSrc?: string
@@ -299,6 +299,9 @@ async function performModelLoad(request: Live2DLoadRequest) {
   // Once the loading latch is raised, every terminal path below must pass
   // through the finalizer. This includes stale requests that resume after
   // waiting for a recreated PIXI stage.
+  let targetApp: Application | undefined
+  let targetStage: Application['stage'] | undefined
+
   try {
     if (!pixiApp.value || !pixiApp.value.stage) {
       try {
@@ -311,8 +314,8 @@ async function performModelLoad(request: Live2DLoadRequest) {
       }
     }
 
-    const targetApp = pixiApp.value
-    const targetStage = targetApp?.stage
+    targetApp = pixiApp.value
+    targetStage = targetApp?.stage
     if (!targetApp || !targetStage || !isCurrentLoadRequest(request, { app: targetApp, stage: targetStage }))
       return
 
@@ -332,7 +335,8 @@ async function performModelLoad(request: Live2DLoadRequest) {
       }
       model.value = undefined
     }
-    if (!modelSrcRef.value) {
+    const requestModelSrc = request.modelSrc
+    if (!requestModelSrc) {
       console.warn('No Live2D model source provided.')
       return
     }
@@ -342,7 +346,7 @@ async function performModelLoad(request: Live2DLoadRequest) {
     }
 
     const live2DModel = new Live2DModel<PixiLive2DInternalModel>()
-    await Live2DFactory.setupLive2DModel(live2DModel, { url: modelSrcRef.value, id: props.modelId }, { autoInteract: false })
+    await Live2DFactory.setupLive2DModel(live2DModel, { url: requestModelSrc, id: request.modelId }, { autoInteract: false })
 
     // setupLive2DModel is asynchronous. A late candidate must never attach,
     // install listeners, or reclaim the stage after its request is obsolete.
@@ -377,8 +381,8 @@ async function performModelLoad(request: Live2DLoadRequest) {
       coreModel,
       groups: modelSettings?.groups ?? modelSettings?.Groups,
       motionDefinitions: motionManager.definitions,
-      motionOverrides: live2dStore.getMotionOverrides(props.modelId),
-      modelId: props.modelId,
+      motionOverrides: live2dStore.getMotionOverrides(request.modelId),
+      modelId: request.modelId,
     })
     // Keep pixi-live2d-display's focus geometry and smoothing as the only
     // pointer-coordinate authority. The compatibility layer only redirects
@@ -663,6 +667,12 @@ async function performModelLoad(request: Live2DLoadRequest) {
   }
   catch (error) {
     console.error('[Live2D] Failed to load model:', error)
+    const requestIsCurrent = isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })
+    if (!shouldEmitLive2DLoadError(requestIsCurrent)) {
+      console.warn('[Live2D] Suppressed stale load error:', error)
+      return
+    }
+
     emits('error', error instanceof Error ? error : new Error(String(error)))
   }
   finally {
