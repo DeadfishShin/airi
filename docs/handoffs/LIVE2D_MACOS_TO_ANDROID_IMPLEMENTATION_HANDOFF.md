@@ -414,3 +414,12 @@ resolution. A requested selection must not be exposed as the active render
 identity before its source is ready, and a superseded asynchronous load failure
 must not surface as the current user-visible render error. Durable selection
 state remains separate from this resolved runtime pair.
+
+## Motion curve traversal compatibility
+
+Third-party `motion3.json` assets can contain noncontiguous target sections.
+An implementation that assumes contiguous `Model`, `Parameter`, and
+`PartOpacity` sections can silently skip valid authored curves. Android must
+audit its Cubism motion traversal and either visit every curve by target type
+or apply an equivalent generic compatibility repair. Do not rewrite
+third-party motion assets merely to satisfy a runtime ordering assumption.
