@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
+import { DisplayModelBinaryUnreadableError, DisplayModelPersistenceWriteError } from '../display-model-persistence'
 import { DisplayModelFormat, useDisplayModelsStore } from '../display-models'
 import { useSettingsStageModel } from './stage-model'
 
@@ -72,6 +73,62 @@ describe('settings stage model store', () => {
     expect(store.stageModelRenderer).toBe('live2d')
     expect(getDisplayModelSpy).toHaveBeenCalledWith('display-model-missing')
     expect(getDisplayModelSpy).toHaveBeenCalledWith(fallbackModel.id)
+  })
+
+  it('degrades to a disabled stage while preserving an unreadable custom selection', async () => {
+    const unreadableModelId = 'display-model-unreadable'
+    const unreadableError = new DisplayModelBinaryUnreadableError(unreadableModelId, new Error('NotFoundError'))
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockRejectedValue(unreadableError)
+
+    const store = useSettingsStageModel()
+    store.stageModelSelected = unreadableModelId
+
+    await expect(store.initializeStageModel()).resolves.toBeUndefined()
+
+    expect(store.stageModelSelected).toBe(unreadableModelId)
+    expect(store.stageModelSelectedDisplayModel).toBeUndefined()
+    expect(store.stageModelSelectedUrl).toBeUndefined()
+    expect(store.stageModelResolved).toBeUndefined()
+    expect(store.stageModelRenderer).toBe('disabled')
+  })
+
+  it('does not swallow display-model persistence write failures', async () => {
+    const modelId = 'preset-live2d-1'
+    const persistenceError = new DisplayModelPersistenceWriteError(modelId, new Error('quota'))
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockRejectedValue(persistenceError)
+
+    const store = useSettingsStageModel()
+
+    await expect(store.updateStageModel()).rejects.toBe(persistenceError)
+  })
+
+  it('does not swallow unexpected display-model errors', async () => {
+    const unexpectedError = new Error('unexpected failure')
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockRejectedValue(unexpectedError)
+
+    const store = useSettingsStageModel()
+
+    await expect(store.updateStageModel()).rejects.toBe(unexpectedError)
+  })
+
+  it('degrades safely when the selection watcher updates an unreadable custom model', async () => {
+    const unreadableModelId = 'display-model-watched-unreadable'
+    const unreadableError = new DisplayModelBinaryUnreadableError(unreadableModelId, new Error('NotFoundError'))
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockRejectedValue(unreadableError)
+
+    const store = useSettingsStageModel()
+    store.stageModelSelected = unreadableModelId
+
+    await nextTick()
+    await Promise.resolve()
+
+    expect(store.stageModelSelected).toBe(unreadableModelId)
+    expect(store.stageModelResolved).toBeUndefined()
+    expect(store.stageModelRenderer).toBe('disabled')
   })
 
   it('routes Tachie archives to the Tachie renderer', async () => {

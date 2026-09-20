@@ -7,7 +7,7 @@ import { refManualReset, useEventListener } from '@vueuse/core'
 import { defineStore, storeToRefs } from 'pinia'
 import { computed, shallowRef, watch } from 'vue'
 
-import { DisplayModelFormat, useDisplayModelsStore } from '../display-models'
+import { DisplayModelBinaryUnreadableError, DisplayModelFormat, useDisplayModelsStore } from '../display-models'
 
 export type StageModelRenderer = 'live2d' | 'vrm' | 'spine' | 'tachie' | 'mmd' | 'godot' | 'disabled' | undefined
 export type BuiltInStageModelRenderer = Exclude<StageModelRenderer, 'godot'>
@@ -132,7 +132,21 @@ export const useSettingsStageModel = defineStore('settings-stage-model', () => {
       return
     }
 
-    const model = await displayModelsStore.getDisplayModel(selectedModelId)
+    let model: DisplayModel | undefined
+    try {
+      model = await displayModelsStore.getDisplayModel(selectedModelId)
+    }
+    catch (error) {
+      if (!(error instanceof DisplayModelBinaryUnreadableError))
+        throw error
+
+      // Keep the durable selection so the model selector can expose its repair
+      // action. The stage must publish no resolved model while its source is
+      // unreadable, and later selection changes can retry through this seam.
+      if (requestId === stageModelUpdateSequence)
+        clearResolvedStageModel()
+      return
+    }
     if (requestId !== stageModelUpdateSequence)
       return
 
