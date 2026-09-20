@@ -1122,7 +1122,7 @@ onMounted(async () => {
 })
 
 watch([stageModelRenderer, () => props.paused], ([renderer]) => {
-  if (renderer === 'godot') {
+  if (renderer === 'godot' || renderer === 'disabled') {
     componentState.value = 'mounted'
   }
 
