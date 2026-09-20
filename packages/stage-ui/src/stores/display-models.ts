@@ -13,6 +13,8 @@ import {
   serializeDisplayModelFile,
 } from './display-model-persistence'
 
+export { DisplayModelBinaryUnreadableError } from './display-model-persistence'
+
 export enum DisplayModelFormat {
   Live2dZip = 'live2d-zip',
   Live2dDirectory = 'live2d-directory',
@@ -27,6 +29,16 @@ export enum DisplayModelFormat {
 export type DisplayModel
   = | DisplayModelFile
     | DisplayModelURL
+
+export interface UnreadableDisplayModelMetadata {
+  id: string
+  format: DisplayModelFormat
+  type: 'file'
+  name: string
+  fileName?: string
+  previewImage?: string
+  importedAt: number
+}
 
 const presetLive2dProUrl = new URL('../assets/live2d/models/hiyori_pro_zh.zip', import.meta.url).href
 const presetLive2dFreeUrl = new URL('../assets/live2d/models/hiyori_free_zh.zip', import.meta.url).href
@@ -74,17 +86,53 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
 
   const displayModelsFromIndexedDBLoading = ref(false)
   const displayModelLoadErrors = ref<Record<string, DisplayModelBinaryUnreadableError>>({})
+  const displayModelLoadErrorMetadata = ref<Record<string, UnreadableDisplayModelMetadata>>({})
 
   const isCustomDisplayModelId = (id: string) => id.startsWith('display-model-')
 
-  function rememberLoadError(id: string, error: unknown) {
+  function rememberLoadError(id: string, error: unknown, value?: unknown) {
     if (error instanceof DisplayModelBinaryUnreadableError) {
       displayModelLoadErrors.value = { ...displayModelLoadErrors.value, [id]: error }
-      return
+    }
+    else {
+      const wrappedError = new DisplayModelBinaryUnreadableError(id, error)
+      displayModelLoadErrors.value = { ...displayModelLoadErrors.value, [id]: wrappedError }
     }
 
-    const wrappedError = new DisplayModelBinaryUnreadableError(id, error)
-    displayModelLoadErrors.value = { ...displayModelLoadErrors.value, [id]: wrappedError }
+    const metadata = readUnreadableDisplayModelMetadata(id, value)
+    if (metadata) {
+      displayModelLoadErrorMetadata.value = {
+        ...displayModelLoadErrorMetadata.value,
+        [id]: metadata,
+      }
+    }
+  }
+
+  function readUnreadableDisplayModelMetadata(id: string, value: unknown): UnreadableDisplayModelMetadata | undefined {
+    if (!value || typeof value !== 'object')
+      return undefined
+
+    const record = value as {
+      format?: unknown
+      type?: unknown
+      name?: unknown
+      previewImage?: unknown
+      importedAt?: unknown
+      file?: { name?: unknown }
+    }
+    if (record.type !== 'file' || typeof record.format !== 'string' || typeof record.importedAt !== 'number')
+      return undefined
+
+    const fileName = typeof record.file?.name === 'string' ? record.file.name : undefined
+    return {
+      id,
+      format: record.format as DisplayModelFormat,
+      type: 'file',
+      name: typeof record.name === 'string' ? record.name : fileName ?? id,
+      fileName,
+      previewImage: typeof record.previewImage === 'string' ? record.previewImage : undefined,
+      importedAt: record.importedAt,
+    }
   }
 
   async function persistRecord(id: string, value: unknown) {
@@ -123,6 +171,7 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     displayModelsFromIndexedDBLoading.value = true
     const models = [...displayModelsPresets]
     displayModelLoadErrors.value = {}
+    displayModelLoadErrorMetadata.value = {}
 
     try {
       const keys = (await localforage.keys()).filter(key => isCustomDisplayModelId(key))
@@ -137,7 +186,7 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
         catch (error) {
           if (error instanceof DisplayModelPersistenceWriteError)
             throw error
-          rememberLoadError(id, error)
+          rememberLoadError(id, error, value)
         }
       }
 
@@ -173,7 +222,7 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
       }
       catch (error) {
         if (!(error instanceof DisplayModelPersistenceWriteError))
-          rememberLoadError(id, error)
+          rememberLoadError(id, error, modelFromFile)
         throw error
       }
     }
@@ -296,6 +345,9 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     const remainingErrors = { ...displayModelLoadErrors.value }
     delete remainingErrors[existingModelId]
     displayModelLoadErrors.value = remainingErrors
+    const remainingMetadata = { ...displayModelLoadErrorMetadata.value }
+    delete remainingMetadata[existingModelId]
+    displayModelLoadErrorMetadata.value = remainingMetadata
     return hydratedReplacement
   }
 
@@ -306,6 +358,9 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     const remainingErrors = { ...displayModelLoadErrors.value }
     delete remainingErrors[id]
     displayModelLoadErrors.value = remainingErrors
+    const remainingMetadata = { ...displayModelLoadErrorMetadata.value }
+    delete remainingMetadata[id]
+    displayModelLoadErrorMetadata.value = remainingMetadata
   }
 
   async function resetDisplayModels() {
@@ -351,6 +406,7 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     displayModels,
     displayModelsFromIndexedDBLoading,
     displayModelLoadErrors,
+    displayModelLoadErrorMetadata,
 
     initialize,
     loadDisplayModelsFromIndexedDB,

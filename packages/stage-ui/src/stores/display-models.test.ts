@@ -76,6 +76,13 @@ describe('display models store', () => {
     await store.loadDisplayModelsFromIndexedDB()
 
     await expect(store.getDisplayModel(modelId)).rejects.toMatchObject({ code: 'LEGACY_DISPLAY_MODEL_BINARY_UNREADABLE' })
+    expect(store.displayModelLoadErrorMetadata[modelId]).toEqual(expect.objectContaining({
+      id: modelId,
+      format: DisplayModelFormat.Live2dZip,
+      name: 'Aqua',
+      fileName: '1014100aqua.zip',
+      importedAt: 22,
+    }))
 
     const repaired = await store.replaceDisplayModelFilePayload(modelId, new File(['replacement'], 'replacement.zip', { type: 'application/zip' }))
     expect(repaired.id).toBe(modelId)
