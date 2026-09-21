@@ -362,11 +362,15 @@ microphone speech, Qwen ASR, AIRI generation, DeepSeek V4 Flash, Serena
 playback, and barge-in. An instrumented observer previously produced a
 false-negative speech observation; it must not override Owner product evidence.
 
-The new compatibility behavior still requires Owner visual validation on the
-original, unmodified Aqua ZIP:
+The current PR15 candidate has completed Owner validation on the original,
+unmodified Aqua runtime for persistence/reload, idle/wait stability, semantic
+Happy/Angry/Sad/Surprise playback, Angry-to-Wait face release, physics,
+hand/chest reference matching, and idle-gaze ownership. The checklist below is
+retained as a reusable Android-port validation guide rather than an open PR15
+gate:
 
 ~~~text
-OWNER_RUNTIME_REQUIRED=NEEDS_OWNER_RUNTIME_VALIDATION
+OWNER_RUNTIME_REQUIRED=COMPLETED_CURRENT_PR15_OWNER_VALIDATION
 ~~~
 
 Shortest validation:
