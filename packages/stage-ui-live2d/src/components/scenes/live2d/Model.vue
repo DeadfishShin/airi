@@ -103,6 +103,7 @@ const modelLoading = ref(false)
 // unmount invalidates older async results before they can attach to the stage.
 let isUnmounted = false
 const loadOwnership = createLive2DLoadOwnershipGuard()
+let refreshCompatibilityProfile: (() => void) | undefined
 
 const modelLoadMutex = new Mutex()
 
@@ -118,6 +119,15 @@ const paused = toRef(() => props.paused)
 const focusAt = toRef(() => props.focusAt)
 const model = shallowRef<Live2DModel<PixiLive2DInternalModel>>()
 const compatibilityProfile = shallowRef<Live2DCompatibilityProfile>()
+// Keep plugin registrations stable while allowing a model-scoped mapping to
+// refresh the resolver in place. The proxy delegates every read to the latest
+// resolved profile, so no model reload or duplicate motion pipeline is needed.
+const compatibilityRuntime = new Proxy({} as Live2DCompatibilityProfile, {
+  get(_target, property: keyof Live2DCompatibilityProfile) {
+    const profile = compatibilityProfile.value
+    return profile?.[property]
+  },
+})
 const initialModelWidth = ref<number>(0)
 const initialModelHeight = ref<number>(0)
 const mouthOpenSize = computed(() => Math.max(0, Math.min(100, props.mouthOpenSize)))
@@ -240,8 +250,12 @@ const beatSync = createBeatSyncController({
 const disposeShouldUpdateView = live2dStore.onShouldUpdateView(() => {
   loadModel()
 })
+const disposeMotionMappingChanged = live2dStore.onMotionMappingChanged(() => {
+  refreshCompatibilityProfile?.()
+})
 
 async function loadModel() {
+  refreshCompatibilityProfile = undefined
   const request = loadOwnership.begin(modelSrcRef.value, props.modelId)
 
   await until(modelLoading).not.toBeTruthy()
@@ -377,19 +391,23 @@ async function performModelLoad(request: Live2DLoadRequest) {
     const coreModel = internalModel.coreModel
     const motionManager = internalModel.motionManager
     const modelSettings = internalModel.settings as any
-    compatibilityProfile.value = createLive2DCompatibilityProfile({
-      coreModel,
-      groups: modelSettings?.groups ?? modelSettings?.Groups,
-      motionDefinitions: motionManager.definitions,
-      motionOverrides: live2dStore.getMotionOverrides(request.modelId),
-      modelId: request.modelId,
-    })
+    refreshCompatibilityProfile = () => {
+      const nextProfile = createLive2DCompatibilityProfile({
+        coreModel,
+        groups: modelSettings?.groups ?? modelSettings?.Groups,
+        motionDefinitions: motionManager.definitions,
+        motionOverrides: live2dStore.getMotionOverrides(request.modelId),
+        modelId: request.modelId,
+      })
+      compatibilityProfile.value = nextProfile
+      bindLive2DFocusParameterTargets(internalModel, nextProfile)
+    }
+    refreshCompatibilityProfile()
     // Keep pixi-live2d-display's focus geometry and smoothing as the only
     // pointer-coordinate authority. The compatibility layer only redirects
     // Cubism4InternalModel's physical focus targets for legacy IDs.
-    bindLive2DFocusParameterTargets(internalModel, compatibilityProfile.value)
     disableLive2DSdkBreath(internalModel)
-    compatibilityProfile.value.setParameter(coreModel, 'mouthOpen', mouthOpenSize.value)
+    compatibilityRuntime.setParameter(coreModel, 'mouthOpen', mouthOpenSize.value)
 
     availableMotions.value = Object
       .entries(motionManager.definitions)
@@ -428,7 +446,7 @@ async function performModelLoad(request: Live2DLoadRequest) {
       }, 300)
     }
 
-    const idleMotion = compatibilityProfile.value.motionMap.idle
+    const idleMotion = compatibilityRuntime.motionMap.idle
     const resolvedNonStandardIdle = idleMotion
       && idleMotion.confidence === 'high'
       && idleMotion.group !== motionManager.groups.idle
@@ -444,8 +462,8 @@ async function performModelLoad(request: Live2DLoadRequest) {
     // non-standard source group, only protect the resolved idle candidate;
     // sibling Happy/Angry/etc. motions must keep their authored curves.
     const eyeBallIds = new Set([
-      compatibilityProfile.value.parameterId('eyeBallX'),
-      compatibilityProfile.value.parameterId('eyeBallY'),
+      compatibilityRuntime.parameterId('eyeBallX'),
+      compatibilityRuntime.parameterId('eyeBallY'),
     ].filter(Boolean))
     const protectIdleEyeCurves = (motion: any) => {
       motion?._motionData?.curves?.forEach((curve: any) => {
@@ -475,7 +493,7 @@ async function performModelLoad(request: Live2DLoadRequest) {
     const motionManagerUpdate = useLive2DMotionManagerUpdate({
       internalModel,
       motionManager,
-      compatibility: compatibilityProfile.value,
+      compatibility: compatibilityRuntime,
       modelParameters,
       live2dEyeTrackingEnabled,
       live2dEyeFocusSourceActive,
@@ -487,8 +505,8 @@ async function performModelLoad(request: Live2DLoadRequest) {
     })
 
     motionManagerUpdate.register(useMotionUpdatePluginBeatSync(beatSync), 'pre')
-    motionManagerUpdate.register(useMotionUpdatePluginIdleDisable(useLive2DIdleEyeFocus(compatibilityProfile.value)), 'pre')
-    motionManagerUpdate.register(useMotionUpdatePluginIdleFocus(useLive2DIdleEyeFocus(compatibilityProfile.value)), 'post')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleDisable(useLive2DIdleEyeFocus(compatibilityRuntime)), 'pre')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleFocus(useLive2DIdleEyeFocus(compatibilityRuntime)), 'post')
     // Both run in 'final' stage (ignores handled state).
     // Expression first: sets desired parameter values (e.g. closed eyes = 0).
     // Blink second: reads post-expression eye values, Multiply-modulates on top.
@@ -732,7 +750,7 @@ async function setMotion(motionName: string, index?: number) {
 
   const motionDefinitions = currentModel.internalModel.motionManager.definitions
   const resolvedRequest = resolveLive2DMotionRequest(
-    compatibilityProfile.value,
+    compatibilityRuntime,
     motionName,
     index,
     motionDefinitions,
@@ -1021,6 +1039,7 @@ onUnmounted(() => {
   invalidateActiveSemanticMotion()
   resizeAnimation?.pause()
   disposeShouldUpdateView?.()
+  disposeMotionMappingChanged?.()
   expressionController.dispose()
   compatibilityProfile.value = undefined
 })

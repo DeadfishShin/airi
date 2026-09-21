@@ -12,7 +12,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import MagicMotionSettings from '../../../../features/motions/live2d/components/magic-settings.vue'
+import Live2DSemanticMotionMapping from './live2d-motion-mapping.vue'
 
+import { useSettings } from '../../../../stores/settings'
 import { PropertyPoint } from '../../../data-pane'
 import { Section } from '../../../layouts'
 import { ColorPalette } from '../../../widgets'
@@ -68,6 +70,23 @@ const {
 
 const expressionStore = useExpressionStore()
 const { expressions, expressionGroups } = storeToRefs(expressionStore)
+const settingsStore = useSettings()
+const { stageModelSelected } = storeToRefs(settingsStore)
+
+const motionOverrides = computed(() => live2d.getMotionOverrides(stageModelSelected.value))
+
+function handleMotionMappingUpdate(fileName: string, semantic: string) {
+  const modelId = stageModelSelected.value
+  if (!modelId)
+    return
+
+  if (semantic)
+    live2d.setMotionOverride(modelId, fileName, semantic)
+  else
+    live2d.clearMotionOverride(modelId, fileName)
+
+  live2d.notifyMotionMappingChanged()
+}
 
 /**
  * Check if an expression group is currently active.
@@ -346,6 +365,24 @@ function handleMotionSelect(selectedMotionPath: string | number | undefined) {
       <Button w-full>Export</button>
     </a>
   </Section> -->
+  <Section
+    :title="t('settings.live2d.map-motions.title')"
+    icon="i-solar:face-scan-circle-bold-duotone"
+    :class="[
+      'rounded-xl',
+      'bg-white/80  dark:bg-black/75',
+      'backdrop-blur-lg',
+    ]"
+    size="sm"
+    :expand="false"
+  >
+    <Live2DSemanticMotionMapping
+      :model-id="stageModelSelected"
+      :motions="runtimeMotions"
+      :overrides="motionOverrides"
+      @update="handleMotionMappingUpdate"
+    />
+  </Section>
   <Section
     :title="t('settings.live2d.animation.title')"
     icon="i-solar:settings-bold-duotone"

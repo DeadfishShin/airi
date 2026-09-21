@@ -24,6 +24,18 @@ export type Live2DSemanticMotion
     | 'question'
     | 'curious'
 
+export const LIVE2D_SEMANTIC_MOTIONS: readonly Live2DSemanticMotion[] = [
+  'idle',
+  'happy',
+  'sad',
+  'angry',
+  'think',
+  'surprise',
+  'awkward',
+  'question',
+  'curious',
+]
+
 export type Live2DMotionConfidence = 'high' | 'medium' | 'low'
 
 export interface Live2DMotionCandidate {
@@ -313,6 +325,26 @@ export function setModelMotionOverride(
     next[modelId] = modelMap
   }
 
+  return next
+}
+
+/** Removes exactly one model-scoped manual override without touching any other model. */
+export function clearModelMotionOverride(
+  value: Live2DMotionOverridesByModel | unknown,
+  modelId: string | undefined,
+  fileName: string,
+): Record<string, Record<string, string>> {
+  const next = setModelMotionOverride(value, undefined, '', '')
+  if (!nonEmptyString(modelId) || !nonEmptyString(fileName))
+    return next
+
+  const modelMap = next[modelId]
+  if (!modelMap)
+    return next
+
+  delete modelMap[fileName]
+  if (Object.keys(modelMap).length === 0)
+    delete next[modelId]
   return next
 }
 

@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 
 import {
+  clearModelMotionOverride,
   migrateLegacyMotionOverrides,
   resolveModelMotionOverrides,
   setModelMotionOverride,
@@ -14,9 +15,14 @@ export type Live2DMotionMapByModel = Record<string, Record<string, string>>
 
 type BroadcastChannelEvents
   = | BroadcastChannelEventShouldUpdateView
+    | BroadcastChannelEventMotionMappingChanged
 
 interface BroadcastChannelEventShouldUpdateView {
   type: 'live2d-should-update-view'
+}
+
+interface BroadcastChannelEventMotionMappingChanged {
+  type: 'live2d-motion-mapping-changed'
 }
 
 export const defaultModelParameters = {
@@ -47,6 +53,7 @@ export const defaultModelParameters = {
 export const useLive2dParams = defineStore('live2d', () => {
   const { post, data } = useBroadcastChannel<BroadcastChannelEvents, BroadcastChannelEvents>({ name: 'airi-stores-stage-ui-live2d' })
   const shouldUpdateViewHooks = ref(new Set<() => void>())
+  const motionMappingChangedHooks = ref(new Set<() => void>())
 
   const onShouldUpdateView = (hook: () => void) => {
     shouldUpdateViewHooks.value.add(hook)
@@ -60,9 +67,24 @@ export const useLive2dParams = defineStore('live2d', () => {
     shouldUpdateViewHooks.value.forEach(hook => hook())
   }
 
+  const onMotionMappingChanged = (hook: () => void) => {
+    motionMappingChangedHooks.value.add(hook)
+    return () => {
+      motionMappingChangedHooks.value.delete(hook)
+    }
+  }
+
+  function notifyMotionMappingChanged() {
+    post({ type: 'live2d-motion-mapping-changed' })
+    motionMappingChangedHooks.value.forEach(hook => hook())
+  }
+
   watch(data, (event) => {
     if (event?.type === 'live2d-should-update-view') {
       shouldUpdateViewHooks.value.forEach(hook => hook())
+    }
+    if (event?.type === 'live2d-motion-mapping-changed') {
+      motionMappingChangedHooks.value.forEach(hook => hook())
     }
   })
 
@@ -103,6 +125,10 @@ export const useLive2dParams = defineStore('live2d', () => {
     motionMap.value = setModelMotionOverride(motionMap.value, modelId, fileName, semantic)
   }
 
+  function clearMotionOverride(modelId: string | undefined, fileName: string) {
+    motionMap.value = clearModelMotionOverride(motionMap.value, modelId, fileName)
+  }
+
   return {
     position,
     currentMotion,
@@ -110,6 +136,9 @@ export const useLive2dParams = defineStore('live2d', () => {
     motionMap,
     getMotionOverrides,
     setMotionOverride,
+    clearMotionOverride,
+    onMotionMappingChanged,
+    notifyMotionMappingChanged,
     scale,
     modelParameters,
 

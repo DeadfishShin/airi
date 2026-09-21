@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   acquireLive2DSemanticMotionLoopLease,
   bindLive2DFocusParameterTargets,
+  clearModelMotionOverride,
   createLive2DCompatibilityProfile,
   discoverLive2DParameterIds,
   migrateLegacyMotionOverrides,
@@ -235,6 +236,36 @@ describe('live2d compatibility resolver', () => {
       motionDefinitions,
       motionOverrides: resolveModelMotionOverrides(bothModels, 'model-b'),
     }).resolveMotion('Angry')).toMatchObject({ group: '', index: 0 })
+  })
+
+  it('clears only the requested model-scoped override and restores auto resolution', () => {
+    const mapped = setModelMotionOverride(
+      setModelMotionOverride({}, 'model-a', 'motions/foo.motion3.json', 'Happy'),
+      'model-b',
+      'motions/foo.motion3.json',
+      'Angry',
+    )
+
+    const cleared = clearModelMotionOverride(mapped, 'model-a', 'motions/foo.motion3.json')
+
+    expect(resolveModelMotionOverrides(cleared, 'model-a')).toEqual({})
+    expect(resolveModelMotionOverrides(cleared, 'model-b')).toEqual({
+      'motions/foo.motion3.json': 'Angry',
+    })
+    expect(createLive2DCompatibilityProfile({
+      parameterIds: [],
+      motionDefinitions: { '': [{ File: 'motions/foo.motion3.json' }] },
+      motionOverrides: resolveModelMotionOverrides(cleared, 'model-a'),
+    }).resolveMotion('Happy')).toBeUndefined()
+  })
+
+  it('does not write a mapping when the model identity is missing', () => {
+    const existing = {
+      'model-a': { 'motions/foo.motion3.json': 'Happy' },
+    }
+
+    expect(setModelMotionOverride(existing, undefined, 'motions/bar.motion3.json', 'Angry')).toEqual(existing)
+    expect(clearModelMotionOverride(existing, undefined, 'motions/foo.motion3.json')).toEqual(existing)
   })
 
   it('migrates a legacy flat map only into an explicit current model', () => {
