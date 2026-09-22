@@ -1170,6 +1170,14 @@ function handleDeleteProvider(providerId: string) {
               </button>
             </div>
             <audio v-if="audioUrl" ref="audioPlayer" :src="audioUrl" controls class="mt-2 w-full" />
+            <p
+              v-if="errorMessage && !isQwenRealtimeProvider"
+              data-testid="speech-preview-error"
+              class="text-sm text-red-600 dark:text-red-400"
+              role="alert"
+            >
+              {{ errorMessage }}
+            </p>
           </template>
         </div>
       </div>

@@ -27,4 +27,10 @@ describe('speech settings Qwen3 preview routing', () => {
     expect(source).toContain('const isQwenPaygTtsProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)')
     expect(source).toContain('<DashScopePaygCredentialSettings v-if="isQwenPaygTtsProvider"')
   })
+
+  it('surfaces Token Plan and generic preview failures in the shared preview area', () => {
+    expect(source).toContain('data-testid="speech-preview-error"')
+    expect(source).toContain('v-if="errorMessage && !isQwenRealtimeProvider"')
+    expect(source).toContain('role="alert"')
+  })
 })
