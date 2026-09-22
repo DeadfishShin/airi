@@ -95,6 +95,7 @@ let qwenPreviewAnalyticsContext: {
 const STREAMING_MODEL_OPTION_PREFIX = 'streaming:'
 const isQwenRealtimeProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)
 const isQwenTokenPlanProvider = computed(() => activeSpeechProvider.value === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)
+const isQwenPaygTtsProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)
 
 function sanitizeQwenPreviewError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : ''
@@ -790,7 +791,7 @@ function handleDeleteProvider(providerId: string) {
 
 <template>
   <div flex="~ col md:row gap-6">
-    <DashScopePaygCredentialSettings class="md:col-span-2" />
+    <DashScopePaygCredentialSettings v-if="isQwenPaygTtsProvider" class="md:col-span-2" />
     <div bg="neutral-100 dark:[rgba(0,0,0,0.3)]" rounded-xl p-4 flex="~ col gap-4" class="h-fit w-full md:w-[40%]">
       <div flex="~ col gap-4">
         <div>

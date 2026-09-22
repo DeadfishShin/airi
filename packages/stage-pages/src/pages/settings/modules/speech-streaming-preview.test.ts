@@ -22,4 +22,9 @@ describe('speech settings Qwen3 preview routing', () => {
     expect(source).toContain(':model="normalizeQwen3TtsRealtimeModel(activeSpeechModel)"')
     expect(source).toContain(':voice="activeSpeechVoiceId"')
   })
+
+  it('does not show PAYG credential controls while Token Plan is selected', () => {
+    expect(source).toContain('const isQwenPaygTtsProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)')
+    expect(source).toContain('<DashScopePaygCredentialSettings v-if="isQwenPaygTtsProvider"')
+  })
 })
