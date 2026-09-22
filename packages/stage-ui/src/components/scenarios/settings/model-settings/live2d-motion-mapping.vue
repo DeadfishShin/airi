@@ -25,7 +25,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const semanticOptions = computed(() => LIVE2D_SEMANTIC_MOTIONS.map((value: Live2DSemanticMotion) => ({
   value,
-  label: value === 'idle' ? 'Idle' : value[0].toUpperCase() + value.slice(1),
+  label: t(`settings.live2d.map-motions.semantic.${value}`),
 })))
 
 function handleChange(fileName: string, event: Event) {
@@ -58,7 +58,7 @@ function handleChange(fileName: string, event: Event) {
           :value="props.overrides[motion.displayPath] ?? ''"
           @change="handleChange(motion.displayPath, $event)"
         >
-          <option value="">Auto / Unset</option>
+          <option value="">{{ t('settings.live2d.map-motions.semantic.auto') }}</option>
           <option v-for="option in semanticOptions" :key="option.value" :value="option.value">
             {{ option.label }}
           </option>

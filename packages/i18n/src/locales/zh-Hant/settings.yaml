@@ -130,6 +130,17 @@ live2d:
   map-motions:
     play: 播放動作
     title: 映射動作
+    semantic:
+      auto: 自動 / 未設定
+      idle: 待機
+      happy: 開心
+      sad: 悲傷
+      angry: 生氣
+      think: 思考
+      surprise: 驚訝
+      awkward: 尷尬
+      question: 疑問
+      curious: 好奇
   title: Live2D 設定
   scale-and-position:
     title: 縮放與位置
