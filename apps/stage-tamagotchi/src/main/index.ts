@@ -39,6 +39,7 @@ import { setupMcpStdioManager } from './services/airi/mcp-servers'
 import { setupExtensionHost } from './services/airi/plugins'
 import { setupQwenAudioRealtimeAsr } from './services/airi/qwen-audio-realtime'
 import { setupQwenAudioTtsTokenPlan } from './services/airi/qwen-audio-tts-token-plan'
+import { setupQwenAudioTtsTokenPlanCredentials } from './services/airi/qwen-audio-tts-token-plan-credentials'
 import { setupDashScopePaygCredentials } from './services/airi/qwen-dashscope-payg-credentials'
 import { setupQwen3TtsRealtime } from './services/airi/qwen-tts-realtime'
 import { setupRealtimeVoiceE2eTelemetry } from './services/airi/realtime-voice-e2e-telemetry'
@@ -238,6 +239,11 @@ app.whenReady().then(async () => {
     build: ({ dependsOn }) => setupDashScopePaygCredentials({ lifecycle: dependsOn.lifecycle }),
   })
 
+  const qwenAudioTtsTokenPlanCredentials = injeca.provide('services:qwen-audio-tts-token-plan-credentials', {
+    dependsOn: { lifecycle },
+    build: ({ dependsOn }) => setupQwenAudioTtsTokenPlanCredentials({ lifecycle: dependsOn.lifecycle }),
+  })
+
   const deepSeekCredentials = injeca.provide('services:deepseek-credentials', {
     dependsOn: { lifecycle },
     build: ({ dependsOn }) => setupDeepSeekCredentials({ lifecycle: dependsOn.lifecycle }),
@@ -252,8 +258,11 @@ app.whenReady().then(async () => {
   })
 
   const qwenAudioTtsTokenPlan = injeca.provide('modules:qwen-audio-tts-token-plan', {
-    dependsOn: { lifecycle },
-    build: ({ dependsOn }) => setupQwenAudioTtsTokenPlan(dependsOn),
+    dependsOn: { lifecycle, qwenAudioTtsTokenPlanCredentials },
+    build: ({ dependsOn }) => setupQwenAudioTtsTokenPlan({
+      lifecycle: dependsOn.lifecycle,
+      credentialStore: dependsOn.qwenAudioTtsTokenPlanCredentials,
+    }),
   })
 
   const qwen3TtsRealtime = injeca.provide('modules:qwen3-tts-realtime', {

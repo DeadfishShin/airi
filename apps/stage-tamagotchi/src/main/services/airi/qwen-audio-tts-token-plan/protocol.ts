@@ -1,3 +1,5 @@
+import type { QwenAudioTtsTokenPlanRuntimeProfile } from '../qwen-audio-tts-token-plan-credentials/store'
+
 import process from 'node:process'
 
 import { Buffer } from 'node:buffer'
@@ -14,6 +16,7 @@ import {
 
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_ENDPOINT = 'wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference'
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_DEFAULT_VOICE = QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID
+export const QWEN_AUDIO_TTS_TOKEN_PLAN_VOICES = ['longanlingxin', 'longanlufeng'] as const
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_TEXT_TYPE = 'PlainText'
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_FORMAT = 'pcm'
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_VOLUME = 50
@@ -30,10 +33,18 @@ export interface QwenAudioTtsTokenPlanRuntimeConfig {
   apiKey: string
 }
 
+export interface QwenAudioTtsTokenPlanCredentialSource {
+  getRuntimeProfile: () => QwenAudioTtsTokenPlanRuntimeProfile
+}
+
 /** Token Plan deliberately has its own credential authority and no PAYG fallback. */
 export function resolveQwenAudioTtsTokenPlanRuntimeConfig(
   environment: NodeJS.ProcessEnv = process.env,
+  credentialSource?: QwenAudioTtsTokenPlanCredentialSource,
 ): QwenAudioTtsTokenPlanRuntimeConfig {
+  if (credentialSource)
+    return credentialSource.getRuntimeProfile()
+
   const apiKey = environment.TOKEN_PLAN_API_KEY?.trim() ?? ''
   if (!apiKey)
     throw new Error('Qwen Audio Token Plan TTS API key is unavailable.')
@@ -132,6 +143,8 @@ export function buildQwenAudioTtsTokenPlanRunTaskFrame(
   taskId: string,
   voice = QWEN_AUDIO_TTS_TOKEN_PLAN_DEFAULT_VOICE,
 ): RunTaskFrame {
+  if (!QWEN_AUDIO_TTS_TOKEN_PLAN_VOICES.includes(voice as typeof QWEN_AUDIO_TTS_TOKEN_PLAN_VOICES[number]))
+    throw new Error(`Qwen Audio Token Plan voice is not supported for ${QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL}: ${voice}`)
   return {
     header: frameHeader('run-task', taskId),
     payload: {

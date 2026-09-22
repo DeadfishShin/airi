@@ -650,6 +650,20 @@ describe('qwen Audio Token Plan speech selection', () => {
     expect(speechStore.activeSpeechVoice).toBe(selectedVoice)
   })
 
+  it('preserves an explicit compatible Token Plan voice when the catalog refreshes', async () => {
+    const speechStore = await prepareTokenPlanCatalog()
+    const selectedVoice = speechStore.getVoicesForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID).find(voice => voice.id === 'longanlufeng')
+    expect(selectedVoice).toBeDefined()
+
+    speechStore.activeSpeechVoiceId = selectedVoice!.id
+    speechStore.activeSpeechVoice = selectedVoice
+    await speechStore.loadVoicesForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
+    speechStore.ensureActiveSpeechModel()
+
+    expect(speechStore.activeSpeechVoiceId).toBe('longanlufeng')
+    expect(speechStore.activeSpeechVoice?.id).toBe('longanlufeng')
+  })
+
   it('does not apply longanlingxin to the PAYG Qwen3 route', async () => {
     const speechStore = await prepareTokenPlanCatalog()
     speechStore.activeSpeechProvider = QWEN3_TTS_REALTIME_PROVIDER_ID

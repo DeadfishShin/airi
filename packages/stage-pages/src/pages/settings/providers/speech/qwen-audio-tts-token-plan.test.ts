@@ -16,13 +16,19 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL).toBe('qwen-audio-3.0-tts-plus')
     expect(QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID).toBe('longanlingxin')
     expect(source).toContain('<route lang="yaml">')
+    expect(source).toContain('qwen-audio-tts-token-plan-api-key')
+    expect(source).toContain('qwen-audio-tts-token-plan-save')
+    expect(source).toContain('qwen-audio-tts-token-plan-voice')
   })
 
-  it('does not introduce renderer credential or REST preview behavior', async () => {
+  it('uses the secure credential bridge and does not introduce REST preview behavior', async () => {
     const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
     expect(source).not.toMatch(/SpeechPlayground|generateSpeech|\.speech\s*\(/)
+    expect(source).toContain('getQwenAudioTtsTokenPlanCredentialProfile')
+    expect(source).toContain('saveQwenAudioTtsTokenPlanCredential')
+    expect(source).toContain('clearQwenAudioTtsTokenPlanCredential')
     expect(source).not.toMatch(/DASHSCOPE_API_KEY|TOKEN_PLAN_API_KEY\s*=/)
     expect(source).toContain('QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL')
-    expect(source).toContain('QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID')
+    expect(source).not.toContain('QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID')
   })
 })

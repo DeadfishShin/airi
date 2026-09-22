@@ -187,7 +187,7 @@ export const useSpeechStore = defineStore('speech', () => {
       activeSpeechVoice.value = voice
   }
 
-  /** Applies the fixed, renderer-visible Token Plan canary selection. */
+  /** Keeps the Token Plan model/voice selection valid without overwriting a user's choice. */
   function ensureQwenTokenPlanSelection(provider = activeSpeechProvider.value) {
     if (provider !== QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID || activeSpeechProvider.value !== provider)
       return
@@ -195,12 +195,14 @@ export const useSpeechStore = defineStore('speech', () => {
     if (activeSpeechModel.value !== QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
       activeSpeechModel.value = QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL
 
-    const voice = availableVoices.value[provider]?.find(candidate => candidate.id === QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID)
+    const voices = availableVoices.value[provider] ?? []
+    const currentVoice = voices.find(candidate => candidate.id === activeSpeechVoiceId.value)
+    const voice = currentVoice ?? voices.find(candidate => candidate.id === QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID) ?? voices[0]
     if (!voice)
       return
 
-    if (activeSpeechVoiceId.value !== QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID)
-      activeSpeechVoiceId.value = QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID
+    if (activeSpeechVoiceId.value !== voice.id)
+      activeSpeechVoiceId.value = voice.id
     if (!isEqual(activeSpeechVoice.value, voice))
       activeSpeechVoice.value = voice
   }

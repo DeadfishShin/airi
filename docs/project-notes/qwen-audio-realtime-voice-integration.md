@@ -117,6 +117,21 @@ Token Plan Personal 的当前官方 overview 与第三方工具页面明确规�
 
 这不是纯粹的类型设计，而是防止“用户以为消耗套餐 credits，实际却产生 PAYG 账单”的成本安全边界。`CURRENT_DESIGN_DECISION`，并由 main service 的独立 credential resolution 与 fake tests 进行 `SOURCE_PROVEN` 守护。
 
+### Token Plan TTS 设置与音色选择（2026-09-22）
+
+Token Plan TTS 的配置入口现在是正常设置页，而不是只读的 canary 展示。凭据通过 Electron main 侧的加密 secure storage 保存、替换和清除；若没有已保存值，才显式使用 `TOKEN_PLAN_API_KEY` 环境回退。该回退只属于 Token Plan，不会读取 PAYG 的 `DASHSCOPE_*` 凭据，也不会在失败时静默切换到 PAYG。UI 的“已保存”只表示凭据已保存，不表示套餐额度或云端调用已验证。
+
+`qwen-audio-3.0-tts-plus` 的静态模型级官方系统音色目录当前包含：
+
+- `longanlingxin`：女性、温暖/富有同理心，普通话与英语。
+- `longanlufeng`：男性、明亮/活泼，普通话与英语。
+
+目录来源：[Qwen-Audio-TTS 音色列表（Alibaba Cloud）](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list)，访问日期 2026-09-22。目录可以在未配置凭据时显示；试听和正式合成仍要求 Token Plan 凭据与实际套餐适用性，当前任务不自动执行收费调用。
+
+用户选择保存 canonical voice ID，不保存本地化显示名。provider 初始化、模型目录刷新和应用重启只在选择缺失或与当前模型不兼容时补默认值，不再覆盖有效选择。设置页试听和 Stage 正式 TTS 都通过 `qwenAudioTtsTokenPlanStageSession` 走同一个 Token Plan 原生 duplex WebSocket 路由；通用 REST `speech()` 占位路径仍保持 fail-closed，避免误路由。
+
+当前证据边界：Token Plan TTS 的配置、目录、请求构造和本地 stub/单元测试已由 source/test 证明；本任务不执行真实云端 Token Plan 调用，因此 `TOKEN_PLAN_TTS_LIVE_VALIDATION=NOT_RUN_OWNER_AUTH_REQUIRED`。ASR 仍保持原有边界：`qwen-audio-3.0-asr-flash` 是非 realtime HTTP 型号，`qwen-audio-3.0-asr-flash-streaming` 是独立的 realtime WebSocket 型号，`qwen-audio-3.0-realtime-plus` 属于 realtime speech-to-speech 协议。AIRI 当前 adapter 尚未完成把 Token Plan Personal ASR 接入现有实时 Hearing 链；该项仍为 `OPEN`，不以端到端语音模型替代原有角色、记忆、工具和生成模型链。
+
 ## 5. Qwen Realtime ASR Implementation
 
 当前 PAYG realtime ASR 的 source protocol authority 是 `apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime/protocol.ts`：

@@ -12,7 +12,9 @@ import {
 } from '../../qwen-audio-tts-token-plan-ipc'
 import { defineProvider } from '../registry'
 
-const qwenAudioTtsTokenPlanConfigSchema = z.object({})
+const qwenAudioTtsTokenPlanConfigSchema = z.object({
+  credentialSource: z.enum(['secure-store', 'environment']).optional(),
+})
 
 type QwenAudioTtsTokenPlanConfig = z.input<typeof qwenAudioTtsTokenPlanConfigSchema>
 
@@ -36,6 +38,16 @@ const qwenAudioTtsTokenPlanVoices: VoiceInfo[] = [{
   provider: QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
   compatibleModels: [QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL],
   description: 'Official Mandarin-capable qwen-audio-3.0-tts-plus system voice.',
+  languages: [
+    { code: 'zh', title: 'Chinese' },
+    { code: 'en', title: 'English' },
+  ],
+}, {
+  id: 'longanlufeng',
+  name: 'Long An Lu Feng',
+  provider: QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
+  compatibleModels: [QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL],
+  description: 'Bright and cheerful male voice for Mandarin Chinese and English.',
   languages: [
     { code: 'zh', title: 'Chinese' },
     { code: 'en', title: 'English' },
@@ -79,3 +91,5 @@ export {
   QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
   QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID,
 }
+
+export { qwenAudioTtsTokenPlanModels, qwenAudioTtsTokenPlanVoices }
