@@ -15,7 +15,7 @@ import { toXml } from 'xast-util-to-xml'
 import { x } from 'xastscript'
 
 import { getDefaultSpeechModel, getDefaultStreamingModel, OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, setupOfficialSpeechAutoPick } from '../../libs/providers/providers/official'
-import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID } from '../../libs/providers/qwen-audio-tts-token-plan-ipc'
+import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID, qwenAudioTtsTokenPlanVoices } from '../../libs/providers/providers/qwen-audio-tts-token-plan'
 import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
 import { normalizeQwen3TtsRealtimeModel } from '../../libs/providers/qwen3-tts-realtime-models'
 import {
@@ -133,7 +133,15 @@ export const useSpeechStore = defineStore('speech', () => {
     speechProviderError.value = null
 
     try {
-      const voices = await providersStore.listProviderVoices(provider, model)
+      // Token Plan publishes a local, model-scoped catalog. Keep it independent
+      // from provider initialization and credential/network readiness so the
+      // settings page can always render the selectable voices.
+      const voices = provider === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID
+        ? (availableVoices.value[provider] ?? qwenAudioTtsTokenPlanVoices.map(voice => ({
+            ...voice,
+            languages: voice.languages.map(language => ({ ...language })),
+          })))
+        : await providersStore.listProviderVoices(provider, model)
       // Reassign to trigger reactivity when adding/updating provider entries
       availableVoices.value = {
         ...availableVoices.value,
