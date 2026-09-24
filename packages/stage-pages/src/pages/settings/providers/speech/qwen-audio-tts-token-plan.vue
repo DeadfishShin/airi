@@ -40,7 +40,19 @@ const apiKey = ref('')
 const statusMessage = ref('')
 const errorMessage = ref('')
 const catalogStatus = ref('')
-const catalogSource = ref(t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source'))
+type CatalogAuthority = 'bundled' | 'account'
+const modelCatalogAuthority = ref<CatalogAuthority>('bundled')
+const voiceCatalogAuthority = ref<CatalogAuthority>('bundled')
+const modelCatalogSource = computed(() => t(
+  modelCatalogAuthority.value === 'account'
+    ? 'settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountSource'
+    : 'settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source',
+))
+const voiceCatalogSource = computed(() => t(
+  voiceCatalogAuthority.value === 'account'
+    ? 'settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountSource'
+    : 'settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source',
+))
 const voiceSearchQuery = ref('')
 const refreshingCatalog = ref(false)
 const accountModelsResult = ref<QwenAudioTtsTokenPlanModelsProbeResult>()
@@ -118,6 +130,16 @@ const readiness = computed(() => {
   return 'Not configured'
 })
 
+function useBundledCatalogAuthorities() {
+  modelCatalogAuthority.value = 'bundled'
+  voiceCatalogAuthority.value = 'bundled'
+}
+
+function useAccountModelBundledVoiceAuthorities() {
+  modelCatalogAuthority.value = 'account'
+  voiceCatalogAuthority.value = 'bundled'
+}
+
 function applyProfile(next: typeof profile.value) {
   profile.value = next
   if (next.ready)
@@ -180,6 +202,7 @@ async function loadBundledCatalog(options: { allowWhileRefreshing?: boolean } = 
     if (refreshSequence !== catalogRefreshSequence)
       return
     if (!refreshedModels.length) {
+      useBundledCatalogAuthorities()
       catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.empty')
       return
     }
@@ -198,7 +221,7 @@ async function loadBundledCatalog(options: { allowWhileRefreshing?: boolean } = 
     if (refreshSequence !== catalogRefreshSequence || refreshedVoices === undefined)
       return
 
-    catalogSource.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source')
+    useBundledCatalogAuthorities()
     if (!refreshedVoices.length) {
       catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.emptyVoices')
       return
@@ -213,6 +236,7 @@ async function loadBundledCatalog(options: { allowWhileRefreshing?: boolean } = 
     if (refreshSequence !== catalogRefreshSequence)
       return
     initializationFailed.value = true
+    useBundledCatalogAuthorities()
     catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.failed')
     errorMessage.value = errorMessageFrom(error) ?? 'The Token Plan directory could not be loaded.'
   }
@@ -243,7 +267,7 @@ async function refreshAccountModels(allowBusy = false) {
     accountModelsResult.value = result
     const accountModels = getQwenAudioTtsTokenPlanAccountModels(result)
     if (!accountModels.length) {
-      catalogSource.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source')
+      useBundledCatalogAuthorities()
       catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountFailed', { responseClass: result.responseClass })
       await loadBundledCatalog({ allowWhileRefreshing: true })
       return
@@ -264,7 +288,7 @@ async function refreshAccountModels(allowBusy = false) {
     if (refreshSequence !== catalogRefreshSequence || refreshedVoices === undefined)
       return
 
-    catalogSource.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountSource')
+    useAccountModelBundledVoiceAuthorities()
     catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountLoaded', {
       models: accountModels.length,
       voices: refreshedVoices.length,
@@ -273,7 +297,7 @@ async function refreshAccountModels(allowBusy = false) {
   catch (error) {
     if (refreshSequence !== catalogRefreshSequence)
       return
-    catalogSource.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source')
+    useBundledCatalogAuthorities()
     catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountFailed', { responseClass: 'NETWORK_ERROR' })
     errorMessage.value = errorMessageFrom(error) ?? 'The account model directory could not be refreshed.'
     await loadBundledCatalog({ allowWhileRefreshing: true })
@@ -390,7 +414,7 @@ onMounted(() => {
               </option>
             </select>
             <p class="text-xs text-neutral-500 dark:text-neutral-400">
-              {{ catalogSource }}
+              {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.modelSourceLabel') }}: {{ modelCatalogSource }}
             </p>
             <div class="flex flex-col gap-2 border border-neutral-300 rounded border-dashed p-3 dark:border-neutral-700">
               <div class="flex flex-wrap items-center justify-between gap-3">
@@ -459,7 +483,7 @@ onMounted(() => {
               </option>
             </select>
             <p class="text-xs text-neutral-500 dark:text-neutral-400">
-              {{ voiceCounts.system }} system · {{ voiceCounts.base }} base · {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.customNotQueried') }} · Source: {{ catalogSource }}
+              {{ voiceCounts.system }} system · {{ voiceCounts.base }} base · {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.customNotQueried') }} · {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.voiceSourceLabel') }}: {{ voiceCatalogSource }}
             </p>
           </div>
           <p class="text-xs text-neutral-500 dark:text-neutral-400">

@@ -21,6 +21,10 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).toContain('qwen-audio-tts-token-plan-voice')
     expect(source).toContain('qwen-audio-tts-token-plan-refresh-account-models')
     expect(source).toContain('probeQwenAudioTtsTokenPlanModels')
+    expect(source).toContain('modelCatalogAuthority')
+    expect(source).toContain('voiceCatalogAuthority')
+    expect(source).toContain('modelSourceLabel')
+    expect(source).toContain('voiceSourceLabel')
   })
 
   it('uses the secure credential bridge and does not introduce REST preview behavior', async () => {
@@ -37,7 +41,7 @@ describe('qwen Audio Token Plan TTS settings route', () => {
 
   it('keeps account refresh manual and renders only its sanitized result', async () => {
     const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
-    expect(source).toContain('@click="refreshAccountModels"')
+    expect(source).toContain('@click="() => refreshAccountModels()"')
     expect(source).toContain('accountModelsResult.responseClass')
     expect(source).toContain('accountModelsResult.modelIds.length')
     expect(source).not.toContain('Probe account models')
@@ -46,7 +50,7 @@ describe('qwen Audio Token Plan TTS settings route', () => {
 
   it('keeps directory browsing separate from the active speech selection', () => {
     const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
-    const refreshStart = source.indexOf('async function loadBundledCatalog()')
+    const refreshStart = source.indexOf('async function loadBundledCatalog(')
     const saveStart = source.indexOf('async function save()')
     const refreshSource = source.slice(refreshStart, saveStart)
 
@@ -55,6 +59,7 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(refreshSource).toContain('preserveOnEmpty: true')
     expect(refreshSource).toContain('throwOnError: true')
     expect(source).toContain('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source')
+    expect(source).toContain('useAccountModelBundledVoiceAuthorities')
     expect(source).toContain('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.customNotQueried')
   })
 })
