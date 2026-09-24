@@ -117,8 +117,10 @@ export function buildQwenAudioRealtimePlusAudioCommitFrame() {
 export type QwenAudioRealtimePlusServerMessage
   = | { type: 'session.created' }
     | { type: 'session.updated' }
-    | { type: 'transcription.delta', delta: string }
-    | { type: 'transcription.completed', transcript: string }
+    | { type: 'transcription.delta', itemId?: string, contentIndex?: number, text: string, stash: string }
+    | { type: 'transcription.delta.malformed' }
+    | { type: 'transcription.completed', itemId?: string, contentIndex?: number, transcript: string }
+    | { type: 'transcription.failed', itemId?: string, contentIndex?: number, code?: string, message?: string }
     | { type: 'error', code?: string, message?: string }
     | { type: 'unexpected-generation', eventType: string }
 
@@ -136,6 +138,19 @@ function textFromMessage(message: unknown) {
   throw new Error('Realtime probe received an unsupported WebSocket message.')
 }
 
+function optionalCorrelationFields(root: Record<string, unknown>) {
+  const itemId = root.item_id
+  const contentIndex = root.content_index
+  if (itemId !== undefined && (typeof itemId !== 'string' || !itemId))
+    return undefined
+  if (contentIndex !== undefined && (typeof contentIndex !== 'number' || !Number.isInteger(contentIndex) || contentIndex < 0))
+    return undefined
+  return {
+    ...(itemId === undefined ? {} : { itemId }),
+    ...(contentIndex === undefined ? {} : { contentIndex }),
+  } as { itemId?: string, contentIndex?: number }
+}
+
 /** Parses only bounded event fields; raw frames never leave the main process. */
 export function parseQwenAudioRealtimePlusServerMessage(message: unknown): QwenAudioRealtimePlusServerMessage {
   const root = record(JSON.parse(textFromMessage(message)) as unknown)
@@ -147,14 +162,30 @@ export function parseQwenAudioRealtimePlusServerMessage(message: unknown): QwenA
   if (type === 'session.created' || type === 'session.updated')
     return { type }
   if (type === 'conversation.item.input_audio_transcription.delta') {
-    if (typeof root.delta !== 'string')
-      throw new Error('Realtime probe transcription delta is malformed.')
-    return { type: 'transcription.delta', delta: root.delta }
+    const correlation = optionalCorrelationFields(root)
+    if (!correlation || typeof root.text !== 'string' || typeof root.stash !== 'string')
+      return { type: 'transcription.delta.malformed' }
+    return { type: 'transcription.delta', ...correlation, text: root.text, stash: root.stash }
   }
   if (type === 'conversation.item.input_audio_transcription.completed') {
     if (typeof root.transcript !== 'string')
       throw new Error('Realtime probe completed transcript is malformed.')
-    return { type: 'transcription.completed', transcript: root.transcript }
+    const correlation = optionalCorrelationFields(root)
+    if (!correlation)
+      throw new Error('Realtime probe completed transcript correlation is malformed.')
+    return { type: 'transcription.completed', ...correlation, transcript: root.transcript }
+  }
+  if (type === 'conversation.item.input_audio_transcription.failed') {
+    const correlation = optionalCorrelationFields(root)
+    if (!correlation)
+      throw new Error('Realtime probe transcription failure correlation is malformed.')
+    const error = record(root.error)
+    return {
+      type: 'transcription.failed',
+      ...correlation,
+      code: typeof error?.code === 'string' ? error.code : undefined,
+      message: typeof error?.message === 'string' ? error.message : undefined,
+    }
   }
   if (type === 'error') {
     const error = record(root.error)

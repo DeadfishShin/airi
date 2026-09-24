@@ -160,7 +160,8 @@ export async function runQwenAudioRealtimePlusTokenPlanProbe(
   let settled = false
   let resolveProbe: ((value: QwenAudioRealtimePlusTokenPlanProbeResult) => void) | undefined
   let stage: QwenAudioRealtimePlusTokenPlanProbeResult['stage'] = 'handshake'
-  let transcriptDelta = ''
+  let transcriptionItemId: string | undefined
+  let transcriptionContentIndex: number | undefined
   let messageChain = Promise.resolve()
 
   const finish = (next: Partial<QwenAudioRealtimePlusTokenPlanProbeResult>) => {
@@ -185,6 +186,19 @@ export async function runQwenAudioRealtimePlusTokenPlanProbe(
 
   const promise = new Promise<QwenAudioRealtimePlusTokenPlanProbeResult>((resolve) => {
     resolveProbe = resolve
+    const matchesTranscriptionItem = (event: { itemId?: string, contentIndex?: number }) => {
+      if (event.itemId !== undefined) {
+        if (transcriptionItemId !== undefined && event.itemId !== transcriptionItemId)
+          return false
+        transcriptionItemId ??= event.itemId
+      }
+      if (event.contentIndex !== undefined) {
+        if (transcriptionContentIndex !== undefined && event.contentIndex !== transcriptionContentIndex)
+          return false
+        transcriptionContentIndex ??= event.contentIndex
+      }
+      return true
+    }
     const settle = (next: Partial<QwenAudioRealtimePlusTokenPlanProbeResult>) => {
       finish(next)
       if (!settled)
@@ -239,16 +253,35 @@ export async function runQwenAudioRealtimePlusTokenPlanProbe(
         return
       }
       if (event.type === 'transcription.delta') {
-        transcriptDelta = `${transcriptDelta}${event.delta}`.slice(0, MAX_TRANSCRIPT_LENGTH)
+        if (!matchesTranscriptionItem(event))
+          return
+        return
+      }
+      if (event.type === 'transcription.delta.malformed') {
+        // A partial transcription event does not decide the probe result.
+        // Wait for the completed event unless the event envelope itself is unreadable.
         return
       }
       if (event.type === 'transcription.completed') {
+        if (!matchesTranscriptionItem(event))
+          return
         const transcript = sanitize(event.transcript, MAX_TRANSCRIPT_LENGTH)
         settle({
           stage: 'complete',
           responseClass: transcript ? 'SUCCESS_TRANSCRIPT_ONLY' : 'EMPTY_TRANSCRIPT',
           transcript,
           transcriptPresent: Boolean(transcript),
+        })
+        return
+      }
+      if (event.type === 'transcription.failed') {
+        if (!matchesTranscriptionItem(event))
+          return
+        settle({
+          stage,
+          responseClass: 'TRANSCRIPTION_FAILED',
+          providerErrorCode: sanitize(event.code, 80),
+          sanitizedErrorMessage: sanitize(event.message),
         })
         return
       }

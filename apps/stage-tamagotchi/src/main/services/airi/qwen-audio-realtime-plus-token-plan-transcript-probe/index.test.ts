@@ -48,7 +48,8 @@ describe('token Plan realtime-plus transcript-only main probe', () => {
         socket.emit('open')
         socket.emit('message', JSON.stringify({ type: 'session.created' }))
         socket.emit('message', JSON.stringify({ type: 'session.updated' }))
-        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'AIRI probe' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'item_x', content_index: 0, text: 'AIRI', stash: ' probe' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_x', content_index: 0, transcript: 'AIRI probe' }))
       }, 0)
       return socket
     })
@@ -71,6 +72,61 @@ describe('token Plan realtime-plus transcript-only main probe', () => {
     expect(sent.some(frame => frame.type === 'response.create')).toBe(false)
     expect(JSON.stringify(result)).not.toContain('sk-sp-unit-test')
     expect(JSON.stringify(result)).not.toContain('AQ')
+    expect(socketFactory).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps waiting after a malformed partial delta and correlates the completed transcript', async () => {
+    let socket!: FakeSocket
+    const socketFactory = vi.fn(() => {
+      socket = new FakeSocket()
+      setTimeout(() => {
+        socket.readyState = 1
+        socket.emit('open')
+        socket.emit('message', JSON.stringify({ type: 'session.created' }))
+        socket.emit('message', JSON.stringify({ type: 'session.updated' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', delta: 'wrong schema' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'item_x', content_index: 0, text: 'AIRI', stash: ' probe' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'other_item', content_index: 0, transcript: 'wrong item' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_x', content_index: 0, transcript: 'AIRI probe' }))
+      }, 0)
+      return socket
+    })
+
+    const result = await runQwenAudioRealtimePlusTokenPlanProbe(
+      () => ({ apiKey: 'sk-sp-unit-test' }),
+      { socketFactory, fixtureBytes, chunkPacingMs: 0 },
+    )
+
+    expect(result.responseClass).toBe('SUCCESS_TRANSCRIPT_ONLY')
+    expect(result.transcript).toBe('AIRI probe')
+    expect(result.responseCreateSent).toBe(false)
+    expect(socketFactory).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for a matching transcription failure event', async () => {
+    let socket!: FakeSocket
+    const socketFactory = vi.fn(() => {
+      socket = new FakeSocket()
+      setTimeout(() => {
+        socket.readyState = 1
+        socket.emit('open')
+        socket.emit('message', JSON.stringify({ type: 'session.created' }))
+        socket.emit('message', JSON.stringify({ type: 'session.updated' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'item_x', content_index: 0, text: '', stash: '' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.failed', item_id: 'other_item', content_index: 0, error: { code: 'wrong_item', message: 'ignored' } }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.failed', item_id: 'item_x', content_index: 0, error: { code: 'transcription_failed', message: 'failed' } }))
+      }, 0)
+      return socket
+    })
+
+    const result = await runQwenAudioRealtimePlusTokenPlanProbe(
+      () => ({ apiKey: 'sk-sp-unit-test' }),
+      { socketFactory, fixtureBytes, chunkPacingMs: 0 },
+    )
+
+    expect(result.responseClass).toBe('TRANSCRIPTION_FAILED')
+    expect(result.providerErrorCode).toBe('transcription_failed')
+    expect(result.sanitizedErrorMessage).toBe('failed')
     expect(socketFactory).toHaveBeenCalledTimes(1)
   })
 

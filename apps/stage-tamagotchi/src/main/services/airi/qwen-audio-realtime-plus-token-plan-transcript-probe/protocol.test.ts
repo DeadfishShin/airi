@@ -46,8 +46,40 @@ describe('token Plan realtime-plus transcript-only probe protocol', () => {
 
   it('accepts only bounded transcript events and fails closed for vendor generation', () => {
     expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({ type: 'session.created' }))).toEqual({ type: 'session.created' })
-    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'AIRI probe' }))).toEqual({ type: 'transcription.completed', transcript: 'AIRI probe' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_x', content_index: 0, transcript: 'AIRI probe' }))).toEqual({ type: 'transcription.completed', itemId: 'item_x', contentIndex: 0, transcript: 'AIRI probe' })
     expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({ type: 'response.created' }))).toEqual({ type: 'unexpected-generation', eventType: 'response.created' })
     expect(() => parseQwenAudioRealtimePlusServerMessage('{')).toThrow()
+  })
+
+  it('parses Qwen-Audio delta text and stash fields without requiring vendor response.delta', () => {
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.input_audio_transcription.delta',
+      event_id: 'event_x',
+      item_id: 'item_x',
+      content_index: 0,
+      text: 'AIRI',
+      stash: ' probe',
+      extra: 'ignored',
+    }))).toEqual({ type: 'transcription.delta', itemId: 'item_x', contentIndex: 0, text: 'AIRI', stash: ' probe' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item_x',
+      content_index: 0,
+      text: '',
+      stash: '',
+    }))).toEqual({ type: 'transcription.delta', itemId: 'item_x', contentIndex: 0, text: '', stash: '' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.input_audio_transcription.delta',
+      delta: 'legacy field',
+    }))).toEqual({ type: 'transcription.delta.malformed' })
+  })
+
+  it('parses transcription failure without exposing the raw event', () => {
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.input_audio_transcription.failed',
+      item_id: 'item_x',
+      content_index: 0,
+      error: { type: 'invalid_request_error', code: 'transcription_failed', message: 'bounded message' },
+    }))).toEqual({ type: 'transcription.failed', itemId: 'item_x', contentIndex: 0, code: 'transcription_failed', message: 'bounded message' })
   })
 })

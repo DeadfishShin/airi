@@ -1517,3 +1517,20 @@ TOKEN_PLAN_CUSTOM_APP=HOLD
 该 integrated Electron Level-3 PASS 的 authority 是实际 AIRI production Electron runtime，而不是已经退役的 standalone Electron Level-3 harness。它由 playback-only 无 speech false positive/user turn、播放期间真实用户语音被检测、旧 TTS 被及时取消、stale output 未恢复以及 quiet-tail 无幽灵事件共同支持。此前的 `MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE=PASS` 继续保留，但不与 integrated Electron 结果混为同一 host authority。
 
 本次接受不改变 production VAD 参数、麦克风 constraints、ASR/TTS/LLM routing、provider selection、fallback policy、endpointing 或 barge-in semantics，也不把 PAYG 测试授权推广为默认计费路径。没有新增 provider call；没有记录 raw microphone audio、PCM/base64、transcript、prompt、LLM confidential payload 或 credential。这里的 integrated PASS 仅属于实际 AIRI Electron runtime；此前退役的 standalone Electron diagnostic harness 不恢复为 authority。Android 与跨设备认证仍不在本节结论内。`OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。
+
+## 38. Realtime-plus transcription event parser repair
+
+此前一次 transcript-only runtime probe 收到服务端的
+`conversation.item.input_audio_transcription.delta` 事件后，被错误归类为
+`MALFORMED_EVENT`。根因是 probe parser 只接受了假设性的 `delta` 字段；Qwen-Audio
+realtime server event 使用 `text` 与 `stash`，二者都允许为空。当前 parser 已按该事件
+形状读取这两个字段，并对可选的 `item_id` / 非负 `content_index` 做相关性校验；未知
+附加字段会被忽略。部分 delta（包括结构不完整但仍可继续等待的事件）不会提前结束
+probe，只有匹配的 `input_audio_transcription.completed.transcript` 才能结算成功或空结果；
+匹配的 `input_audio_transcription.failed` 会返回受限的错误 code/message。不同 item 或
+content index 的事件会被忽略，响应生成类 vendor 事件仍 fail-closed。
+
+该修复只覆盖本地协议解析与 deterministic tests。当前没有重新建立 WebSocket，没有发送
+音频，没有发送 `response.create`，也没有新增 Provider/ASR/TTS/LLM 调用；
+`qwen-audio-3.0-realtime-plus` 的 Token Plan entitlement 与完整 transcript 能力仍保持
+`NOT_YET_PROVEN`，须由后续独立的 Owner-authorized runtime probe 决定。`SOURCE_PROVEN`。
