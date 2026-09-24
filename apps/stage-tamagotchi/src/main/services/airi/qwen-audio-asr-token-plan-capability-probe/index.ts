@@ -14,11 +14,13 @@ import { defineInvokeHandler } from '@moeru/eventa'
 import { createContext as createElectronContext } from '@moeru/eventa/adapters/electron/main'
 import { errorMessageFrom } from '@moeru/std'
 import {
+  QWEN_AUDIO_ASR_TOKEN_PLAN_EXPECTED_DAILY_PROFILE,
   QWEN_AUDIO_ASR_TOKEN_PLAN_PROBE_ENDPOINT,
   QWEN_AUDIO_ASR_TOKEN_PLAN_PROBE_MODEL,
+  qwenAudioAsrTokenPlanGetPreflight,
   qwenAudioAsrTokenPlanProbe,
 } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe-ipc'
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 
 import probeFixtureAsset from '../../../../../resources/token-plan-asr-capability-probe.wav?asset'
 
@@ -39,7 +41,7 @@ interface ProbeResponse {
 
 export interface QwenAudioAsrTokenPlanProbeOptions {
   context: MainEventContext
-  credentialStore: Pick<QwenAudioTtsTokenPlanCredentialService, 'getRuntimeProfile'>
+  credentialStore: Pick<QwenAudioTtsTokenPlanCredentialService, 'getPublicProfile' | 'getRuntimeProfile'>
   lifecycle?: Lifecycle
   fetchImpl?: ProbeFetch
   timeoutMs?: number
@@ -279,14 +281,57 @@ export function createQwenAudioAsrTokenPlanProbe(options: QwenAudioAsrTokenPlanP
     }
   }
 
+  const getPreflight = async () => {
+    const userDataPath = app.getPath('userData')
+    const profileAuthority = userDataPath === QWEN_AUDIO_ASR_TOKEN_PLAN_EXPECTED_DAILY_PROFILE
+      ? 'DAILY_PROFILE' as const
+      : 'NON_DAILY_PROFILE' as const
+    let credentialConfigured = false
+    let credentialStatus: 'saved' | 'missing' | 'unavailable' = 'unavailable'
+    let credentialSource: 'secure-store' | 'environment' | 'none' = 'none'
+    try {
+      const publicProfile = options.credentialStore.getPublicProfile()
+      credentialConfigured = publicProfile.ready
+      credentialSource = publicProfile.source
+      credentialStatus = publicProfile.ready ? 'saved' : publicProfile.secureStorageAvailable ? 'missing' : 'unavailable'
+    }
+    catch {
+      credentialStatus = 'unavailable'
+    }
+
+    let fixtureReady = false
+    try {
+      fixtureReady = (options.fixtureBytes ?? await readFixtureBytes()).byteLength > 0
+    }
+    catch {
+      fixtureReady = false
+    }
+
+    return {
+      userDataPath,
+      profileAuthority,
+      profileAuthorityMatch: profileAuthority === 'DAILY_PROFILE',
+      credentialConfigured,
+      credentialStatus,
+      credentialSource,
+      fixtureReady,
+      probeReady: profileAuthority === 'DAILY_PROFILE' && credentialConfigured && fixtureReady && !inFlight,
+    }
+  }
+
   let disposeHandler = () => {}
   const dispose = () => {
     disposeHandler()
   }
 
-  disposeHandler = defineInvokeHandler(options.context, qwenAudioAsrTokenPlanProbe, probe)
+  const disposeProbeHandler = defineInvokeHandler(options.context, qwenAudioAsrTokenPlanProbe, probe)
+  const disposePreflightHandler = defineInvokeHandler(options.context, qwenAudioAsrTokenPlanGetPreflight, getPreflight)
+  disposeHandler = () => {
+    disposeProbeHandler()
+    disposePreflightHandler()
+  }
   options.lifecycle?.appHooks.onStop(dispose)
-  return { probe, dispose }
+  return { getPreflight, probe, dispose }
 }
 
 export function setupQwenAudioAsrTokenPlanProbe(options: Omit<QwenAudioAsrTokenPlanProbeOptions, 'context' | 'credentialStore'> & { credentialStore: QwenAudioTtsTokenPlanCredentialService }) {

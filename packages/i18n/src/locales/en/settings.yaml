@@ -1019,6 +1019,11 @@ pages:
         asrProbe:
           title: Token Plan ASR capability diagnostic
           description: One manual, bounded probe hypothesis for qwen-audio-3.0-asr-flash. This is not the production ASR feature.
+          profile: Runtime profile authority
+          credential: Token Plan credential
+          fixture: Probe fixture
+          readiness: Probe readiness
+          runtimePath: Main-process user data path
           button: Probe Token Plan ASR contract
           running: Probing Token Plan ASR…
     catalog:

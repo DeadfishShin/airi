@@ -2,9 +2,11 @@ import { readFileSync, statSync } from 'node:fs'
 
 import { createContext } from '@moeru/eventa'
 import {
+  QWEN_AUDIO_ASR_TOKEN_PLAN_EXPECTED_DAILY_PROFILE,
   QWEN_AUDIO_ASR_TOKEN_PLAN_PROBE_ENDPOINT,
   QWEN_AUDIO_ASR_TOKEN_PLAN_PROBE_MODEL,
 } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe-ipc'
+import { app } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -13,9 +15,15 @@ import {
   runQwenAudioAsrTokenPlanProbe,
 } from './index'
 
-vi.mock('electron', () => ({ ipcMain: {} }))
+vi.mock('electron', () => ({
+  app: { getPath: vi.fn(() => QWEN_AUDIO_ASR_TOKEN_PLAN_EXPECTED_DAILY_PROFILE) },
+  ipcMain: {},
+}))
 
-const credentialStore = { getRuntimeProfile: () => ({ apiKey: 'unit-test-token' }) }
+const credentialStore = {
+  getPublicProfile: () => ({ hasApiKey: true, ready: true, source: 'secure-store' as const, secureStorageAvailable: true }),
+  getRuntimeProfile: () => ({ apiKey: 'unit-test-token' }),
+}
 const fixtureBytes = new Uint8Array(readFileSync(new URL('../../../../../resources/token-plan-asr-capability-probe.wav', import.meta.url)))
 
 function response(status: number, body: unknown, contentType = 'application/json') {
@@ -138,6 +146,53 @@ describe('qwen Token Plan ASR capability probe', () => {
       expect(JSON.stringify(fetchSpy.mock.calls)).not.toContain('payg')
     }
     finally {
+      service.dispose()
+    }
+  })
+
+  it('reports main-process daily profile and public credential readiness without probing', async () => {
+    const context = createContext()
+    const service = createQwenAudioAsrTokenPlanProbe({
+      context: context as never,
+      credentialStore,
+      fixtureBytes,
+    })
+    try {
+      await expect(service.getPreflight()).resolves.toMatchObject({
+        userDataPath: QWEN_AUDIO_ASR_TOKEN_PLAN_EXPECTED_DAILY_PROFILE,
+        profileAuthority: 'DAILY_PROFILE',
+        profileAuthorityMatch: true,
+        credentialConfigured: true,
+        credentialStatus: 'saved',
+        credentialSource: 'secure-store',
+        fixtureReady: true,
+        probeReady: true,
+      })
+    }
+    finally {
+      service.dispose()
+    }
+  })
+
+  it('keeps the preflight gate closed for a non-daily or missing-credential runtime', async () => {
+    vi.mocked(app.getPath).mockReturnValue('/private/tmp/airi-asr-preflight-test-profile')
+    const context = createContext()
+    const service = createQwenAudioAsrTokenPlanProbe({
+      context: context as never,
+      credentialStore: {
+        ...credentialStore,
+        getPublicProfile: () => ({ hasApiKey: false, ready: false, source: 'none' as const, secureStorageAvailable: true }),
+      },
+      fixtureBytes,
+    })
+    try {
+      const result = await service.getPreflight()
+      expect(result.credentialConfigured).toBe(false)
+      expect(result.credentialStatus).toBe('missing')
+      expect(result.probeReady).toBe(false)
+    }
+    finally {
+      vi.mocked(app.getPath).mockReturnValue(QWEN_AUDIO_ASR_TOKEN_PLAN_EXPECTED_DAILY_PROFILE)
       service.dispose()
     }
   })

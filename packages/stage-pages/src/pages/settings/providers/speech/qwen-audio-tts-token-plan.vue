@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { QwenAudioAsrTokenPlanProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe-ipc'
+import type { QwenAudioAsrTokenPlanPreflightResult, QwenAudioAsrTokenPlanProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe-ipc'
 import type { QwenAudioTtsTokenPlanModelsProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-models-probe-ipc'
 
 import { errorMessageFrom } from '@moeru/std'
@@ -9,7 +9,7 @@ import {
   ProviderSettingsLayout,
 } from '@proj-airi/stage-ui/components'
 import { selectProviderMetadata } from '@proj-airi/stage-ui/libs'
-import { probeQwenAudioAsrTokenPlan } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe'
+import { getQwenAudioAsrTokenPlanPreflight, probeQwenAudioAsrTokenPlan } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe'
 import {
   getQwenAudioTtsTokenPlanAccountModels,
   QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_UPDATED_AT,
@@ -60,6 +60,7 @@ const refreshingCatalog = ref(false)
 const accountModelsResult = ref<QwenAudioTtsTokenPlanModelsProbeResult>()
 const asrProbeBusy = ref(false)
 const asrProbeResult = ref<QwenAudioAsrTokenPlanProbeResult>()
+const asrPreflight = ref<QwenAudioAsrTokenPlanPreflightResult>()
 const browsingModelId = ref('')
 const browsingVoiceId = ref('')
 let catalogRefreshSequence = 0
@@ -312,7 +313,7 @@ async function refreshAccountModels(allowBusy = false) {
 }
 
 async function runAsrCapabilityProbe() {
-  if (asrProbeBusy.value)
+  if (asrProbeBusy.value || !asrPreflight.value?.probeReady)
     return
   asrProbeBusy.value = true
   asrProbeResult.value = undefined
@@ -325,6 +326,15 @@ async function runAsrCapabilityProbe() {
   }
   finally {
     asrProbeBusy.value = false
+  }
+}
+
+async function loadAsrPreflight() {
+  try {
+    asrPreflight.value = await getQwenAudioAsrTokenPlanPreflight()
+  }
+  catch (error) {
+    errorMessage.value = errorMessageFrom(error) ?? 'The ASR diagnostic preflight could not be loaded.'
   }
 }
 
@@ -370,6 +380,7 @@ async function clear() {
 
 onMounted(() => {
   void initializeCatalog()
+  void loadAsrPreflight()
 })
 </script>
 
@@ -474,7 +485,49 @@ onMounted(() => {
             <p class="text-xs text-neutral-500 dark:text-neutral-400">
               {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.description') }}
             </p>
-            <button data-testid="qwen-audio-asr-token-plan-capability-probe-button" type="button" :disabled="asrProbeBusy || busy || refreshingCatalog" class="self-start border border-amber-400 rounded px-3 py-1 text-sm dark:border-amber-700 disabled:opacity-50" @click="runAsrCapabilityProbe">
+            <dl data-testid="qwen-audio-asr-token-plan-preflight" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
+              <div>
+                <dt class="font-medium">
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.profile') }}
+                </dt>
+                <dd data-testid="qwen-audio-asr-token-plan-runtime-profile">
+                  {{ asrPreflight?.profileAuthority ?? 'unavailable' }}
+                </dd>
+              </div>
+              <div>
+                <dt class="font-medium">
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.credential') }}
+                </dt>
+                <dd data-testid="qwen-audio-asr-token-plan-runtime-credential">
+                  {{ asrPreflight?.credentialStatus ?? 'unavailable' }}
+                </dd>
+              </div>
+              <div>
+                <dt class="font-medium">
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.fixture') }}
+                </dt>
+                <dd data-testid="qwen-audio-asr-token-plan-runtime-fixture">
+                  {{ asrPreflight?.fixtureReady ? 'ready' : 'missing' }}
+                </dd>
+              </div>
+              <div>
+                <dt class="font-medium">
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.readiness') }}
+                </dt>
+                <dd data-testid="qwen-audio-asr-token-plan-runtime-readiness">
+                  {{ asrPreflight?.probeReady ? 'ready' : 'not ready' }}
+                </dd>
+              </div>
+              <div v-if="asrPreflight?.userDataPath" class="sm:col-span-2">
+                <dt class="font-medium">
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.runtimePath') }}
+                </dt>
+                <dd data-testid="qwen-audio-asr-token-plan-runtime-user-data-path" class="break-all">
+                  {{ asrPreflight.userDataPath }}
+                </dd>
+              </div>
+            </dl>
+            <button data-testid="qwen-audio-asr-token-plan-capability-probe-button" type="button" :disabled="!asrPreflight?.probeReady || asrProbeBusy || busy || refreshingCatalog" class="self-start border border-amber-400 rounded px-3 py-1 text-sm dark:border-amber-700 disabled:opacity-50" @click="runAsrCapabilityProbe">
               {{ asrProbeBusy ? t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.running') : t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.button') }}
             </button>
             <dl v-if="asrProbeResult" data-testid="qwen-audio-asr-token-plan-capability-probe-result" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">

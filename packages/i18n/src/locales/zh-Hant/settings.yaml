@@ -905,6 +905,11 @@ pages:
         asrProbe:
           title: Token Plan ASR 能力診斷
           description: 針對 qwen-audio-3.0-asr-flash 的一次手動、有界探測假設。這不是正式 ASR 功能。
+          profile: 執行 profile 權威
+          credential: Token Plan 憑據
+          fixture: 探測音訊
+          readiness: 探測就緒狀態
+          runtimePath: 主程序 user data 路徑
           button: 探測 Token Plan ASR 合同
           running: 正在探測 Token Plan ASR……
     catalog:
