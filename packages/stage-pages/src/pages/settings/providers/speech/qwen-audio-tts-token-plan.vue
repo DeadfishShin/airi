@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { QwenAudioTtsTokenPlanModelsProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-models-probe-ipc'
+
 import { errorMessageFrom } from '@moeru/std'
 import {
   ProviderBasicSettings,
@@ -16,6 +18,9 @@ import {
   saveQwenAudioTtsTokenPlanCredential,
 } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-credential'
 import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-ipc'
+import {
+  probeQwenAudioTtsTokenPlanModels,
+} from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-models-probe'
 import { useSpeechStore } from '@proj-airi/stage-ui/stores/modules/speech'
 import { useProviderStore } from '@proj-airi/stage-ui/stores/providers/provider'
 import { computedAsync } from '@vueuse/core'
@@ -37,6 +42,9 @@ const catalogStatus = ref('')
 const catalogSource = ref(t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source'))
 const voiceSearchQuery = ref('')
 const refreshingCatalog = ref(false)
+const probingModels = ref(false)
+const probeResult = ref<QwenAudioTtsTokenPlanModelsProbeResult>()
+const probeError = ref('')
 const browsingModelId = ref('')
 const browsingVoiceId = ref('')
 let catalogRefreshSequence = 0
@@ -254,6 +262,23 @@ async function clear() {
   }
 }
 
+async function probeModels() {
+  if (probingModels.value || busy.value)
+    return
+  probingModels.value = true
+  probeResult.value = undefined
+  probeError.value = ''
+  try {
+    probeResult.value = await probeQwenAudioTtsTokenPlanModels()
+  }
+  catch (error) {
+    probeError.value = errorMessageFrom(error) ?? 'The account model probe could not be started.'
+  }
+  finally {
+    probingModels.value = false
+  }
+}
+
 onMounted(() => {
   void initializeCatalog()
 })
@@ -323,6 +348,42 @@ onMounted(() => {
             <p class="text-xs text-neutral-500 dark:text-neutral-400">
               Token Plan model discovery is not documented as a credential-scoped API. This selection uses the official published directory and does not claim account entitlement.
             </p>
+            <div class="flex flex-col gap-2 border border-neutral-300 rounded border-dashed p-3 dark:border-neutral-700">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <span class="text-sm font-medium">Account model probe</span>
+                <button data-testid="qwen-audio-tts-token-plan-probe-models" type="button" :disabled="probingModels || busy" class="border border-neutral-300 rounded px-3 py-1 text-sm dark:border-neutral-700 disabled:opacity-50" @click="probeModels">
+                  {{ probingModels ? 'Probing account models…' : 'Probe account models' }}
+                </button>
+              </div>
+              <p class="text-xs text-neutral-500 dark:text-neutral-400">
+                Manual, one-shot, read-only check using the saved Token Plan credential. The credential never leaves the Electron main process and the bundled directory remains the fallback.
+              </p>
+              <dl v-if="probeResult" data-testid="qwen-audio-tts-token-plan-probe-result" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
+                <div>
+                  <dt class="font-medium">
+                    Result
+                  </dt><dd>{{ probeResult.responseClass }}</dd>
+                </div>
+                <div>
+                  <dt class="font-medium">
+                    HTTP
+                  </dt><dd>{{ probeResult.httpStatus ?? '—' }}</dd>
+                </div>
+                <div>
+                  <dt class="font-medium">
+                    Models
+                  </dt><dd>{{ probeResult.modelIds.length }}</dd>
+                </div>
+                <div>
+                  <dt class="font-medium">
+                    TTS models
+                  </dt><dd>{{ probeResult.ttsModelIds.join(', ') || '—' }}</dd>
+                </div>
+              </dl>
+              <p v-if="probeError" data-testid="qwen-audio-tts-token-plan-probe-error" class="text-xs text-red-600 dark:text-red-400">
+                {{ probeError }}
+              </p>
+            </div>
           </div>
 
           <form class="flex flex-col gap-3" @submit.prevent="save">

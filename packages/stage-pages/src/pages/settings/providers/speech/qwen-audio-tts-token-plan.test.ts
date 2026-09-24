@@ -19,6 +19,8 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).toContain('qwen-audio-tts-token-plan-api-key')
     expect(source).toContain('qwen-audio-tts-token-plan-save')
     expect(source).toContain('qwen-audio-tts-token-plan-voice')
+    expect(source).toContain('qwen-audio-tts-token-plan-probe-models')
+    expect(source).toContain('probeQwenAudioTtsTokenPlanModels')
   })
 
   it('uses the secure credential bridge and does not introduce REST preview behavior', async () => {
@@ -28,8 +30,17 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).toContain('saveQwenAudioTtsTokenPlanCredential')
     expect(source).toContain('clearQwenAudioTtsTokenPlanCredential')
     expect(source).not.toMatch(/DASHSCOPE_API_KEY|TOKEN_PLAN_API_KEY\s*=/)
+    expect(source).not.toMatch(/Authorization\s*:/)
     expect(source).toContain('QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL')
     expect(source).not.toContain('QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID')
+  })
+
+  it('keeps the account probe manual and renders only its sanitized result', async () => {
+    const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
+    expect(source).toContain('@click="probeModels"')
+    expect(source).toContain('probeResult.responseClass')
+    expect(source).toContain('probeResult.modelIds.length')
+    expect(source).not.toMatch(/onMounted\(.*probeQwenAudioTtsTokenPlanModels/s)
   })
 
   it('keeps directory browsing separate from the active speech selection', () => {
