@@ -1,4 +1,7 @@
-import type { QwenAudioTtsTokenPlanCredentialSource } from './qwen-audio-tts-token-plan-credential-ipc'
+import type {
+  QwenAudioTtsTokenPlanCredentialDiagnosticReason,
+  QwenAudioTtsTokenPlanCredentialSource,
+} from './qwen-audio-tts-token-plan-credential-ipc'
 
 import { defineInvokeEventa } from '@moeru/eventa'
 
@@ -21,6 +24,7 @@ export interface QwenAudioAsrTokenPlanPreflightResult {
   credentialConfigured: boolean
   credentialStatus: QwenAudioAsrTokenPlanCredentialStatus
   credentialSource: QwenAudioTtsTokenPlanCredentialSource
+  credentialDiagnosticReason: QwenAudioTtsTokenPlanCredentialDiagnosticReason
   fixtureReady: boolean
   probeReady: boolean
 }

@@ -41,7 +41,7 @@ interface ProbeResponse {
 
 export interface QwenAudioAsrTokenPlanProbeOptions {
   context: MainEventContext
-  credentialStore: Pick<QwenAudioTtsTokenPlanCredentialService, 'getPublicProfile' | 'getRuntimeProfile'>
+  credentialStore: Pick<QwenAudioTtsTokenPlanCredentialService, 'getPublicDiagnostic' | 'getPublicProfile' | 'getRuntimeProfile'>
   lifecycle?: Lifecycle
   fetchImpl?: ProbeFetch
   timeoutMs?: number
@@ -289,8 +289,10 @@ export function createQwenAudioAsrTokenPlanProbe(options: QwenAudioAsrTokenPlanP
     let credentialConfigured = false
     let credentialStatus: 'saved' | 'missing' | 'unavailable' = 'unavailable'
     let credentialSource: 'secure-store' | 'environment' | 'none' = 'none'
+    let credentialDiagnosticReason: string = 'UNKNOWN_ERROR'
     try {
       const publicProfile = options.credentialStore.getPublicProfile()
+      credentialDiagnosticReason = options.credentialStore.getPublicDiagnostic().reason
       credentialConfigured = publicProfile.ready
       credentialSource = publicProfile.source
       credentialStatus = publicProfile.ready ? 'saved' : publicProfile.secureStorageAvailable ? 'missing' : 'unavailable'
@@ -314,6 +316,7 @@ export function createQwenAudioAsrTokenPlanProbe(options: QwenAudioAsrTokenPlanP
       credentialConfigured,
       credentialStatus,
       credentialSource,
+      credentialDiagnosticReason,
       fixtureReady,
       probeReady: profileAuthority === 'DAILY_PROFILE' && credentialConfigured && fixtureReady && !inFlight,
     }

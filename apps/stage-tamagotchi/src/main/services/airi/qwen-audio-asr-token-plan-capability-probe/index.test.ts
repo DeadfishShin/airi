@@ -22,6 +22,7 @@ vi.mock('electron', () => ({
 
 const credentialStore = {
   getPublicProfile: () => ({ hasApiKey: true, ready: true, source: 'secure-store' as const, secureStorageAvailable: true }),
+  getPublicDiagnostic: () => ({ reason: 'PROFILE_PRESENT_CONFIGURED' as const, recordPresent: true, recordSchema: 'valid' as const, decryption: 'succeeded' as const, profile: 'configured' as const }),
   getRuntimeProfile: () => ({ apiKey: 'unit-test-token' }),
 }
 const fixtureBytes = new Uint8Array(readFileSync(new URL('../../../../../resources/token-plan-asr-capability-probe.wav', import.meta.url)))
@@ -165,8 +166,34 @@ describe('qwen Token Plan ASR capability probe', () => {
         credentialConfigured: true,
         credentialStatus: 'saved',
         credentialSource: 'secure-store',
+        credentialDiagnosticReason: 'PROFILE_PRESENT_CONFIGURED',
         fixtureReady: true,
         probeReady: true,
+      })
+    }
+    finally {
+      service.dispose()
+    }
+  })
+
+  it('keeps the preflight gate closed and exposes only a bounded decrypt diagnostic', async () => {
+    const context = createContext()
+    const service = createQwenAudioAsrTokenPlanProbe({
+      context: context as never,
+      credentialStore: {
+        ...credentialStore,
+        getPublicProfile: () => ({ hasApiKey: false, ready: false, source: 'none' as const, secureStorageAvailable: true }),
+        getPublicDiagnostic: () => ({ reason: 'DECRYPT_FAILED' as const, recordPresent: true, recordSchema: 'valid' as const, decryption: 'failed' as const, profile: 'unavailable' as const }),
+      },
+      fixtureBytes,
+    })
+    try {
+      await expect(service.getPreflight()).resolves.toMatchObject({
+        profileAuthority: 'DAILY_PROFILE',
+        credentialConfigured: false,
+        credentialStatus: 'missing',
+        credentialDiagnosticReason: 'DECRYPT_FAILED',
+        probeReady: false,
       })
     }
     finally {
@@ -182,6 +209,7 @@ describe('qwen Token Plan ASR capability probe', () => {
       credentialStore: {
         ...credentialStore,
         getPublicProfile: () => ({ hasApiKey: false, ready: false, source: 'none' as const, secureStorageAvailable: true }),
+        getPublicDiagnostic: () => ({ reason: 'RECORD_ABSENT' as const, recordPresent: false, recordSchema: 'absent' as const, decryption: 'not-attempted' as const, profile: 'absent' as const }),
       },
       fixtureBytes,
     })

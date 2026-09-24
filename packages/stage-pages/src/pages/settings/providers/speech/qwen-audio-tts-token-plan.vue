@@ -504,6 +504,14 @@ onMounted(() => {
               </div>
               <div>
                 <dt class="font-medium">
+                  Diagnostic reason
+                </dt>
+                <dd data-testid="qwen-audio-asr-token-plan-runtime-credential-reason">
+                  {{ asrPreflight?.credentialDiagnosticReason ?? 'UNKNOWN_ERROR' }}
+                </dd>
+              </div>
+              <div>
+                <dt class="font-medium">
                   {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.fixture') }}
                 </dt>
                 <dd data-testid="qwen-audio-asr-token-plan-runtime-fixture">

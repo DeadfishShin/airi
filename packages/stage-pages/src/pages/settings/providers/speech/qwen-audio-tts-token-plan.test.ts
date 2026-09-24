@@ -57,6 +57,7 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).toContain('getQwenAudioAsrTokenPlanPreflight')
     expect(source).toContain('qwen-audio-asr-token-plan-runtime-profile')
     expect(source).toContain('qwen-audio-asr-token-plan-runtime-credential')
+    expect(source).toContain('qwen-audio-asr-token-plan-runtime-credential-reason')
     expect(source).toContain('qwen-audio-asr-token-plan-runtime-fixture')
     expect(source).toContain('qwen-audio-asr-token-plan-runtime-readiness')
     expect(source).toContain('!asrPreflight?.probeReady')
