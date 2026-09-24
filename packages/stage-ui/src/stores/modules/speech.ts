@@ -78,6 +78,11 @@ export const useSpeechStore = defineStore('speech', () => {
   // Plan directory must not cancel or report errors against the provider that
   // is currently active in the speech settings.
   const voiceLoadRequestSequence = new Map<string, number>()
+  // The page-level loading/error state has a different owner from the
+  // provider catalogue. Browse requests may update a provider catalogue
+  // without owning this shared state, so keep a separate request token for
+  // requests that explicitly opt into page-level status tracking.
+  let globalVoiceLoadRequestSequence = 0
 
   // Computed properties
   const availableSpeechProvidersMetadata = computed(() => allAudioSpeechProvidersMetadata.value)
@@ -130,19 +135,24 @@ export const useSpeechStore = defineStore('speech', () => {
       return []
     }
 
-    // Streaming provider visibility is server-driven and only confirmed after
-    // the auth probe force-configures it. Keep the gate at the public loader so
-    // pages cannot bypass it and issue `/voices/streaming` while unavailable.
-    if (provider === OFFICIAL_SPEECH_STREAMING_PROVIDER_ID && !providerStore.configuredProviders[provider]) {
-      return []
-    }
-
     const requestSequence = (voiceLoadRequestSequence.get(provider) ?? 0) + 1
     voiceLoadRequestSequence.set(provider, requestSequence)
     const trackGlobalState = options.trackGlobalState !== false
+    const globalRequestSequence = trackGlobalState ? ++globalVoiceLoadRequestSequence : undefined
     if (trackGlobalState) {
       isLoadingSpeechProviderVoices.value = true
       speechProviderError.value = null
+    }
+
+    // Streaming provider visibility is server-driven and only confirmed after
+    // the auth probe force-configures it. Keep the gate at the public loader so
+    // pages cannot bypass it and issue `/voices/streaming` while unavailable.
+    // This request still owns the shared state long enough to release the
+    // loading indicator it started.
+    if (provider === OFFICIAL_SPEECH_STREAMING_PROVIDER_ID && !providerStore.configuredProviders[provider]) {
+      if (trackGlobalState && globalRequestSequence === globalVoiceLoadRequestSequence)
+        isLoadingSpeechProviderVoices.value = false
+      return []
     }
 
     try {
@@ -165,14 +175,14 @@ export const useSpeechStore = defineStore('speech', () => {
     }
     catch (error) {
       console.error(`Error fetching voices for ${provider}:`, error)
-      if (requestSequence === voiceLoadRequestSequence.get(provider) && trackGlobalState)
+      if (trackGlobalState && globalRequestSequence === globalVoiceLoadRequestSequence)
         speechProviderError.value = errorMessageFrom(error) ?? 'Unknown error'
       if (options.throwOnError)
         throw error
       return []
     }
     finally {
-      if (requestSequence === voiceLoadRequestSequence.get(provider) && trackGlobalState)
+      if (trackGlobalState && globalRequestSequence === globalVoiceLoadRequestSequence)
         isLoadingSpeechProviderVoices.value = false
     }
   }

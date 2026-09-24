@@ -614,6 +614,10 @@ describe('qwen Audio Token Plan speech selection', () => {
     setActivePinia(createPinia())
   })
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   async function prepareTokenPlanCatalog() {
     const providersStore = useProviderStore()
     const speechStore = useSpeechStore()
@@ -747,6 +751,104 @@ describe('qwen Audio Token Plan speech selection', () => {
     resolveFirst([{ id: 'voice-a', name: 'Voice A', provider: 'provider-a', languages: [] }])
     await expect(firstLoad).resolves.toHaveLength(1)
     expect(speechStore.getVoicesForProvider('provider-a').map(voice => voice.id)).toEqual(['voice-a'])
+  })
+
+  it('keeps the current provider loading state after a previous provider fails late', async () => {
+    const providersStore = useProviderStore()
+    const speechStore = useSpeechStore()
+    let rejectFirst!: (error: Error) => void
+    let resolveSecond!: (voices: Array<{ id: string, name: string, provider: string, languages: never[] }>) => void
+    const firstRequest = new Promise<never>((_, reject) => rejectFirst = reject)
+    const secondRequest = new Promise<Array<{ id: string, name: string, provider: string, languages: never[] }>>(resolve => resolveSecond = resolve)
+    vi.spyOn(providersStore, 'listProviderVoices').mockImplementation((provider: string) => provider === 'provider-a' ? firstRequest : secondRequest)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const firstLoad = speechStore.loadVoicesForProvider('provider-a', 'model-a')
+    const secondLoad = speechStore.loadVoicesForProvider('provider-b', 'model-b')
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(true)
+
+    rejectFirst(new Error('provider-a late failure'))
+    await firstLoad
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(true)
+    expect(speechStore.speechProviderError).toBeNull()
+
+    resolveSecond([{ id: 'voice-b', name: 'Voice B', provider: 'provider-b', languages: [] }])
+    await secondLoad
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(false)
+    expect(speechStore.speechProviderError).toBeNull()
+  })
+
+  it('lets the normal request release loading when a same-provider browse is also pending', async () => {
+    const providersStore = useProviderStore()
+    const speechStore = useSpeechStore()
+    let resolveNormal!: (voices: Array<{ id: string, name: string, provider: string, languages: never[] }>) => void
+    let resolveBrowse!: (voices: Array<{ id: string, name: string, provider: string, languages: never[] }>) => void
+    const normalRequest = new Promise<Array<{ id: string, name: string, provider: string, languages: never[] }>>(resolve => resolveNormal = resolve)
+    const browseRequest = new Promise<Array<{ id: string, name: string, provider: string, languages: never[] }>>(resolve => resolveBrowse = resolve)
+    vi.spyOn(providersStore, 'listProviderVoices').mockImplementation((_provider: string, model?: string) => model === 'browse-model' ? browseRequest : normalRequest)
+
+    const normalLoad = speechStore.loadVoicesForProvider('provider-a', 'normal-model')
+    const browseLoad = speechStore.loadVoicesForProvider('provider-a', 'browse-model', {
+      applySelectionDefaults: false,
+      trackGlobalState: false,
+    })
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(true)
+
+    resolveNormal([{ id: 'normal-voice', name: 'Normal Voice', provider: 'provider-a', languages: [] }])
+    await normalLoad
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(false)
+
+    resolveBrowse([{ id: 'browse-voice', name: 'Browse Voice', provider: 'provider-a', languages: [] }])
+    await browseLoad
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(false)
+  })
+
+  it('does not let a browse request for another provider change current loading state', async () => {
+    const providersStore = useProviderStore()
+    const speechStore = useSpeechStore()
+    let resolveNormal!: (voices: Array<{ id: string, name: string, provider: string, languages: never[] }>) => void
+    let resolveBrowse!: (voices: Array<{ id: string, name: string, provider: string, languages: never[] }>) => void
+    const normalRequest = new Promise<Array<{ id: string, name: string, provider: string, languages: never[] }>>(resolve => resolveNormal = resolve)
+    const browseRequest = new Promise<Array<{ id: string, name: string, provider: string, languages: never[] }>>(resolve => resolveBrowse = resolve)
+    vi.spyOn(providersStore, 'listProviderVoices').mockImplementation((provider: string) => provider === 'provider-a' ? normalRequest : browseRequest)
+
+    const normalLoad = speechStore.loadVoicesForProvider('provider-a', 'normal-model')
+    const browseLoad = speechStore.loadVoicesForProvider('provider-b', 'browse-model', {
+      applySelectionDefaults: false,
+      trackGlobalState: false,
+    })
+
+    resolveBrowse([{ id: 'browse-voice', name: 'Browse Voice', provider: 'provider-b', languages: [] }])
+    await browseLoad
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(true)
+
+    resolveNormal([{ id: 'normal-voice', name: 'Normal Voice', provider: 'provider-a', languages: [] }])
+    await normalLoad
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(false)
+  })
+
+  it('keeps the current request error visible after stale requests finish', async () => {
+    const providersStore = useProviderStore()
+    const speechStore = useSpeechStore()
+    let rejectFirst!: (error: Error) => void
+    let rejectCurrent!: (error: Error) => void
+    const firstRequest = new Promise<never>((_, reject) => rejectFirst = reject)
+    const currentRequest = new Promise<never>((_, reject) => rejectCurrent = reject)
+    vi.spyOn(providersStore, 'listProviderVoices').mockImplementation((_provider: string, model?: string) => model === 'first-model' ? firstRequest : currentRequest)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const firstLoad = speechStore.loadVoicesForProvider('provider-a', 'first-model')
+    const currentLoad = speechStore.loadVoicesForProvider('provider-a', 'current-model')
+
+    rejectCurrent(new Error('current request failed'))
+    await currentLoad
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(false)
+    expect(speechStore.speechProviderError).toBe('current request failed')
+
+    rejectFirst(new Error('stale request failed'))
+    await firstLoad
+    expect(speechStore.speechProviderError).toBe('current request failed')
+    expect(speechStore.isLoadingSpeechProviderVoices).toBe(false)
   })
 
   it('does not apply longanlingxin to the PAYG Qwen3 route', async () => {
