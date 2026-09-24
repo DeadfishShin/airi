@@ -621,7 +621,10 @@ export const useProviderStore = defineStore('provider', () => {
   }
 
   // Function to fetch models for a specific provider
-  async function fetchModelsForProvider(providerId: string) {
+  async function fetchModelsForProvider(
+    providerId: string,
+    options: { preserveOnEmpty?: boolean, throwOnError?: boolean } = {},
+  ) {
     const definition = findProviderDefinition(providerId)
     if (!definition)
       return []
@@ -662,11 +665,14 @@ export const useProviderStore = defineStore('provider', () => {
       // detached object that entered the request.
       const currentRuntimeState = providerRuntimeState.value[providerId]
       if (currentRuntimeState) {
+        const nextModels = options.preserveOnEmpty && normalizedModels.length === 0
+          ? currentRuntimeState.models
+          : normalizedModels
         providerRuntimeState.value = {
           ...providerRuntimeState.value,
           [providerId]: {
             ...currentRuntimeState,
-            models: normalizedModels,
+            models: nextModels,
             modelStatus: 'ready',
             modelError: null,
           },
@@ -690,6 +696,8 @@ export const useProviderStore = defineStore('provider', () => {
           },
         }
       }
+      if (options.throwOnError)
+        throw error
       return []
     }
   }

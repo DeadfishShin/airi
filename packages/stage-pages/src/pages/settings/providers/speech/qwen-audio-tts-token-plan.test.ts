@@ -31,4 +31,18 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).toContain('QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL')
     expect(source).not.toContain('QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID')
   })
+
+  it('keeps directory browsing separate from the active speech selection', () => {
+    const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
+    const refreshStart = source.indexOf('async function refreshCatalog()')
+    const saveStart = source.indexOf('async function save()')
+    const refreshSource = source.slice(refreshStart, saveStart)
+
+    expect(refreshSource).not.toContain('speechStore.activeSpeechProvider = ')
+    expect(refreshSource).not.toContain('speechStore.activeSpeechModel = ')
+    expect(refreshSource).toContain('preserveOnEmpty: true')
+    expect(refreshSource).toContain('throwOnError: true')
+    expect(source).toContain('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source')
+    expect(source).toContain('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.customNotQueried')
+  })
 })

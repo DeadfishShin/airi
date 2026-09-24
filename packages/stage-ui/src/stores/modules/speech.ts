@@ -74,7 +74,10 @@ export const useSpeechStore = defineStore('speech', () => {
   const speechProviderError = refManualReset<string | null>(null)
   const availableVoices = refManualReset<Record<string, VoiceInfo[]>>(() => ({}))
   const modelSearchQuery = refManualReset<string>('')
-  let voiceLoadRequestSequence = 0
+  // Keep voice catalogue requests isolated per provider. Browsing the Token
+  // Plan directory must not cancel or report errors against the provider that
+  // is currently active in the speech settings.
+  const voiceLoadRequestSequence = new Map<string, number>()
 
   // Computed properties
   const availableSpeechProvidersMetadata = computed(() => allAudioSpeechProvidersMetadata.value)
@@ -118,7 +121,11 @@ export const useSpeechStore = defineStore('speech', () => {
     return ['elevenlabs', 'microsoft-speech', 'azure-speech'].includes(activeSpeechProvider.value)
   })
 
-  async function loadVoicesForProvider(provider: string, model?: string) {
+  async function loadVoicesForProvider(
+    provider: string,
+    model?: string,
+    options: { applySelectionDefaults?: boolean, preserveOnEmpty?: boolean, throwOnError?: boolean, trackGlobalState?: boolean } = {},
+  ) {
     if (!provider) {
       return []
     }
@@ -130,32 +137,42 @@ export const useSpeechStore = defineStore('speech', () => {
       return []
     }
 
-    const requestSequence = ++voiceLoadRequestSequence
-    isLoadingSpeechProviderVoices.value = true
-    speechProviderError.value = null
+    const requestSequence = (voiceLoadRequestSequence.get(provider) ?? 0) + 1
+    voiceLoadRequestSequence.set(provider, requestSequence)
+    const trackGlobalState = options.trackGlobalState !== false
+    if (trackGlobalState) {
+      isLoadingSpeechProviderVoices.value = true
+      speechProviderError.value = null
+    }
 
     try {
       const voices = await providersStore.listProviderVoices(provider, model)
       // A model/provider change can make an earlier catalogue result stale.
       // Do not let that result replace the current selection's voices.
-      if (requestSequence !== voiceLoadRequestSequence)
+      if (requestSequence !== voiceLoadRequestSequence.get(provider))
         return voices
 
       // Reassign to trigger reactivity when adding/updating provider entries
-      availableVoices.value = {
-        ...availableVoices.value,
-        [provider]: voices,
+      if (!options.preserveOnEmpty || voices.length !== 0) {
+        availableVoices.value = {
+          ...availableVoices.value,
+          [provider]: voices,
+        }
       }
-      ensureQwenCanarySelection(provider)
+      if (options.applySelectionDefaults !== false)
+        ensureQwenCanarySelection(provider)
       return voices
     }
     catch (error) {
       console.error(`Error fetching voices for ${provider}:`, error)
-      speechProviderError.value = errorMessageFrom(error) ?? 'Unknown error'
+      if (requestSequence === voiceLoadRequestSequence.get(provider) && trackGlobalState)
+        speechProviderError.value = errorMessageFrom(error) ?? 'Unknown error'
+      if (options.throwOnError)
+        throw error
       return []
     }
     finally {
-      if (requestSequence === voiceLoadRequestSequence)
+      if (requestSequence === voiceLoadRequestSequence.get(provider) && trackGlobalState)
         isLoadingSpeechProviderVoices.value = false
     }
   }

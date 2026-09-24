@@ -34,9 +34,13 @@ const apiKey = ref('')
 const statusMessage = ref('')
 const errorMessage = ref('')
 const catalogStatus = ref('')
-const catalogSource = ref('Official published directory')
+const catalogSource = ref(t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source'))
 const voiceSearchQuery = ref('')
 const refreshingCatalog = ref(false)
+const browsingModelId = ref('')
+const browsingVoiceId = ref('')
+let catalogRefreshSequence = 0
+let voiceRequestSequence = 0
 const profile = ref({
   hasApiKey: false,
   ready: false,
@@ -53,15 +57,19 @@ const providerMetadata = computedAsync(() => selectProviderMetadata(
 const models = computed(() => providersStore.getModelsForProvider(providerId))
 const selectedModelId = computed({
   get: () => {
+    if (models.value.some(candidate => candidate.id === browsingModelId.value))
+      return browsingModelId.value
     const active = speechStore.activeSpeechProvider === providerId ? speechStore.activeSpeechModel : ''
     return models.value.some(candidate => candidate.id === active) ? active : models.value[0]?.id ?? QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL
   },
   set: (value: string) => {
     if (!models.value.some(candidate => candidate.id === value))
       return
+    catalogRefreshSequence++
+    browsingModelId.value = value
     speechStore.activeSpeechProvider = providerId
     speechStore.activeSpeechModel = value
-    void speechStore.loadVoicesForProvider(providerId, value)
+    void loadVoicesForCatalog(value, true)
   },
 })
 const model = computed(() => models.value.find(candidate => candidate.id === selectedModelId.value))
@@ -78,11 +86,16 @@ const voiceCounts = computed(() => ({
   custom: voices.value.filter(voice => voice.catalogKind === 'custom').length,
 }))
 const selectedVoiceId = computed({
-  get: () => speechStore.activeSpeechProvider === providerId ? speechStore.activeSpeechVoiceId : '',
+  get: () => {
+    if (speechStore.activeSpeechProvider === providerId && speechStore.activeSpeechModel === selectedModelId.value)
+      return speechStore.activeSpeechVoiceId
+    return browsingVoiceId.value
+  },
   set: (value: string) => {
     const voice = voices.value.find(candidate => candidate.id === value)
     if (!voice)
       return
+    browsingVoiceId.value = voice.id
     speechStore.activeSpeechProvider = providerId
     speechStore.activeSpeechModel = selectedModelId.value
     speechStore.activeSpeechVoiceId = voice.id
@@ -118,32 +131,82 @@ async function initializeCatalog() {
   await refreshCatalog()
 }
 
+async function loadVoicesForCatalog(modelId: string, applySelectionDefaults: boolean) {
+  const requestSequence = ++voiceRequestSequence
+  try {
+    const nextVoices = await speechStore.loadVoicesForProvider(providerId, modelId, {
+      applySelectionDefaults,
+      preserveOnEmpty: true,
+      throwOnError: true,
+      trackGlobalState: applySelectionDefaults,
+    })
+    if (requestSequence !== voiceRequestSequence)
+      return undefined
+
+    if (applySelectionDefaults)
+      browsingVoiceId.value = speechStore.activeSpeechVoiceId
+    else if (speechStore.activeSpeechProvider === providerId && speechStore.activeSpeechModel === modelId)
+      browsingVoiceId.value = speechStore.activeSpeechVoiceId
+    return nextVoices
+  }
+  catch (error) {
+    if (requestSequence !== voiceRequestSequence)
+      return undefined
+    throw error
+  }
+}
+
 async function refreshCatalog() {
   if (refreshingCatalog.value)
     return
+  const refreshSequence = ++catalogRefreshSequence
   refreshingCatalog.value = true
   initializationFailed.value = false
   errorMessage.value = ''
-  catalogStatus.value = 'Loading the official published Token Plan directory…'
+  catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.loading')
   try {
     await providersStore.initializeProvider(providerId)
-    await providersStore.fetchModelsForProvider(providerId)
-    const nextModel = models.value.some(candidate => candidate.id === selectedModelId.value)
-      ? selectedModelId.value
-      : models.value[0]?.id
-    if (nextModel) {
-      if (speechStore.activeSpeechProvider !== providerId)
-        speechStore.activeSpeechProvider = providerId
-      if (speechStore.activeSpeechModel !== nextModel)
-        speechStore.activeSpeechModel = nextModel
-      await speechStore.loadVoicesForProvider(providerId, nextModel)
+    const refreshedModels = await providersStore.fetchModelsForProvider(providerId, {
+      preserveOnEmpty: true,
+      throwOnError: true,
+    })
+    if (refreshSequence !== catalogRefreshSequence)
+      return
+    if (!refreshedModels.length) {
+      catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.empty')
+      return
     }
-    catalogSource.value = 'Official published directory'
-    catalogStatus.value = `${models.value.length} Token Plan TTS model${models.value.length === 1 ? '' : 's'} and ${voices.value.length} model-compatible voices loaded from the official directory (updated ${QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_UPDATED_AT}).`
+
+    const activeModel = speechStore.activeSpeechProvider === providerId ? speechStore.activeSpeechModel : ''
+    const nextModel = models.value.some(candidate => candidate.id === browsingModelId.value)
+      ? browsingModelId.value
+      : models.value.some(candidate => candidate.id === activeModel)
+        ? activeModel
+        : models.value[0]?.id
+    if (!nextModel)
+      return
+
+    browsingModelId.value = nextModel
+    const refreshedVoices = await loadVoicesForCatalog(nextModel, false)
+    if (refreshSequence !== catalogRefreshSequence || refreshedVoices === undefined)
+      return
+
+    catalogSource.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source')
+    if (!refreshedVoices.length) {
+      catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.emptyVoices')
+      return
+    }
+    catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.loaded', {
+      models: models.value.length,
+      voices: refreshedVoices.length,
+      date: QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_UPDATED_AT,
+    })
   }
   catch (error) {
+    if (refreshSequence !== catalogRefreshSequence)
+      return
     initializationFailed.value = true
-    catalogStatus.value = ''
+    catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.failed')
     errorMessage.value = errorMessageFrom(error) ?? 'The Token Plan directory could not be loaded.'
   }
   finally {
@@ -249,7 +312,7 @@ onMounted(() => {
             <div class="flex items-center justify-between gap-3">
               <label class="text-sm font-medium" for="qwen-audio-tts-token-plan-model-select">Token Plan TTS models</label>
               <button data-testid="qwen-audio-tts-token-plan-refresh-catalog" type="button" :disabled="refreshingCatalog || busy" class="border border-neutral-300 rounded px-3 py-1 text-sm dark:border-neutral-700 disabled:opacity-50" @click="refreshCatalog">
-                {{ refreshingCatalog ? 'Refreshing…' : 'Refresh official directory' }}
+                {{ refreshingCatalog ? t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.reloading') : t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.reload') }}
               </button>
             </div>
             <select id="qwen-audio-tts-token-plan-model-select" v-model="selectedModelId" data-testid="qwen-audio-tts-token-plan-model-select" class="border border-neutral-300 rounded bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900">
@@ -297,7 +360,7 @@ onMounted(() => {
               </option>
             </select>
             <p class="text-xs text-neutral-500 dark:text-neutral-400">
-              {{ voiceCounts.system }} system · {{ voiceCounts.base }} base · {{ voiceCounts.custom }} custom · Source: {{ catalogSource }}
+              {{ voiceCounts.system }} system · {{ voiceCounts.base }} base · {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.customNotQueried') }} · Source: {{ catalogSource }}
             </p>
           </div>
           <p class="text-xs text-neutral-500 dark:text-neutral-400">

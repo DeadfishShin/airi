@@ -957,6 +957,18 @@ pages:
       buy: 充值
       description: 可以选择购入的 Flux 电池包
   providers:
+    speech:
+      qwen-audio-tts-token-plan:
+        catalog:
+          loading: 正在加载随应用提供的官方 Token Plan 目录……
+          empty: 内置目录没有返回 Token Plan TTS 模型；已保留现有选择和目录。
+          emptyVoices: 当前模型没有返回音色；已保留之前的目录和选择。
+          failed: 内置目录加载失败；已保留现有选择和目录。
+          loaded: 已从随应用提供的官方目录快照加载 {models} 个 Token Plan TTS 模型和 {voices} 个兼容音色（资料日期：{date}）。
+          source: 随应用提供的官方目录快照
+          reload: 重新加载随应用提供的官方目录
+          reloading: 正在重新加载……
+          customNotQueried: 自定义音色：未查询
     catalog:
       edit:
         config-id-not-found: 未找到服务来源配置。

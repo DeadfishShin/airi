@@ -995,6 +995,18 @@ pages:
       buy: Charge
       description: Flux packages to choose from.
   providers:
+    speech:
+      qwen-audio-tts-token-plan:
+        catalog:
+          loading: Loading the bundled official Token Plan directory…
+          empty: The bundled directory returned no Token Plan TTS models; existing selection and directory were preserved.
+          emptyVoices: The selected model returned no voices; the previous directory and selection were preserved.
+          failed: The bundled directory could not be loaded; existing selection and directory were preserved.
+          loaded: '{models} Token Plan TTS model(s) and {voices} model-compatible voices loaded from the bundled official directory snapshot (published {date}).'
+          source: Bundled official directory snapshot
+          reload: Reload bundled official directory
+          reloading: Reloading…
+          customNotQueried: 'custom voices: not queried'
     catalog:
       edit:
         config-id-not-found: Provider configuration not found.

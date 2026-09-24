@@ -683,6 +683,72 @@ describe('qwen Audio Token Plan speech selection', () => {
     expect(speechStore.activeSpeechVoice?.id).toBe('longanlufeng')
   })
 
+  it('preserves the last directory and selection when a browse refresh is empty', async () => {
+    const speechStore = await prepareTokenPlanCatalog()
+    const previousVoices = speechStore.getVoicesForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)
+    const previousSelection = {
+      provider: speechStore.activeSpeechProvider,
+      model: speechStore.activeSpeechModel,
+      voice: speechStore.activeSpeechVoiceId,
+    }
+    const providersStore = useProviderStore()
+    vi.spyOn(providersStore, 'listProviderVoices').mockResolvedValue([])
+
+    const voices = await speechStore.loadVoicesForProvider(
+      QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
+      QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
+      { applySelectionDefaults: false, preserveOnEmpty: true },
+    )
+
+    expect(voices).toEqual([])
+    expect(speechStore.getVoicesForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)).toBe(previousVoices)
+    expect({
+      provider: speechStore.activeSpeechProvider,
+      model: speechStore.activeSpeechModel,
+      voice: speechStore.activeSpeechVoiceId,
+    }).toEqual(previousSelection)
+  })
+
+  it('reports browse failures without replacing the last directory', async () => {
+    const speechStore = await prepareTokenPlanCatalog()
+    const previousVoices = speechStore.getVoicesForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)
+    const providersStore = useProviderStore()
+    vi.spyOn(providersStore, 'listProviderVoices').mockRejectedValue(new Error('catalog unavailable'))
+
+    await expect(speechStore.loadVoicesForProvider(
+      QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
+      QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
+      { applySelectionDefaults: false, preserveOnEmpty: true, throwOnError: true },
+    )).rejects.toThrow('catalog unavailable')
+
+    expect(speechStore.getVoicesForProvider(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)).toBe(previousVoices)
+  })
+
+  it('isolates catalogue requests by provider while browsing', async () => {
+    const providersStore = useProviderStore()
+    const speechStore = useSpeechStore()
+    let resolveFirst!: (voices: Array<{ id: string, name: string, provider: string, languages: never[] }>) => void
+    let resolveSecond!: (voices: Array<{ id: string, name: string, provider: string, languages: never[] }>) => void
+    const firstRequest = new Promise<Array<{ id: string, name: string, provider: string, languages: never[] }>>(resolve => resolveFirst = resolve)
+    const secondRequest = new Promise<Array<{ id: string, name: string, provider: string, languages: never[] }>>(resolve => resolveSecond = resolve)
+    vi.spyOn(providersStore, 'listProviderVoices').mockImplementation((provider: string) => provider === 'provider-a' ? firstRequest : secondRequest)
+
+    speechStore.activeSpeechProvider = 'provider-a'
+    const firstLoad = speechStore.loadVoicesForProvider('provider-a', 'model-a')
+    const secondLoad = speechStore.loadVoicesForProvider('provider-b', 'model-b', {
+      applySelectionDefaults: false,
+      trackGlobalState: false,
+    })
+
+    resolveSecond([{ id: 'voice-b', name: 'Voice B', provider: 'provider-b', languages: [] }])
+    await expect(secondLoad).resolves.toHaveLength(1)
+    expect(speechStore.getVoicesForProvider('provider-b').map(voice => voice.id)).toEqual(['voice-b'])
+
+    resolveFirst([{ id: 'voice-a', name: 'Voice A', provider: 'provider-a', languages: [] }])
+    await expect(firstLoad).resolves.toHaveLength(1)
+    expect(speechStore.getVoicesForProvider('provider-a').map(voice => voice.id)).toEqual(['voice-a'])
+  })
+
   it('does not apply longanlingxin to the PAYG Qwen3 route', async () => {
     const speechStore = await prepareTokenPlanCatalog()
     speechStore.activeSpeechProvider = QWEN3_TTS_REALTIME_PROVIDER_ID
