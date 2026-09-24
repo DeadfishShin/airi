@@ -94,14 +94,19 @@ Renderer 只持有 provider/model/voice 的非秘密选择和必要的 session I
 | ASR | Token Plan Personal | `qwen-audio-3.0-asr-flash` | N/A | `TOKEN_PLAN_API_KEY` | 当前矩阵未提供等价的 live streaming replacement；`OPEN` |
 | TTS | Qwen PAYG | `qwen3-tts-flash-realtime` | `Cherry` | PAYG route | native realtime WS；LLM→TTS overlap：PASS |
 | TTS | Token Plan Personal | `qwen-audio-3.0-tts-plus` | AIRI 当前 canary：`longanlingxin` | `TOKEN_PLAN_API_KEY` | native WS runtime：PASS |
-| Speech-to-speech | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | 由服务能力决定 | Token Plan route | protocol matrix：支持 AOQ/WebRTC/WebSocket；作为 end-to-end realtime speech conversation；AIRI custom-app API policy：`OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE` |
+| Speech-to-speech | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | 由服务能力决定 | Token Plan route | protocol matrix：支持 AOQ/WebRTC/WebSocket；作为 end-to-end realtime speech conversation；AIRI custom-app API policy：`NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES`；model-specific entitlement 仍未证明 |
 | Realtime transcript seam | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | N/A | Token Plan route | push-to-talk/manual 下可先提交音频并接收 transcript，再独立决定是否发送 `response.create`；runtime entitlement 未证明 |
 
 重要区分：`qwen-audio-3.0-asr-flash` 与 `qwen-audio-3.0-asr-flash-streaming` 不是同一个 model ID。当前官方 ASR model 文档把前者描述为非 realtime HTTP 模式，把后者描述为 realtime WebSocket 模式。[Alibaba ASR model 文档](https://help.aliyun.com/zh/model-studio/asr-model)（`OFFICIAL_DOC_SUPPORTED`）。
 
 当前 Token Plan Personal 官方 overview 列出的音频模型至少包括：`qwen-audio-3.0-tts-plus`、`qwen-audio-3.0-realtime-plus`、`qwen-audio-3.0-asr-flash`，区域为华北 2（北京）。[Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)（`OFFICIAL_DOC_SUPPORTED`）。
 
-Token Plan Personal 的当前官方 overview 与第三方工具页面明确规定：仅限兼容的 AI coding / agent tools 中的交互使用，并明确不支持自定义应用程序直接在自动化脚本或应用后端调用 API。故对 AIRI 自研应用 API 使用必须标记为 `OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE`。这不是自行作出的法律结论；AIRI 是否能被 Alibaba/provider 明确认定为允许的“agent tool”仍需 provider explicit confirmation。Owner-operated interactive AIRI canary 的 runtime 成功不能覆盖该政策边界。`OFFICIAL_DOC_SUPPORTED` + `REAL_RUNTIME_PROVEN`，但不作法律保证。
+当前 primary-source review 未发现针对 AIRI 这类自定义应用 API 使用的明确禁止条款，因此本项目不再把 `OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE` 作为已成立的官方事实或门禁。该结论不等于已证明 Token Plan 对 AIRI 的商业适用性、账号 entitlement 或本任务假设的 ASR 请求合同；这些仍需 provider/Controller 另行确认。Owner-operated runtime 成功同样不能替代这些确认。
+
+```text
+TOKEN_PLAN_CUSTOM_AIRI_POLICY = NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES
+TOKEN_PLAN_QWEN_AUDIO_ASR_MODEL_SPECIFIC_REQUEST_CONTRACT = UNPROVEN
+```
 
 ## 4. Credential / Cost Isolation Rules
 
@@ -529,15 +534,16 @@ wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
 
 ### A. Token Plan Personal policy
 
-当前中国站官方公开规则不是“所有自研交互应用都未分类”，而是明确规定 Token Plan Personal 仅供个人在指定的 AI coding / agent tools 中交互使用，并明确不支持自定义应用程序直接在自动化脚本或应用后端调用 API。`more-tools` 页面进一步把工作流/自动化平台、API 测试工具和自定义应用程序列为不支持类型；FAQ 也把生产自动化、批量脚本和后台定时任务列为不允许场景。[Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)、[更多工具](https://help.aliyun.com/zh/model-studio/more-tools)、[Token Plan Personal FAQ](https://help.aliyun.com/zh/model-studio/token-plan-personal-faq)（`OFFICIAL_DOC_SUPPORTED`）。
+当前 primary-source review 未发现针对 AIRI custom application API 使用的明确禁止条款；这只纠正旧笔记的过强表述，并不证明任何具体模型、账号或商业场景已经获准。相关 Token Plan 文档仍需作为能力与套餐范围证据分别核对，不能由 runtime 成功倒推出政策允许。
 
-因此本项目不得再把政策状态写成简单的 `NOT_YET_CLEARED`：
+因此本项目应保留精确的不确定性，而不是把政策冲突当作既定事实：
 
 ```text
-TOKEN_PLAN_CUSTOM_AIRI_POLICY = OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE
+TOKEN_PLAN_CUSTOM_AIRI_POLICY = NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES
+TOKEN_PLAN_QWEN_AUDIO_ASR_MODEL_SPECIFIC_REQUEST_CONTRACT = UNPROVEN
 ```
 
-这不是法律意见，也不自行判断 AIRI 是否属于官方所称的“agent tool”。如果要继续把 Token Plan Personal 用于 AIRI，自研应用是否可被 provider 明确认定为允许类别必须取得 provider explicit confirmation；在确认前，正式架构决策为：
+这不是法律意见，也不自行判断 AIRI 的商业适用性。当前 ASR probe 仍必须等待 Controller 的一次性授权，并且只能把返回结果作为 `qwen-audio-3.0-asr-flash` 请求合同的能力证据；在合同未证明前，正式 production ASR 路径保持：
 
 ```text
 HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS
@@ -638,7 +644,7 @@ HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS
 | realtime-plus 的 AOQ/WebRTC/WebSocket protocol matrix | YES | `OFFICIAL_DOC_SUPPORTED` |
 | ARCH_C' transcript-before-`response.create` seam | YES | `OFFICIAL_DOC_SUPPORTED` |
 | Token Plan realtime-plus AIRI custom-app runtime entitlement | NOT_YET_PROVEN | `OPEN` |
-| Token Plan Personal 对 AIRI custom-app API 的政策允许 | NOT_CONFIRMED / `OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE` | `OFFICIAL_DOC_SUPPORTED` |
+| Token Plan Personal 对 AIRI custom-app API 的政策允许 | `NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES`；商业适用性仍未确认 | `OPEN` |
 | realtime-plus 等价替换 standalone ASR | NO | model/protocol semantics differ |
 | realtime-plus 作为 current Token Plan TTS adapter | NO / NOT_YET_PROVEN | 未发现 incremental TTS-only contract |
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { QwenAudioAsrTokenPlanProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe-ipc'
 import type { QwenAudioTtsTokenPlanModelsProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-models-probe-ipc'
 
 import { errorMessageFrom } from '@moeru/std'
@@ -8,6 +9,7 @@ import {
   ProviderSettingsLayout,
 } from '@proj-airi/stage-ui/components'
 import { selectProviderMetadata } from '@proj-airi/stage-ui/libs'
+import { probeQwenAudioAsrTokenPlan } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe'
 import {
   getQwenAudioTtsTokenPlanAccountModels,
   QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_UPDATED_AT,
@@ -56,6 +58,8 @@ const voiceCatalogSource = computed(() => t(
 const voiceSearchQuery = ref('')
 const refreshingCatalog = ref(false)
 const accountModelsResult = ref<QwenAudioTtsTokenPlanModelsProbeResult>()
+const asrProbeBusy = ref(false)
+const asrProbeResult = ref<QwenAudioAsrTokenPlanProbeResult>()
 const browsingModelId = ref('')
 const browsingVoiceId = ref('')
 let catalogRefreshSequence = 0
@@ -307,6 +311,23 @@ async function refreshAccountModels(allowBusy = false) {
   }
 }
 
+async function runAsrCapabilityProbe() {
+  if (asrProbeBusy.value)
+    return
+  asrProbeBusy.value = true
+  asrProbeResult.value = undefined
+  errorMessage.value = ''
+  try {
+    asrProbeResult.value = await probeQwenAudioAsrTokenPlan()
+  }
+  catch (error) {
+    errorMessage.value = errorMessageFrom(error) ?? 'The ASR capability probe could not be started.'
+  }
+  finally {
+    asrProbeBusy.value = false
+  }
+}
+
 async function save() {
   if (busy.value)
     return
@@ -446,6 +467,42 @@ onMounted(() => {
                 </div>
               </dl>
             </div>
+          </div>
+
+          <div data-testid="qwen-audio-asr-token-plan-capability-probe" class="flex flex-col gap-2 border border-amber-300 rounded border-dashed p-3 dark:border-amber-700">
+            <span class="text-sm font-medium">{{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.title') }}</span>
+            <p class="text-xs text-neutral-500 dark:text-neutral-400">
+              {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.description') }}
+            </p>
+            <button data-testid="qwen-audio-asr-token-plan-capability-probe-button" type="button" :disabled="asrProbeBusy || busy || refreshingCatalog" class="self-start border border-amber-400 rounded px-3 py-1 text-sm dark:border-amber-700 disabled:opacity-50" @click="runAsrCapabilityProbe">
+              {{ asrProbeBusy ? t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.running') : t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.button') }}
+            </button>
+            <dl v-if="asrProbeResult" data-testid="qwen-audio-asr-token-plan-capability-probe-result" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
+              <div>
+                <dt class="font-medium">
+                  Result
+                </dt>
+                <dd>{{ asrProbeResult.responseClass }}</dd>
+              </div>
+              <div>
+                <dt class="font-medium">
+                  HTTP
+                </dt>
+                <dd>{{ asrProbeResult.httpStatus ?? '—' }}</dd>
+              </div>
+              <div>
+                <dt class="font-medium">
+                  Transcript
+                </dt>
+                <dd>{{ asrProbeResult.transcriptPresent ? 'received' : 'not received' }}</dd>
+              </div>
+              <div v-if="asrProbeResult.sanitizedErrorMessage">
+                <dt class="font-medium">
+                  Detail
+                </dt>
+                <dd>{{ asrProbeResult.sanitizedErrorMessage }}</dd>
+              </div>
+            </dl>
           </div>
 
           <form class="flex flex-col gap-3" @submit.prevent="save">

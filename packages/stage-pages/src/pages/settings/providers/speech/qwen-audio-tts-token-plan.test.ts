@@ -48,6 +48,16 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).not.toMatch(/onMounted\(.*probeQwenAudioTtsTokenPlanModels/s)
   })
 
+  it('keeps the ASR capability probe manual, diagnostic-only, and sanitized', () => {
+    const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
+    expect(source).toContain('qwen-audio-asr-token-plan-capability-probe-button')
+    expect(source).toContain('@click="runAsrCapabilityProbe"')
+    expect(source).toContain('probeQwenAudioAsrTokenPlan')
+    expect(source).toContain('asrProbeResult.responseClass')
+    expect(source).not.toMatch(/onMounted\(.*probeQwenAudioAsrTokenPlan/s)
+    expect(source).not.toMatch(/TOKEN_PLAN_ASR|Authorization\s*:/)
+  })
+
   it('keeps directory browsing separate from the active speech selection', () => {
     const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
     const refreshStart = source.indexOf('async function loadBundledCatalog(')

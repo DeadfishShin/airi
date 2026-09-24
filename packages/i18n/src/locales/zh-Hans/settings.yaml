@@ -978,6 +978,11 @@ pages:
           accountFailed: '账号模型刷新返回 {responseClass}；仍可使用随应用提供的官方目录。'
           notConfigured: 尚未配置 Token Plan 凭据；仍可使用随应用提供的官方目录。
           customNotQueried: 自定义音色：未查询
+        asrProbe:
+          title: Token Plan ASR 能力诊断
+          description: 针对 qwen-audio-3.0-asr-flash 的一次手动、有界探测假设。这不是正式 ASR 功能。
+          button: 探测 Token Plan ASR 合同
+          running: 正在探测 Token Plan ASR……
     catalog:
       edit:
         config-id-not-found: 未找到服务来源配置。

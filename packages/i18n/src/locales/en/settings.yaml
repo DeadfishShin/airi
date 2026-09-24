@@ -1016,6 +1016,11 @@ pages:
           accountFailed: 'Account model refresh returned {responseClass}; the bundled official directory remains available.'
           notConfigured: No Token Plan credential is configured; the bundled official directory remains available.
           customNotQueried: 'custom voices: not queried'
+        asrProbe:
+          title: Token Plan ASR capability diagnostic
+          description: One manual, bounded probe hypothesis for qwen-audio-3.0-asr-flash. This is not the production ASR feature.
+          button: Probe Token Plan ASR contract
+          running: Probing Token Plan ASR…
     catalog:
       edit:
         config-id-not-found: Provider configuration not found.
