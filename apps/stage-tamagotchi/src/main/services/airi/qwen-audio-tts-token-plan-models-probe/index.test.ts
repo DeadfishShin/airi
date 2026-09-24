@@ -54,6 +54,10 @@ describe('qwen Token Plan model probe', () => {
     })).resolves.toMatchObject({ responseClass: 'SUCCESS_TEXT_ONLY_MODELS', ttsModelIds: [] })
 
     await expect(runQwenAudioTtsTokenPlanModelsProbe(credentialStore.getRuntimeProfile, {
+      fetchImpl: fetchFor(200, { data: [{ id: 'future-unknown-model' }] }),
+    })).resolves.toMatchObject({ responseClass: 'SUCCESS_OPENAI_MODEL_LIST', ttsModelIds: [] })
+
+    await expect(runQwenAudioTtsTokenPlanModelsProbe(credentialStore.getRuntimeProfile, {
       fetchImpl: fetchFor(200, { data: [] }),
     })).resolves.toMatchObject({ responseClass: 'EMPTY_MODEL_LIST' })
 

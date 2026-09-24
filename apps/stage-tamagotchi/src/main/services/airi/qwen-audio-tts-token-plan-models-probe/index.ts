@@ -18,6 +18,7 @@ const MAX_RESPONSE_BYTES = 512 * 1024
 const MAX_MODEL_IDS = 128
 const MAX_MODEL_ID_LENGTH = 128
 const TTS_MODEL_IDS = new Set(['qwen-audio-3.0-tts-plus'])
+const KNOWN_TEXT_ONLY_MODEL_IDS = new Set(['qwen-plus', 'qwen-turbo', 'qwen-max'])
 
 type MainEventContext = ReturnType<typeof createContext>['context']
 type ProbeFetch = typeof fetch
@@ -114,12 +115,13 @@ function resultFromModels(response: ProbeResponse, payload: unknown): QwenAudioT
   const rows = parsed.rows
   const modelIds = rows.slice(0, MAX_MODEL_IDS).map(row => row.id)
   const ttsModelIds = modelIds.filter(modelId => TTS_MODEL_IDS.has(modelId))
+  const knownTextOnlyModels = modelIds.length > 0 && modelIds.every(modelId => KNOWN_TEXT_ONLY_MODEL_IDS.has(modelId))
   return {
     httpStatus: response.status,
     contentType: response.headers.get('content-type') ?? undefined,
     responseClass: rows.length === 0
       ? 'EMPTY_MODEL_LIST'
-      : ttsModelIds.length === 0 ? 'SUCCESS_TEXT_ONLY_MODELS' : 'SUCCESS_OPENAI_MODEL_LIST',
+      : knownTextOnlyModels ? 'SUCCESS_TEXT_ONLY_MODELS' : 'SUCCESS_OPENAI_MODEL_LIST',
     modelIds,
     ttsModelIds,
     containsQwenAudioTtsPlus: ttsModelIds.includes('qwen-audio-3.0-tts-plus'),
