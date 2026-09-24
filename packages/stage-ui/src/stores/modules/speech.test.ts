@@ -633,10 +633,9 @@ describe('qwen Audio Token Plan speech selection', () => {
     expect(speechStore.activeSpeechVoice).toMatchObject({ id: QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID })
   })
 
-  it('loads the Token Plan static voice catalog without the generic provider loader', async () => {
+  it('loads the official Token Plan voice directory through the provider catalogue loader', async () => {
     const providersStore = useProviderStore()
     const listProviderVoices = vi.spyOn(providersStore, 'listProviderVoices')
-      .mockRejectedValue(new Error('generic provider loader should not be used'))
     const speechStore = useSpeechStore()
     listProviderVoices.mockClear()
 
@@ -646,9 +645,11 @@ describe('qwen Audio Token Plan speech selection', () => {
       QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
     )
 
-    expect(voices.map(voice => voice.id)).toEqual([QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID, 'longanlufeng'])
+    expect(voices.map(voice => voice.id)).toContain(QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID)
+    expect(voices.map(voice => voice.id)).toContain('qwen-audio-3.0-tts-plus-longcanzhuyue')
+    expect(voices.length).toBeGreaterThan(500)
     expect(speechStore.isLoadingSpeechProviderVoices).toBe(false)
-    expect(listProviderVoices).not.toHaveBeenCalled()
+    expect(listProviderVoices).toHaveBeenCalledWith(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
   })
 
   it('survives the model watcher clearing voice and remains idempotent', async () => {

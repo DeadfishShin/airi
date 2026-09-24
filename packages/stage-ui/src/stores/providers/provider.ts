@@ -11,7 +11,7 @@ import type {
 import type {} from 'pinia-plugin-synced'
 
 import type { ProviderMetadata, ProviderValidationPlan } from '../../libs/providers'
-import type { ChatRequestOptions, ModelInfo, ProviderDefinition, ProviderInstance, VoiceInfo } from '../../libs/providers/types'
+import type { ChatRequestOptions, ModelInfo, ProviderCatalogSource, ProviderDefinition, ProviderInstance, VoiceInfo } from '../../libs/providers/types'
 
 import { errorMessageFrom } from '@moeru/std'
 import { isCustomProvidersDisabled } from '@proj-airi/stage-shared'
@@ -515,6 +515,10 @@ export const useProviderStore = defineStore('provider', () => {
     display_name?: string
     id: string
     name?: string
+    capabilities?: string[]
+    catalogSource?: ProviderCatalogSource
+    catalogSourceUrl?: string
+    catalogUpdatedAt?: string
   }>) {
     return models.map(model => ({
       id: model.id,
@@ -523,6 +527,10 @@ export const useProviderStore = defineStore('provider', () => {
       description: model.description ?? '',
       contextLength: model.contextLength ?? model.context_length ?? 0,
       deprecated: model.deprecated ?? false,
+      capabilities: model.capabilities,
+      catalogSource: model.catalogSource,
+      catalogSourceUrl: model.catalogSourceUrl,
+      catalogUpdatedAt: model.catalogUpdatedAt,
     }))
   }
 
@@ -642,6 +650,10 @@ export const useProviderStore = defineStore('provider', () => {
           contextLength: model.contextLength,
           deprecated: model.deprecated,
           provider: providerId,
+          capabilities: model.capabilities,
+          catalogSource: model.catalogSource,
+          catalogSourceUrl: model.catalogSourceUrl,
+          catalogUpdatedAt: model.catalogUpdatedAt,
         }))
 
       // Transform and store the models

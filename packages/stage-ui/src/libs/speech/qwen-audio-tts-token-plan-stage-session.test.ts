@@ -108,7 +108,7 @@ function createSessionHarness(options: { now?: () => number, voice?: string } = 
   const onError = vi.fn()
   const onSpeakingChange = vi.fn()
   const diagnostics: string[] = []
-  const starts: Array<{ sessionId: string, voice: string }> = []
+  const starts: Array<{ sessionId: string, model: string, voice: string }> = []
 
   defineInvokeHandler(context, qwenAudioTtsTokenPlanSessionStart, (payload) => {
     calls.start++

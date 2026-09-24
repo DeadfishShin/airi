@@ -1,10 +1,16 @@
 import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 
-import type { ModelInfo, ProviderConfigContext, VoiceInfo } from '../../types'
+import type { ProviderConfigContext } from '../../types'
 
 import { isElectronWindow, isStageTamagotchi } from '@proj-airi/stage-shared'
 import { z } from 'zod'
 
+import {
+  getQwenAudioTtsTokenPlanModels,
+  getQwenAudioTtsTokenPlanVoices,
+  qwenAudioTtsTokenPlanModels,
+  qwenAudioTtsTokenPlanVoices,
+} from '../../qwen-audio-tts-token-plan-catalog'
 import {
   QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
   QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
@@ -24,35 +30,6 @@ function isQwenAudioTtsTokenPlanAvailable() {
     && isElectronWindow(window)
     && window.platform === 'darwin'
 }
-
-const qwenAudioTtsTokenPlanModels: ModelInfo[] = [{
-  id: QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
-  name: 'Qwen Audio 3.0 TTS Plus',
-  provider: QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
-  description: 'Token Plan native WebSocket text-to-speech.',
-}]
-
-const qwenAudioTtsTokenPlanVoices: VoiceInfo[] = [{
-  id: QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID,
-  name: QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID,
-  provider: QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
-  compatibleModels: [QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL],
-  description: 'Official Mandarin-capable qwen-audio-3.0-tts-plus system voice.',
-  languages: [
-    { code: 'zh', title: 'Chinese' },
-    { code: 'en', title: 'English' },
-  ],
-}, {
-  id: 'longanlufeng',
-  name: 'Long An Lu Feng',
-  provider: QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID,
-  compatibleModels: [QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL],
-  description: 'Bright and cheerful male voice for Mandarin Chinese and English.',
-  languages: [
-    { code: 'zh', title: 'Chinese' },
-    { code: 'en', title: 'English' },
-  ],
-}]
 
 function createQwenAudioTtsTokenPlanProvider(): SpeechProviderWithExtraOptions<string> {
   return {
@@ -81,8 +58,8 @@ export const providerQwenAudioTtsTokenPlan = defineProvider<QwenAudioTtsTokenPla
   createProvider: createQwenAudioTtsTokenPlanProvider,
   validationRequiredWhen: () => false,
   extraMethods: {
-    listModels: async () => qwenAudioTtsTokenPlanModels.map(model => ({ ...model })),
-    listVoices: async () => qwenAudioTtsTokenPlanVoices.map(voice => ({ ...voice, languages: voice.languages.map(language => ({ ...language })) })),
+    listModels: async () => getQwenAudioTtsTokenPlanModels(),
+    listVoices: async (_config, _provider, model) => getQwenAudioTtsTokenPlanVoices(model),
   },
 })
 

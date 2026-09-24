@@ -185,6 +185,7 @@ export function createQwenAudioTtsTokenPlanService(options: QwenAudioTtsTokenPla
         },
         socketFactory,
         now,
+        payload.model,
       )
       if (target)
         eventTargets.set(sessionId, target)

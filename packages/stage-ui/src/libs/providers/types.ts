@@ -134,6 +134,12 @@ export interface ProviderRuntimeValidator<TConfig> {
   schedule?: ProviderValidatorSchedule
 }
 
+/** Where a provider's model or voice metadata came from. */
+export type ProviderCatalogSource = 'provider-api' | 'official-directory' | 'cache' | 'fixture'
+
+/** The published/catalogue class of a voice, when the provider distinguishes it. */
+export type ProviderVoiceCatalogKind = 'system' | 'base' | 'custom'
+
 export interface ModelInfo {
   id: string
   name: string
@@ -142,6 +148,9 @@ export interface ModelInfo {
   capabilities?: string[]
   contextLength?: number
   deprecated?: boolean
+  catalogSource?: ProviderCatalogSource
+  catalogSourceUrl?: string
+  catalogUpdatedAt?: string
 }
 
 export interface VoiceInfo {
@@ -153,6 +162,10 @@ export interface VoiceInfo {
   gender?: string
   deprecated?: boolean
   previewURL?: string
+  catalogSource?: ProviderCatalogSource
+  catalogSourceUrl?: string
+  catalogUpdatedAt?: string
+  catalogKind?: ProviderVoiceCatalogKind
   languages: {
     code: string
     title: string

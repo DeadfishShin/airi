@@ -121,12 +121,14 @@ Token Plan Personal 的当前官方 overview 与第三方工具页面明确规�
 
 Token Plan TTS 的配置入口现在是正常设置页，而不是只读的 canary 展示。凭据通过 Electron main 侧的加密 secure storage 保存、替换和清除；若没有已保存值，才显式使用 `TOKEN_PLAN_API_KEY` 环境回退。该回退只属于 Token Plan，不会读取 PAYG 的 `DASHSCOPE_*` 凭据，也不会在失败时静默切换到 PAYG。UI 的“已保存”只表示凭据已保存，不表示套餐额度或云端调用已验证。
 
-`qwen-audio-3.0-tts-plus` 的静态模型级官方系统音色目录当前包含：
+`qwen-audio-3.0-tts-plus` 的官方公开目录当前包含两类音色，不能把系统音色数量误写成模型的完整音色数量：
 
 - `longanlingxin`：女性、温暖/富有同理心，普通话与英语。
 - `longanlufeng`：男性、明亮/活泼，普通话与英语。
 
-目录来源：[Qwen-Audio-TTS 音色列表（Alibaba Cloud）](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list)，访问日期 2026-09-22。目录可以在未配置凭据时显示；试听和正式合成仍要求 Token Plan 凭据与实际套餐适用性，当前任务不自动执行收费调用。
+此外，Alibaba 为该模型发布了独立的基础音色 Excel 目录（当前转换为 AIRI 的轻量目录数据），本次目录快照包含 597 个基础音色条目。每个条目保留 canonical voice ID、公开名称、语言和官方表格中的场景/音质描述；试听音频文件没有打包进应用。Token Plan 页面按模型过滤并区分 `system`、`base`、`custom` 来源，保存和请求仍只使用 voice ID。
+
+目录来源：[Qwen-Audio-TTS 音色列表（Alibaba Cloud）](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list) 与官方基础音色表（`qwen-audio-3.0-tts-plus-base-voices-en.xlsx`），访问/发布日期 2026-07-23。模型目录使用 [Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview) 作为公开来源。Token Plan 当前没有被文档证明支持“用 Token Plan Key 返回账号授权模型列表”的专属 API；百炼的通用模型列表接口属于业务空间端点，不能直接冒充 Token Plan 目录查询。完整系统音色目录也没有被文档证明存在可直接查询的 Token Plan API；账号自定义音色查询本次未宣称支持。故 UI 将这些状态标为官方公布目录/提供商查询受限，而不是“根据当前 Key 刚刚获取”。目录可以在未配置凭据时显示；试听和正式合成仍要求 Token Plan 凭据与实际套餐适用性，当前任务不自动执行额外收费调用。
 
 用户选择保存 canonical voice ID，不保存本地化显示名。provider 初始化、模型目录刷新和应用重启只在选择缺失或与当前模型不兼容时补默认值，不再覆盖有效选择。设置页试听和 Stage 正式 TTS 都通过 `qwenAudioTtsTokenPlanStageSession` 走同一个 Token Plan 原生 duplex WebSocket 路由；通用 REST `speech()` 占位路径仍保持 fail-closed，避免误路由。
 

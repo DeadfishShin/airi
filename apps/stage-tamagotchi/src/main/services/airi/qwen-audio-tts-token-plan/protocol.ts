@@ -9,6 +9,10 @@ import QwenWebSocket from 'crossws/websocket'
 
 import { errorMessageFrom } from '@moeru/std'
 import {
+  qwenAudioTtsTokenPlanModels,
+  qwenAudioTtsTokenPlanVoices,
+} from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-catalog'
+import {
   QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
   QWEN_AUDIO_TTS_TOKEN_PLAN_SAMPLE_RATE,
   QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID,
@@ -16,7 +20,7 @@ import {
 
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_ENDPOINT = 'wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference'
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_DEFAULT_VOICE = QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID
-export const QWEN_AUDIO_TTS_TOKEN_PLAN_VOICES = ['longanlingxin', 'longanlufeng'] as const
+export const QWEN_AUDIO_TTS_TOKEN_PLAN_VOICES = qwenAudioTtsTokenPlanVoices.map(voice => voice.id)
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_TEXT_TYPE = 'PlainText'
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_FORMAT = 'pcm'
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_VOLUME = 50
@@ -105,7 +109,7 @@ interface RunTaskFrame {
     task_group: 'audio'
     task: 'tts'
     function: 'SpeechSynthesizer'
-    model: typeof QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL
+    model: string
     parameters: {
       text_type: typeof QWEN_AUDIO_TTS_TOKEN_PLAN_TEXT_TYPE
       voice: string
@@ -142,16 +146,20 @@ function frameHeader(action: TokenPlanFrameHeader['action'], taskId: string): To
 export function buildQwenAudioTtsTokenPlanRunTaskFrame(
   taskId: string,
   voice = QWEN_AUDIO_TTS_TOKEN_PLAN_DEFAULT_VOICE,
+  model = QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
 ): RunTaskFrame {
-  if (!QWEN_AUDIO_TTS_TOKEN_PLAN_VOICES.includes(voice as typeof QWEN_AUDIO_TTS_TOKEN_PLAN_VOICES[number]))
-    throw new Error(`Qwen Audio Token Plan voice is not supported for ${QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL}: ${voice}`)
+  if (!qwenAudioTtsTokenPlanModels.some(candidate => candidate.id === model))
+    throw new Error(`Qwen Audio Token Plan model is not supported: ${model}`)
+  const selectedVoice = qwenAudioTtsTokenPlanVoices.find(candidate => candidate.id === voice && candidate.compatibleModels?.includes(model))
+  if (!selectedVoice)
+    throw new Error(`Qwen Audio Token Plan voice is not supported for ${model}: ${voice}`)
   return {
     header: frameHeader('run-task', taskId),
     payload: {
       task_group: 'audio',
       task: 'tts',
       function: 'SpeechSynthesizer',
-      model: QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
+      model,
       parameters: {
         text_type: QWEN_AUDIO_TTS_TOKEN_PLAN_TEXT_TYPE,
         voice,
@@ -386,6 +394,7 @@ export class QwenAudioTtsTokenPlanSession {
     private readonly callbacks: QwenAudioTtsTokenPlanSessionCallbacks,
     private readonly socketFactory: QwenAudioTtsTokenPlanSocketFactory = createQwenAudioTtsTokenPlanSocket,
     now: () => number = () => performance.now(),
+    private readonly model: string = QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
   ) {
     this.now = now
     this.telemetry = { t1: 0 }
@@ -501,7 +510,7 @@ export class QwenAudioTtsTokenPlanSession {
     this.telemetry.t2 = this.now()
     this.state = 'waiting_task_started'
     this.emitDiagnostic('SOCKET_OPEN')
-    if (this.safeSend(JSON.stringify(buildQwenAudioTtsTokenPlanRunTaskFrame(this.taskId, this.voice))))
+    if (this.safeSend(JSON.stringify(buildQwenAudioTtsTokenPlanRunTaskFrame(this.taskId, this.voice, this.model))))
       this.emitDiagnostic('RUN_TASK_SENT')
   }
 

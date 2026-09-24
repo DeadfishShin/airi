@@ -7,6 +7,10 @@ import {
 } from '@proj-airi/stage-ui/components'
 import { selectProviderMetadata } from '@proj-airi/stage-ui/libs'
 import {
+  QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_UPDATED_AT,
+  QWEN_AUDIO_TTS_TOKEN_PLAN_DISCOVERY_LIMITATIONS,
+} from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-catalog'
+import {
   clearQwenAudioTtsTokenPlanCredential,
   getQwenAudioTtsTokenPlanCredentialProfile,
   saveQwenAudioTtsTokenPlanCredential,
@@ -29,6 +33,10 @@ const busy = ref(false)
 const apiKey = ref('')
 const statusMessage = ref('')
 const errorMessage = ref('')
+const catalogStatus = ref('')
+const catalogSource = ref('Official published directory')
+const voiceSearchQuery = ref('')
+const refreshingCatalog = ref(false)
 const profile = ref({
   hasApiKey: false,
   ready: false,
@@ -42,8 +50,33 @@ const providerMetadata = computedAsync(() => selectProviderMetadata(
   { id: providerId },
 ))
 
-const model = computed(() => providersStore.getModelsForProvider(providerId).find(candidate => candidate.id === QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL))
-const voices = computed(() => speechStore.getVoicesForProvider(providerId).filter(voice => voice.compatibleModels?.includes(QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL) ?? true))
+const models = computed(() => providersStore.getModelsForProvider(providerId))
+const selectedModelId = computed({
+  get: () => {
+    const active = speechStore.activeSpeechProvider === providerId ? speechStore.activeSpeechModel : ''
+    return models.value.some(candidate => candidate.id === active) ? active : models.value[0]?.id ?? QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL
+  },
+  set: (value: string) => {
+    if (!models.value.some(candidate => candidate.id === value))
+      return
+    speechStore.activeSpeechProvider = providerId
+    speechStore.activeSpeechModel = value
+    void speechStore.loadVoicesForProvider(providerId, value)
+  },
+})
+const model = computed(() => models.value.find(candidate => candidate.id === selectedModelId.value))
+const voices = computed(() => speechStore.getVoicesForProvider(providerId).filter(voice => voice.compatibleModels?.includes(selectedModelId.value) ?? true))
+const filteredVoices = computed(() => {
+  const query = voiceSearchQuery.value.trim().toLowerCase()
+  if (!query)
+    return voices.value
+  return voices.value.filter(voice => voice.id.toLowerCase().includes(query) || voice.name.toLowerCase().includes(query) || voice.description?.toLowerCase().includes(query))
+})
+const voiceCounts = computed(() => ({
+  system: voices.value.filter(voice => voice.catalogKind === 'system').length,
+  base: voices.value.filter(voice => voice.catalogKind === 'base').length,
+  custom: voices.value.filter(voice => voice.catalogKind === 'custom').length,
+}))
 const selectedVoiceId = computed({
   get: () => speechStore.activeSpeechProvider === providerId ? speechStore.activeSpeechVoiceId : '',
   set: (value: string) => {
@@ -51,7 +84,7 @@ const selectedVoiceId = computed({
     if (!voice)
       return
     speechStore.activeSpeechProvider = providerId
-    speechStore.activeSpeechModel = QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL
+    speechStore.activeSpeechModel = selectedModelId.value
     speechStore.activeSpeechVoiceId = voice.id
     speechStore.activeSpeechVoice = voice
   },
@@ -75,15 +108,46 @@ function applyProfile(next: typeof profile.value) {
 
 async function initializeCatalog() {
   try {
-    await providersStore.initializeProvider(providerId)
-    await providersStore.fetchModelsForProvider(providerId)
-    await speechStore.loadVoicesForProvider(providerId, QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
     const next = await getQwenAudioTtsTokenPlanCredentialProfile()
     if (next)
       applyProfile(next)
   }
-  catch {
+  catch (error) {
+    errorMessage.value = errorMessageFrom(error) ?? 'The Token Plan credential status could not be loaded.'
+  }
+  await refreshCatalog()
+}
+
+async function refreshCatalog() {
+  if (refreshingCatalog.value)
+    return
+  refreshingCatalog.value = true
+  initializationFailed.value = false
+  errorMessage.value = ''
+  catalogStatus.value = 'Loading the official published Token Plan directory…'
+  try {
+    await providersStore.initializeProvider(providerId)
+    await providersStore.fetchModelsForProvider(providerId)
+    const nextModel = models.value.some(candidate => candidate.id === selectedModelId.value)
+      ? selectedModelId.value
+      : models.value[0]?.id
+    if (nextModel) {
+      if (speechStore.activeSpeechProvider !== providerId)
+        speechStore.activeSpeechProvider = providerId
+      if (speechStore.activeSpeechModel !== nextModel)
+        speechStore.activeSpeechModel = nextModel
+      await speechStore.loadVoicesForProvider(providerId, nextModel)
+    }
+    catalogSource.value = 'Official published directory'
+    catalogStatus.value = `${models.value.length} Token Plan TTS model${models.value.length === 1 ? '' : 's'} and ${voices.value.length} model-compatible voices loaded from the official directory (updated ${QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_UPDATED_AT}).`
+  }
+  catch (error) {
     initializationFailed.value = true
+    catalogStatus.value = ''
+    errorMessage.value = errorMessageFrom(error) ?? 'The Token Plan directory could not be loaded.'
+  }
+  finally {
+    refreshingCatalog.value = false
   }
 }
 
@@ -97,6 +161,7 @@ async function save() {
     const next = await saveQwenAudioTtsTokenPlanCredential(apiKey.value)
     applyProfile(next)
     apiKey.value = ''
+    await refreshCatalog()
     statusMessage.value = 'Saved securely. The credential is not displayed.'
   }
   catch (error) {
@@ -164,7 +229,7 @@ onMounted(() => {
             </div>
             <div>
               <dt class="text-sm text-neutral-500 dark:text-neutral-400">
-                Model
+                Selected model
               </dt>
               <dd data-testid="qwen-audio-tts-token-plan-model" class="mt-1 text-sm font-mono">
                 {{ model?.id ?? QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL }}
@@ -179,6 +244,23 @@ onMounted(() => {
               </dd>
             </div>
           </dl>
+
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-3">
+              <label class="text-sm font-medium" for="qwen-audio-tts-token-plan-model-select">Token Plan TTS models</label>
+              <button data-testid="qwen-audio-tts-token-plan-refresh-catalog" type="button" :disabled="refreshingCatalog || busy" class="border border-neutral-300 rounded px-3 py-1 text-sm dark:border-neutral-700 disabled:opacity-50" @click="refreshCatalog">
+                {{ refreshingCatalog ? 'Refreshing…' : 'Refresh official directory' }}
+              </button>
+            </div>
+            <select id="qwen-audio-tts-token-plan-model-select" v-model="selectedModelId" data-testid="qwen-audio-tts-token-plan-model-select" class="border border-neutral-300 rounded bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900">
+              <option v-for="candidate in models" :key="candidate.id" :value="candidate.id">
+                {{ candidate.name }} ({{ candidate.id }})
+              </option>
+            </select>
+            <p class="text-xs text-neutral-500 dark:text-neutral-400">
+              Token Plan model discovery is not documented as a credential-scoped API. This selection uses the official published directory and does not claim account entitlement.
+            </p>
+          </div>
 
           <form class="flex flex-col gap-3" @submit.prevent="save">
             <label class="flex flex-col gap-1 text-sm">
@@ -206,16 +288,23 @@ onMounted(() => {
             Credential: {{ profile.hasApiKey ? (profile.source === 'secure-store' ? 'Saved securely' : 'Available from environment fallback') : 'Not configured' }}
           </p>
 
-          <label class="flex flex-col gap-1 text-sm">
-            <span>Voice</span>
+          <div class="flex flex-col gap-2">
+            <span class="text-sm font-medium">Voices for {{ model?.id ?? selectedModelId }}</span>
+            <input v-model="voiceSearchQuery" data-testid="qwen-audio-tts-token-plan-voice-search" type="search" placeholder="Search voices" class="border border-neutral-300 rounded bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900">
             <select v-model="selectedVoiceId" data-testid="qwen-audio-tts-token-plan-voice" class="border border-neutral-300 rounded bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900">
-              <option v-for="voice in voices" :key="voice.id" :value="voice.id">
+              <option v-for="voice in filteredVoices" :key="voice.id" :value="voice.id">
                 {{ voice.name }} ({{ voice.id }})
               </option>
             </select>
-          </label>
+            <p class="text-xs text-neutral-500 dark:text-neutral-400">
+              {{ voiceCounts.system }} system · {{ voiceCounts.base }} base · {{ voiceCounts.custom }} custom · Source: {{ catalogSource }}
+            </p>
+          </div>
           <p class="text-xs text-neutral-500 dark:text-neutral-400">
             Voice selection is model-scoped and is reused by the preview and production streaming TTS route.
+          </p>
+          <p v-if="catalogStatus" data-testid="qwen-audio-tts-token-plan-catalog-status" class="text-sm text-neutral-600 dark:text-neutral-300">
+            {{ catalogStatus }}
           </p>
           <p v-if="statusMessage" data-testid="qwen-audio-tts-token-plan-status" class="text-sm text-green-600 dark:text-green-400">
             {{ statusMessage }}
@@ -223,8 +312,11 @@ onMounted(() => {
           <p v-if="errorMessage" data-testid="qwen-audio-tts-token-plan-error" class="text-sm text-red-600 dark:text-red-400">
             {{ errorMessage }}
           </p>
-          <p v-if="initializationFailed" class="text-xs text-amber-600 dark:text-amber-400">
-            The static Token Plan model/voice catalog could not be loaded.
+          <p v-if="initializationFailed" data-testid="qwen-audio-tts-token-plan-catalog-error" class="text-xs text-amber-600 dark:text-amber-400">
+            The official Token Plan directory could not be loaded. Existing model and voice selections were preserved.
+          </p>
+          <p class="text-xs text-neutral-500 dark:text-neutral-400">
+            Provider discovery limits: model API {{ QWEN_AUDIO_TTS_TOKEN_PLAN_DISCOVERY_LIMITATIONS.modelApi }}; system voice API {{ QWEN_AUDIO_TTS_TOKEN_PLAN_DISCOVERY_LIMITATIONS.systemVoiceApi }}; custom voice API {{ QWEN_AUDIO_TTS_TOKEN_PLAN_DISCOVERY_LIMITATIONS.customVoiceApi }}.
           </p>
           <p v-if="!profile.secureStorageAvailable" class="text-xs text-amber-600 dark:text-amber-400">
             Secure storage is unavailable on this device; no credential was saved.

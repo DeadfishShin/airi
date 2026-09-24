@@ -21,8 +21,12 @@ describe('qwen Audio Token Plan TTS provider', () => {
     expect(providerQwenAudioTtsTokenPlan.requiresCredentials).toBe(false)
     expect(providerQwenAudioTtsTokenPlan.capabilities?.speech).toEqual({ transport: 'bidirectional-ws' })
     expect(models?.map(model => model.id)).toEqual([QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL])
-    expect(voices?.map(voice => voice.id)).toEqual([QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID, 'longanlufeng'])
+    expect(voices?.map(voice => voice.id)).toContain(QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID)
+    expect(voices?.map(voice => voice.id)).toContain('qwen-audio-3.0-tts-plus-longcanzhuyue')
+    expect(voices?.length).toBeGreaterThan(500)
     expect(voices?.every(voice => voice.compatibleModels?.includes(QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL))).toBe(true)
+    expect(voices?.filter(voice => voice.catalogKind === 'system')).toHaveLength(2)
+    expect(voices?.filter(voice => voice.catalogKind === 'base').length).toBeGreaterThan(500)
     expect(QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID).toBe('qwen-audio-tts-token-plan')
   })
 

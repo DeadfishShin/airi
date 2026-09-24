@@ -15,7 +15,7 @@ import { toXml } from 'xast-util-to-xml'
 import { x } from 'xastscript'
 
 import { getDefaultSpeechModel, getDefaultStreamingModel, OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID, setupOfficialSpeechAutoPick } from '../../libs/providers/providers/official'
-import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID, qwenAudioTtsTokenPlanVoices } from '../../libs/providers/providers/qwen-audio-tts-token-plan'
+import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID } from '../../libs/providers/providers/qwen-audio-tts-token-plan'
 import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '../../libs/providers/qwen-tts-realtime-ipc'
 import { normalizeQwen3TtsRealtimeModel } from '../../libs/providers/qwen3-tts-realtime-models'
 import {
@@ -74,6 +74,7 @@ export const useSpeechStore = defineStore('speech', () => {
   const speechProviderError = refManualReset<string | null>(null)
   const availableVoices = refManualReset<Record<string, VoiceInfo[]>>(() => ({}))
   const modelSearchQuery = refManualReset<string>('')
+  let voiceLoadRequestSequence = 0
 
   // Computed properties
   const availableSpeechProvidersMetadata = computed(() => allAudioSpeechProvidersMetadata.value)
@@ -129,19 +130,17 @@ export const useSpeechStore = defineStore('speech', () => {
       return []
     }
 
+    const requestSequence = ++voiceLoadRequestSequence
     isLoadingSpeechProviderVoices.value = true
     speechProviderError.value = null
 
     try {
-      // Token Plan publishes a local, model-scoped catalog. Keep it independent
-      // from provider initialization and credential/network readiness so the
-      // settings page can always render the selectable voices.
-      const voices = provider === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID
-        ? (availableVoices.value[provider] ?? qwenAudioTtsTokenPlanVoices.map(voice => ({
-            ...voice,
-            languages: voice.languages.map(language => ({ ...language })),
-          })))
-        : await providersStore.listProviderVoices(provider, model)
+      const voices = await providersStore.listProviderVoices(provider, model)
+      // A model/provider change can make an earlier catalogue result stale.
+      // Do not let that result replace the current selection's voices.
+      if (requestSequence !== voiceLoadRequestSequence)
+        return voices
+
       // Reassign to trigger reactivity when adding/updating provider entries
       availableVoices.value = {
         ...availableVoices.value,
@@ -156,7 +155,8 @@ export const useSpeechStore = defineStore('speech', () => {
       return []
     }
     finally {
-      isLoadingSpeechProviderVoices.value = false
+      if (requestSequence === voiceLoadRequestSequence)
+        isLoadingSpeechProviderVoices.value = false
     }
   }
 
@@ -200,11 +200,16 @@ export const useSpeechStore = defineStore('speech', () => {
     if (provider !== QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID || activeSpeechProvider.value !== provider)
       return
 
-    if (activeSpeechModel.value !== QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
-      activeSpeechModel.value = QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL
+    const models = providersStore.getModelsForProvider(provider)
+    const hasValidModel = !!activeSpeechModel.value && models.some(model => model.id === activeSpeechModel.value)
+    if (!hasValidModel) {
+      const nextModel = models.find(model => model.id === QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)?.id ?? models[0]?.id
+      if (nextModel)
+        activeSpeechModel.value = nextModel
+    }
 
     const voices = availableVoices.value[provider] ?? []
-    const currentVoice = voices.find(candidate => candidate.id === activeSpeechVoiceId.value)
+    const currentVoice = voices.find(candidate => candidate.id === activeSpeechVoiceId.value && candidate.compatibleModels?.includes(activeSpeechModel.value))
     const voice = currentVoice ?? voices.find(candidate => candidate.id === QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID) ?? voices[0]
     if (!voice)
       return

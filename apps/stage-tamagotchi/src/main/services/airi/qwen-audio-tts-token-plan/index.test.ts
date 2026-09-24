@@ -227,7 +227,7 @@ describe('qwen Audio Token Plan main service', () => {
     ]
 
     try {
-      await start({ sessionId: 'token-plan-renderer-a', voice: 'longanlingxin' })
+      await start({ sessionId: 'token-plan-renderer-a', model: 'qwen-audio-3.0-tts-plus', voice: 'longanlingxin' })
       expect(socketCalls).toEqual([{
         endpoint: 'wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference',
         headers: { Authorization: 'Bearer unit-test-token-plan-key' },
@@ -297,7 +297,7 @@ describe('qwen Audio Token Plan main service', () => {
     })
     const start = defineInvoke(context, qwenAudioTtsTokenPlanSessionStart)
 
-    await expect(start({ sessionId: 'missing-token-plan-key', voice: 'longanlingxin' })).rejects.toThrow('API key is unavailable')
+    await expect(start({ sessionId: 'missing-token-plan-key', model: 'qwen-audio-3.0-tts-plus', voice: 'longanlingxin' })).rejects.toThrow('API key is unavailable')
     expect(socketCreated).toBe(false)
     expect(diagnostics).toEqual([
       { milestone: 'MAIN_SESSION_START_RECEIVED', details: undefined },
@@ -415,7 +415,7 @@ describe('qwen Audio Token Plan main service', () => {
         errors.push(event.body.message)
     })
 
-    await start({ sessionId: 'token-plan-error-session', voice: 'longanlingxin' })
+    await start({ sessionId: 'token-plan-error-session', model: 'qwen-audio-3.0-tts-plus', voice: 'longanlingxin' })
     socket.emit('open')
     socket.emit('message', serverEvent('task-started'))
     await settle()
@@ -446,7 +446,7 @@ describe('qwen Audio Token Plan main service', () => {
     const finished = vi.fn()
     context.on(qwenAudioTtsTokenPlanSessionFinished, finished)
 
-    await start({ sessionId: 'token-plan-cancel-session', voice: 'longanlingxin' })
+    await start({ sessionId: 'token-plan-cancel-session', model: 'qwen-audio-3.0-tts-plus', voice: 'longanlingxin' })
     socket.emit('open')
     socket.emit('message', serverEvent('task-started'))
     await settle()

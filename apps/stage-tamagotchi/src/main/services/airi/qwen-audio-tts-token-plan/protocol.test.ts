@@ -115,6 +115,17 @@ describe('token Plan Qwen Audio TTS protocol', () => {
     })
   })
 
+  it('forwards a catalog-selected base voice and rejects an unlisted model', () => {
+    const frame = buildQwenAudioTtsTokenPlanRunTaskFrame(
+      'task-selected',
+      'qwen-audio-3.0-tts-plus-longcanzhuyue',
+      QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL,
+    )
+    expect(frame.payload.model).toBe(QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL)
+    expect(frame.payload.parameters.voice).toBe('qwen-audio-3.0-tts-plus-longcanzhuyue')
+    expect(() => buildQwenAudioTtsTokenPlanRunTaskFrame('task-unsupported', 'longanlingxin', 'qwen-audio-3.0-tts-unsupported')).toThrow('model is not supported')
+  })
+
   it('waits for task-started, flushes text, then sends finish without an ack', async () => {
     const socket = new FakeSocket()
     const audio: Array<{ sequence: number, bytes: number }> = []
