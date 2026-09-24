@@ -978,16 +978,17 @@ pages:
           accountFailed: '账号模型刷新返回 {responseClass}；仍可使用随应用提供的官方目录。'
           notConfigured: 尚未配置 Token Plan 凭据；仍可使用随应用提供的官方目录。
           customNotQueried: 自定义音色：未查询
-        asrProbe:
-          title: Token Plan ASR 能力诊断
-          description: 针对 qwen-audio-3.0-asr-flash 的一次手动、有界探测假设。这不是正式 ASR 功能。
+        realtimeProbe:
+          title: Token Plan 实时转写诊断
+          description: 针对 qwen-audio-3.0-realtime-plus 的一次手动、有界、仅转写探测假设。这不是正式 ASR 功能。
           profile: 运行 profile 权威
           credential: Token Plan 凭据
-          fixture: 探测音频
+          diagnosticReason: 凭据诊断原因
+          fixture: 探测音频（原始 PCM）
           readiness: 探测就绪状态
           runtimePath: 主进程 user data 路径
-          button: 探测 Token Plan ASR 合同
-          running: 正在探测 Token Plan ASR……
+          button: 探测 Token Plan 实时转写合同
+          running: 正在探测 Token Plan 实时转写……
     catalog:
       edit:
         config-id-not-found: 未找到服务来源配置。

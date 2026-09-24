@@ -48,21 +48,19 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).not.toMatch(/onMounted\(.*probeQwenAudioTtsTokenPlanModels/s)
   })
 
-  it('keeps the ASR capability probe manual, diagnostic-only, and sanitized', () => {
+  it('keeps the realtime transcript probe manual, diagnostic-only, and sanitized', () => {
     const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
-    expect(source).toContain('qwen-audio-asr-token-plan-capability-probe-button')
-    expect(source).toContain('@click="runAsrCapabilityProbe"')
-    expect(source).toContain('probeQwenAudioAsrTokenPlan')
-    expect(source).toContain('asrProbeResult.responseClass')
-    expect(source).toContain('getQwenAudioAsrTokenPlanPreflight')
-    expect(source).toContain('qwen-audio-asr-token-plan-runtime-profile')
-    expect(source).toContain('qwen-audio-asr-token-plan-runtime-credential')
-    expect(source).toContain('qwen-audio-asr-token-plan-runtime-credential-reason')
-    expect(source).toContain('qwen-audio-asr-token-plan-runtime-fixture')
-    expect(source).toContain('qwen-audio-asr-token-plan-runtime-readiness')
-    expect(source).toContain('!asrPreflight?.probeReady')
-    expect(source).not.toMatch(/onMounted\(.*probeQwenAudioAsrTokenPlan/s)
-    expect(source).not.toMatch(/TOKEN_PLAN_ASR|Authorization\s*:/)
+    expect(source).toContain('qwen-audio-realtime-plus-token-plan-transcript-probe-button')
+    expect(source).toContain('@click="runRealtimeTranscriptProbe"')
+    expect(source).toContain('probeQwenAudioRealtimePlusTokenPlanTranscriptOnly')
+    expect(source).toContain('realtimeProbeResult.responseClass')
+    expect(source).toContain('getQwenAudioRealtimePlusTokenPlanPreflight')
+    expect(source).toContain('qwen-audio-realtime-plus-token-plan-runtime-profile')
+    expect(source).toContain('qwen-audio-realtime-plus-token-plan-runtime-credential')
+    expect(source).toContain('qwen-audio-realtime-plus-token-plan-runtime-fixture')
+    expect(source).toContain('qwen-audio-realtime-plus-token-plan-runtime-readiness')
+    expect(source).not.toMatch(/onMounted\(.*probeQwenAudioRealtimePlusTokenPlanTranscriptOnly/s)
+    expect(source).not.toMatch(/qwen-audio-asr-token-plan-capability-probe|qwen-audio-3\.0-asr-flash|TOKEN_PLAN_ASR|Authorization\s*:/)
   })
 
   it('keeps directory browsing separate from the active speech selection', () => {

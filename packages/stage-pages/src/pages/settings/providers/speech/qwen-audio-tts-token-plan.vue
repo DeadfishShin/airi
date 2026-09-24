@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { QwenAudioAsrTokenPlanPreflightResult, QwenAudioAsrTokenPlanProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe-ipc'
+import type { QwenAudioRealtimePlusTokenPlanProbePreflight, QwenAudioRealtimePlusTokenPlanProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-realtime-plus-token-plan-transcript-probe-ipc'
 import type { QwenAudioTtsTokenPlanModelsProbeResult } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-models-probe-ipc'
 
 import { errorMessageFrom } from '@moeru/std'
@@ -9,7 +9,7 @@ import {
   ProviderSettingsLayout,
 } from '@proj-airi/stage-ui/components'
 import { selectProviderMetadata } from '@proj-airi/stage-ui/libs'
-import { getQwenAudioAsrTokenPlanPreflight, probeQwenAudioAsrTokenPlan } from '@proj-airi/stage-ui/libs/providers/qwen-audio-asr-token-plan-capability-probe'
+import { getQwenAudioRealtimePlusTokenPlanPreflight, probeQwenAudioRealtimePlusTokenPlanTranscriptOnly } from '@proj-airi/stage-ui/libs/providers/qwen-audio-realtime-plus-token-plan-transcript-probe'
 import {
   getQwenAudioTtsTokenPlanAccountModels,
   QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_UPDATED_AT,
@@ -58,9 +58,9 @@ const voiceCatalogSource = computed(() => t(
 const voiceSearchQuery = ref('')
 const refreshingCatalog = ref(false)
 const accountModelsResult = ref<QwenAudioTtsTokenPlanModelsProbeResult>()
-const asrProbeBusy = ref(false)
-const asrProbeResult = ref<QwenAudioAsrTokenPlanProbeResult>()
-const asrPreflight = ref<QwenAudioAsrTokenPlanPreflightResult>()
+const realtimeProbeBusy = ref(false)
+const realtimeProbeResult = ref<QwenAudioRealtimePlusTokenPlanProbeResult>()
+const realtimePreflight = ref<QwenAudioRealtimePlusTokenPlanProbePreflight>()
 const browsingModelId = ref('')
 const browsingVoiceId = ref('')
 let catalogRefreshSequence = 0
@@ -312,29 +312,29 @@ async function refreshAccountModels(allowBusy = false) {
   }
 }
 
-async function runAsrCapabilityProbe() {
-  if (asrProbeBusy.value || !asrPreflight.value?.probeReady)
+async function runRealtimeTranscriptProbe() {
+  if (realtimeProbeBusy.value || !realtimePreflight.value?.probeReady)
     return
-  asrProbeBusy.value = true
-  asrProbeResult.value = undefined
+  realtimeProbeBusy.value = true
+  realtimeProbeResult.value = undefined
   errorMessage.value = ''
   try {
-    asrProbeResult.value = await probeQwenAudioAsrTokenPlan()
+    realtimeProbeResult.value = await probeQwenAudioRealtimePlusTokenPlanTranscriptOnly()
   }
   catch (error) {
-    errorMessage.value = errorMessageFrom(error) ?? 'The ASR capability probe could not be started.'
+    errorMessage.value = errorMessageFrom(error) ?? 'The realtime transcript probe could not be started.'
   }
   finally {
-    asrProbeBusy.value = false
+    realtimeProbeBusy.value = false
   }
 }
 
-async function loadAsrPreflight() {
+async function loadRealtimeProbePreflight() {
   try {
-    asrPreflight.value = await getQwenAudioAsrTokenPlanPreflight()
+    realtimePreflight.value = await getQwenAudioRealtimePlusTokenPlanPreflight()
   }
   catch (error) {
-    errorMessage.value = errorMessageFrom(error) ?? 'The ASR diagnostic preflight could not be loaded.'
+    errorMessage.value = errorMessageFrom(error) ?? 'The realtime transcript diagnostic preflight could not be loaded.'
   }
 }
 
@@ -380,7 +380,7 @@ async function clear() {
 
 onMounted(() => {
   void initializeCatalog()
-  void loadAsrPreflight()
+  void loadRealtimeProbePreflight()
 })
 </script>
 
@@ -480,88 +480,94 @@ onMounted(() => {
             </div>
           </div>
 
-          <div data-testid="qwen-audio-asr-token-plan-capability-probe" class="flex flex-col gap-2 border border-amber-300 rounded border-dashed p-3 dark:border-amber-700">
-            <span class="text-sm font-medium">{{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.title') }}</span>
+          <div data-testid="qwen-audio-realtime-plus-token-plan-transcript-probe" class="flex flex-col gap-2 border border-amber-300 rounded border-dashed p-3 dark:border-amber-700">
+            <span class="text-sm font-medium">{{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.title') }}</span>
             <p class="text-xs text-neutral-500 dark:text-neutral-400">
-              {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.description') }}
+              {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.description') }}
             </p>
-            <dl data-testid="qwen-audio-asr-token-plan-preflight" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
+            <dl data-testid="qwen-audio-realtime-plus-token-plan-preflight" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
               <div>
                 <dt class="font-medium">
-                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.profile') }}
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.profile') }}
                 </dt>
-                <dd data-testid="qwen-audio-asr-token-plan-runtime-profile">
-                  {{ asrPreflight?.profileAuthority ?? 'unavailable' }}
+                <dd data-testid="qwen-audio-realtime-plus-token-plan-runtime-profile">
+                  {{ realtimePreflight?.profileAuthority ?? 'unavailable' }}
                 </dd>
               </div>
               <div>
                 <dt class="font-medium">
-                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.credential') }}
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.credential') }}
                 </dt>
-                <dd data-testid="qwen-audio-asr-token-plan-runtime-credential">
-                  {{ asrPreflight?.credentialStatus ?? 'unavailable' }}
+                <dd data-testid="qwen-audio-realtime-plus-token-plan-runtime-credential">
+                  {{ realtimePreflight?.credentialStatus ?? 'unavailable' }}
                 </dd>
               </div>
               <div>
                 <dt class="font-medium">
-                  Diagnostic reason
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.diagnosticReason') }}
                 </dt>
-                <dd data-testid="qwen-audio-asr-token-plan-runtime-credential-reason">
-                  {{ asrPreflight?.credentialDiagnosticReason ?? 'UNKNOWN_ERROR' }}
+                <dd data-testid="qwen-audio-realtime-plus-token-plan-runtime-credential-reason">
+                  {{ realtimePreflight?.credentialDiagnosticReason ?? 'UNKNOWN_ERROR' }}
                 </dd>
               </div>
               <div>
                 <dt class="font-medium">
-                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.fixture') }}
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.fixture') }}
                 </dt>
-                <dd data-testid="qwen-audio-asr-token-plan-runtime-fixture">
-                  {{ asrPreflight?.fixtureReady ? 'ready' : 'missing' }}
+                <dd data-testid="qwen-audio-realtime-plus-token-plan-runtime-fixture">
+                  {{ realtimePreflight?.fixtureReady ? `${realtimePreflight.fixtureFormat} / ${realtimePreflight.rawPcmBytes} bytes` : 'missing' }}
                 </dd>
               </div>
               <div>
                 <dt class="font-medium">
-                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.readiness') }}
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.readiness') }}
                 </dt>
-                <dd data-testid="qwen-audio-asr-token-plan-runtime-readiness">
-                  {{ asrPreflight?.probeReady ? 'ready' : 'not ready' }}
+                <dd data-testid="qwen-audio-realtime-plus-token-plan-runtime-readiness">
+                  {{ realtimePreflight?.probeReady ? 'ready' : 'not ready' }}
                 </dd>
               </div>
-              <div v-if="asrPreflight?.userDataPath" class="sm:col-span-2">
+              <div v-if="realtimePreflight?.userDataPath" class="sm:col-span-2">
                 <dt class="font-medium">
-                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.runtimePath') }}
+                  {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.runtimePath') }}
                 </dt>
-                <dd data-testid="qwen-audio-asr-token-plan-runtime-user-data-path" class="break-all">
-                  {{ asrPreflight.userDataPath }}
+                <dd data-testid="qwen-audio-realtime-plus-token-plan-runtime-user-data-path" class="break-all">
+                  {{ realtimePreflight.userDataPath }}
                 </dd>
               </div>
             </dl>
-            <button data-testid="qwen-audio-asr-token-plan-capability-probe-button" type="button" :disabled="!asrPreflight?.probeReady || asrProbeBusy || busy || refreshingCatalog" class="self-start border border-amber-400 rounded px-3 py-1 text-sm dark:border-amber-700 disabled:opacity-50" @click="runAsrCapabilityProbe">
-              {{ asrProbeBusy ? t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.running') : t('settings.pages.providers.speech.qwen-audio-tts-token-plan.asrProbe.button') }}
+            <button data-testid="qwen-audio-realtime-plus-token-plan-transcript-probe-button" type="button" :disabled="!realtimePreflight?.probeReady || realtimeProbeBusy || busy || refreshingCatalog" class="self-start border border-amber-400 rounded px-3 py-1 text-sm dark:border-amber-700 disabled:opacity-50" @click="runRealtimeTranscriptProbe">
+              {{ realtimeProbeBusy ? t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.running') : t('settings.pages.providers.speech.qwen-audio-tts-token-plan.realtimeProbe.button') }}
             </button>
-            <dl v-if="asrProbeResult" data-testid="qwen-audio-asr-token-plan-capability-probe-result" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
+            <dl v-if="realtimeProbeResult" data-testid="qwen-audio-realtime-plus-token-plan-transcript-probe-result" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
               <div>
                 <dt class="font-medium">
                   Result
                 </dt>
-                <dd>{{ asrProbeResult.responseClass }}</dd>
+                <dd>{{ realtimeProbeResult.responseClass }}</dd>
               </div>
               <div>
                 <dt class="font-medium">
-                  HTTP
+                  Stage
                 </dt>
-                <dd>{{ asrProbeResult.httpStatus ?? '—' }}</dd>
+                <dd>{{ realtimeProbeResult.stage }}</dd>
+              </div>
+              <div>
+                <dt class="font-medium">
+                  Audio / commit
+                </dt>
+                <dd>{{ realtimeProbeResult.audioChunksSent }} chunks / {{ realtimeProbeResult.commitSent ? 'sent' : 'not sent' }}</dd>
               </div>
               <div>
                 <dt class="font-medium">
                   Transcript
                 </dt>
-                <dd>{{ asrProbeResult.transcriptPresent ? 'received' : 'not received' }}</dd>
+                <dd>{{ realtimeProbeResult.transcriptPresent ? realtimeProbeResult.transcript : 'not received' }}</dd>
               </div>
-              <div v-if="asrProbeResult.sanitizedErrorMessage">
+              <div v-if="realtimeProbeResult.sanitizedErrorMessage">
                 <dt class="font-medium">
                   Detail
                 </dt>
-                <dd>{{ asrProbeResult.sanitizedErrorMessage }}</dd>
+                <dd>{{ realtimeProbeResult.sanitizedErrorMessage }}</dd>
               </div>
             </dl>
           </div>
