@@ -1004,8 +1004,15 @@ pages:
           failed: The bundled directory could not be loaded; existing selection and directory were preserved.
           loaded: '{models} Token Plan TTS model(s) and {voices} model-compatible voices loaded from the bundled official directory snapshot (published {date}).'
           source: Bundled official directory snapshot
-          reload: Reload bundled official directory
-          reloading: Reloading…
+          accountSource: Token Plan account API
+          accountTitle: Account model directory
+          accountDescription: Refresh the current account's compatible TTS models through the Token Plan API. The saved credential stays in the Electron main process; the official directory remains the fallback.
+          accountReload: Refresh account models
+          accountReloading: Refreshing account models…
+          accountLoading: Refreshing the Token Plan account model directory…
+          accountLoaded: 'Loaded {models} compatible TTS model(s) and {voices} voices from the Token Plan account API.'
+          accountFailed: 'Account model refresh returned {responseClass}; the bundled official directory remains available.'
+          notConfigured: No Token Plan credential is configured; the bundled official directory remains available.
           customNotQueried: 'custom voices: not queried'
     catalog:
       edit:

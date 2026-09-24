@@ -19,7 +19,7 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).toContain('qwen-audio-tts-token-plan-api-key')
     expect(source).toContain('qwen-audio-tts-token-plan-save')
     expect(source).toContain('qwen-audio-tts-token-plan-voice')
-    expect(source).toContain('qwen-audio-tts-token-plan-probe-models')
+    expect(source).toContain('qwen-audio-tts-token-plan-refresh-account-models')
     expect(source).toContain('probeQwenAudioTtsTokenPlanModels')
   })
 
@@ -35,17 +35,18 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).not.toContain('QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID')
   })
 
-  it('keeps the account probe manual and renders only its sanitized result', async () => {
+  it('keeps account refresh manual and renders only its sanitized result', async () => {
     const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
-    expect(source).toContain('@click="probeModels"')
-    expect(source).toContain('probeResult.responseClass')
-    expect(source).toContain('probeResult.modelIds.length')
+    expect(source).toContain('@click="refreshAccountModels"')
+    expect(source).toContain('accountModelsResult.responseClass')
+    expect(source).toContain('accountModelsResult.modelIds.length')
+    expect(source).not.toContain('Probe account models')
     expect(source).not.toMatch(/onMounted\(.*probeQwenAudioTtsTokenPlanModels/s)
   })
 
   it('keeps directory browsing separate from the active speech selection', () => {
     const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
-    const refreshStart = source.indexOf('async function refreshCatalog()')
+    const refreshStart = source.indexOf('async function loadBundledCatalog()')
     const saveStart = source.indexOf('async function save()')
     const refreshSource = source.slice(refreshStart, saveStart)
 

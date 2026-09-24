@@ -890,8 +890,15 @@ pages:
           failed: 內建目錄載入失敗；已保留現有選擇和目錄。
           loaded: 已從隨應用提供的官方目錄快照載入 {models} 個 Token Plan TTS 模型和 {voices} 個相容音色（資料日期：{date}）。
           source: 隨應用提供的官方目錄快照
-          reload: 重新載入隨應用提供的官方目錄
-          reloading: 正在重新載入……
+          accountSource: Token Plan 帳號 API
+          accountTitle: 帳號模型目錄
+          accountDescription: 透過 Token Plan API 重新整理目前帳號支援的 TTS 模型。已儲存的憑據只在 Electron 主程序中使用；官方目錄仍作為備用目錄。
+          accountReload: 重新整理帳號模型
+          accountReloading: 正在重新整理帳號模型……
+          accountLoading: 正在重新整理 Token Plan 帳號模型目錄……
+          accountLoaded: 已從 Token Plan 帳號 API 載入 {models} 個相容 TTS 模型和 {voices} 個音色。
+          accountFailed: '帳號模型重新整理返回 {responseClass}；仍可使用隨應用提供的官方目錄。'
+          notConfigured: 尚未設定 Token Plan 憑據；仍可使用隨應用提供的官方目錄。
           customNotQueried: 自訂音色：未查詢
     catalog:
       edit:

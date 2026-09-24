@@ -966,8 +966,15 @@ pages:
           failed: 内置目录加载失败；已保留现有选择和目录。
           loaded: 已从随应用提供的官方目录快照加载 {models} 个 Token Plan TTS 模型和 {voices} 个兼容音色（资料日期：{date}）。
           source: 随应用提供的官方目录快照
-          reload: 重新加载随应用提供的官方目录
-          reloading: 正在重新加载……
+          accountSource: Token Plan 账号 API
+          accountTitle: 账号模型目录
+          accountDescription: 通过 Token Plan API 刷新当前账号支持的 TTS 模型。已保存的凭据只在 Electron 主进程中使用；官方目录仍作为备用目录。
+          accountReload: 刷新账号模型
+          accountReloading: 正在刷新账号模型……
+          accountLoading: 正在刷新 Token Plan 账号模型目录……
+          accountLoaded: 已从 Token Plan 账号 API 加载 {models} 个兼容 TTS 模型和 {voices} 个音色。
+          accountFailed: '账号模型刷新返回 {responseClass}；仍可使用随应用提供的官方目录。'
+          notConfigured: 尚未配置 Token Plan 凭据；仍可使用随应用提供的官方目录。
           customNotQueried: 自定义音色：未查询
     catalog:
       edit:

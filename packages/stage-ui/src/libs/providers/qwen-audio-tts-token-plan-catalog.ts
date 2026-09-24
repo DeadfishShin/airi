@@ -1,9 +1,11 @@
+import type { QwenAudioTtsTokenPlanModelsProbeResult } from './qwen-audio-tts-token-plan-models-probe-ipc'
 import type { ModelInfo, VoiceInfo } from './types'
 
 import { QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL, QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID, QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_ID } from './qwen-audio-tts-token-plan-ipc'
 
 /** The provider's public model/voice directory used by the Token Plan route. */
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_SOURCE = 'official-directory' as const
+export const QWEN_AUDIO_TTS_TOKEN_PLAN_ACCOUNT_CATALOG_SOURCE = 'token-plan-account-api' as const
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL_CATALOG_SOURCE_URL = 'https://help.aliyun.com/zh/model-studio/token-plan-personal-overview'
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_VOICE_CATALOG_SOURCE_URL = 'https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list'
 export const QWEN_AUDIO_TTS_TOKEN_PLAN_BASE_VOICE_CATALOG_SOURCE_URL = 'https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/en-US/20260723/ulextc/qwen-audio-3.0-tts-plus-base-voices-en.xlsx'
@@ -682,6 +684,26 @@ export const qwenAudioTtsTokenPlanVoices: VoiceInfo[] = [
 
 export function getQwenAudioTtsTokenPlanModels(): ModelInfo[] {
   return qwenAudioTtsTokenPlanModels.map(model => ({ ...model, capabilities: model.capabilities ? [...model.capabilities] : undefined }))
+}
+
+/**
+ * Converts the sanitized main-process account response into the conservative
+ * TTS model catalogue. Unknown/audio-looking models stay out of the selector.
+ */
+export function getQwenAudioTtsTokenPlanAccountModels(result: QwenAudioTtsTokenPlanModelsProbeResult): ModelInfo[] {
+  if (result.responseClass !== 'SUCCESS_OPENAI_MODEL_LIST' || result.ttsModelIds.length === 0)
+    return []
+
+  return result.ttsModelIds
+    .map(modelId => qwenAudioTtsTokenPlanModels.find(model => model.id === modelId))
+    .filter((model): model is ModelInfo => !!model)
+    .map(model => ({
+      ...model,
+      catalogSource: QWEN_AUDIO_TTS_TOKEN_PLAN_ACCOUNT_CATALOG_SOURCE,
+      catalogSourceUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/models',
+      catalogUpdatedAt: undefined,
+      capabilities: model.capabilities ? [...model.capabilities] : undefined,
+    }))
 }
 
 export function getQwenAudioTtsTokenPlanVoices(model = QWEN_AUDIO_TTS_TOKEN_PLAN_MODEL): VoiceInfo[] {

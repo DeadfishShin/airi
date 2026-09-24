@@ -9,6 +9,7 @@ import {
 } from '@proj-airi/stage-ui/components'
 import { selectProviderMetadata } from '@proj-airi/stage-ui/libs'
 import {
+  getQwenAudioTtsTokenPlanAccountModels,
   QWEN_AUDIO_TTS_TOKEN_PLAN_CATALOG_UPDATED_AT,
   QWEN_AUDIO_TTS_TOKEN_PLAN_DISCOVERY_LIMITATIONS,
 } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-catalog'
@@ -42,9 +43,7 @@ const catalogStatus = ref('')
 const catalogSource = ref(t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source'))
 const voiceSearchQuery = ref('')
 const refreshingCatalog = ref(false)
-const probingModels = ref(false)
-const probeResult = ref<QwenAudioTtsTokenPlanModelsProbeResult>()
-const probeError = ref('')
+const accountModelsResult = ref<QwenAudioTtsTokenPlanModelsProbeResult>()
 const browsingModelId = ref('')
 const browsingVoiceId = ref('')
 let catalogRefreshSequence = 0
@@ -136,7 +135,7 @@ async function initializeCatalog() {
   catch (error) {
     errorMessage.value = errorMessageFrom(error) ?? 'The Token Plan credential status could not be loaded.'
   }
-  await refreshCatalog()
+  await loadBundledCatalog()
 }
 
 async function loadVoicesForCatalog(modelId: string, applySelectionDefaults: boolean) {
@@ -164,8 +163,8 @@ async function loadVoicesForCatalog(modelId: string, applySelectionDefaults: boo
   }
 }
 
-async function refreshCatalog() {
-  if (refreshingCatalog.value)
+async function loadBundledCatalog(options: { allowWhileRefreshing?: boolean } = {}) {
+  if (refreshingCatalog.value && !options.allowWhileRefreshing)
     return
   const refreshSequence = ++catalogRefreshSequence
   refreshingCatalog.value = true
@@ -222,6 +221,68 @@ async function refreshCatalog() {
   }
 }
 
+async function refreshAccountModels(allowBusy = false) {
+  if (refreshingCatalog.value || (busy.value && !allowBusy))
+    return
+  if (!profile.value.ready) {
+    catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.notConfigured')
+    await loadBundledCatalog()
+    return
+  }
+
+  const refreshSequence = ++catalogRefreshSequence
+  refreshingCatalog.value = true
+  initializationFailed.value = false
+  errorMessage.value = ''
+  accountModelsResult.value = undefined
+  catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountLoading')
+  try {
+    const result = await probeQwenAudioTtsTokenPlanModels()
+    if (refreshSequence !== catalogRefreshSequence)
+      return
+    accountModelsResult.value = result
+    const accountModels = getQwenAudioTtsTokenPlanAccountModels(result)
+    if (!accountModels.length) {
+      catalogSource.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source')
+      catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountFailed', { responseClass: result.responseClass })
+      await loadBundledCatalog({ allowWhileRefreshing: true })
+      return
+    }
+
+    providersStore.setModelsForProvider(providerId, accountModels)
+    const activeModel = speechStore.activeSpeechProvider === providerId ? speechStore.activeSpeechModel : ''
+    const nextModel = models.value.some(candidate => candidate.id === browsingModelId.value)
+      ? browsingModelId.value
+      : models.value.some(candidate => candidate.id === activeModel)
+        ? activeModel
+        : models.value[0]?.id
+    if (!nextModel)
+      return
+
+    browsingModelId.value = nextModel
+    const refreshedVoices = await loadVoicesForCatalog(nextModel, false)
+    if (refreshSequence !== catalogRefreshSequence || refreshedVoices === undefined)
+      return
+
+    catalogSource.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountSource')
+    catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountLoaded', {
+      models: accountModels.length,
+      voices: refreshedVoices.length,
+    })
+  }
+  catch (error) {
+    if (refreshSequence !== catalogRefreshSequence)
+      return
+    catalogSource.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.source')
+    catalogStatus.value = t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountFailed', { responseClass: 'NETWORK_ERROR' })
+    errorMessage.value = errorMessageFrom(error) ?? 'The account model directory could not be refreshed.'
+    await loadBundledCatalog({ allowWhileRefreshing: true })
+  }
+  finally {
+    refreshingCatalog.value = false
+  }
+}
+
 async function save() {
   if (busy.value)
     return
@@ -232,7 +293,7 @@ async function save() {
     const next = await saveQwenAudioTtsTokenPlanCredential(apiKey.value)
     applyProfile(next)
     apiKey.value = ''
-    await refreshCatalog()
+    await refreshAccountModels(true)
     statusMessage.value = 'Saved securely. The credential is not displayed.'
   }
   catch (error) {
@@ -259,23 +320,6 @@ async function clear() {
   }
   finally {
     busy.value = false
-  }
-}
-
-async function probeModels() {
-  if (probingModels.value || busy.value)
-    return
-  probingModels.value = true
-  probeResult.value = undefined
-  probeError.value = ''
-  try {
-    probeResult.value = await probeQwenAudioTtsTokenPlanModels()
-  }
-  catch (error) {
-    probeError.value = errorMessageFrom(error) ?? 'The account model probe could not be started.'
-  }
-  finally {
-    probingModels.value = false
   }
 }
 
@@ -336,8 +380,8 @@ onMounted(() => {
           <div class="flex flex-col gap-2">
             <div class="flex items-center justify-between gap-3">
               <label class="text-sm font-medium" for="qwen-audio-tts-token-plan-model-select">Token Plan TTS models</label>
-              <button data-testid="qwen-audio-tts-token-plan-refresh-catalog" type="button" :disabled="refreshingCatalog || busy" class="border border-neutral-300 rounded px-3 py-1 text-sm dark:border-neutral-700 disabled:opacity-50" @click="refreshCatalog">
-                {{ refreshingCatalog ? t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.reloading') : t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.reload') }}
+              <button data-testid="qwen-audio-tts-token-plan-refresh-account-models" type="button" :disabled="refreshingCatalog || busy" class="border border-neutral-300 rounded px-3 py-1 text-sm dark:border-neutral-700 disabled:opacity-50" @click="() => refreshAccountModels()">
+                {{ refreshingCatalog ? t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountReloading') : t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountReload') }}
               </button>
             </div>
             <select id="qwen-audio-tts-token-plan-model-select" v-model="selectedModelId" data-testid="qwen-audio-tts-token-plan-model-select" class="border border-neutral-300 rounded bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900">
@@ -346,43 +390,37 @@ onMounted(() => {
               </option>
             </select>
             <p class="text-xs text-neutral-500 dark:text-neutral-400">
-              Token Plan model discovery is not documented as a credential-scoped API. This selection uses the official published directory and does not claim account entitlement.
+              {{ catalogSource }}
             </p>
             <div class="flex flex-col gap-2 border border-neutral-300 rounded border-dashed p-3 dark:border-neutral-700">
               <div class="flex flex-wrap items-center justify-between gap-3">
-                <span class="text-sm font-medium">Account model probe</span>
-                <button data-testid="qwen-audio-tts-token-plan-probe-models" type="button" :disabled="probingModels || busy" class="border border-neutral-300 rounded px-3 py-1 text-sm dark:border-neutral-700 disabled:opacity-50" @click="probeModels">
-                  {{ probingModels ? 'Probing account models…' : 'Probe account models' }}
-                </button>
+                <span class="text-sm font-medium">{{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountTitle') }}</span>
               </div>
               <p class="text-xs text-neutral-500 dark:text-neutral-400">
-                Manual, one-shot, read-only check using the saved Token Plan credential. The credential never leaves the Electron main process and the bundled directory remains the fallback.
+                {{ t('settings.pages.providers.speech.qwen-audio-tts-token-plan.catalog.accountDescription') }}
               </p>
-              <dl v-if="probeResult" data-testid="qwen-audio-tts-token-plan-probe-result" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
+              <dl v-if="accountModelsResult" data-testid="qwen-audio-tts-token-plan-account-models-result" class="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2 dark:text-neutral-300">
                 <div>
                   <dt class="font-medium">
                     Result
-                  </dt><dd>{{ probeResult.responseClass }}</dd>
+                  </dt><dd>{{ accountModelsResult.responseClass }}</dd>
                 </div>
                 <div>
                   <dt class="font-medium">
                     HTTP
-                  </dt><dd>{{ probeResult.httpStatus ?? '—' }}</dd>
+                  </dt><dd>{{ accountModelsResult.httpStatus ?? '—' }}</dd>
                 </div>
                 <div>
                   <dt class="font-medium">
                     Models
-                  </dt><dd>{{ probeResult.modelIds.length }}</dd>
+                  </dt><dd>{{ accountModelsResult.modelIds.length }}</dd>
                 </div>
                 <div>
                   <dt class="font-medium">
                     TTS models
-                  </dt><dd>{{ probeResult.ttsModelIds.join(', ') || '—' }}</dd>
+                  </dt><dd>{{ accountModelsResult.ttsModelIds.join(', ') || '—' }}</dd>
                 </div>
               </dl>
-              <p v-if="probeError" data-testid="qwen-audio-tts-token-plan-probe-error" class="text-xs text-red-600 dark:text-red-400">
-                {{ probeError }}
-              </p>
             </div>
           </div>
 

@@ -135,7 +135,7 @@ export interface ProviderRuntimeValidator<TConfig> {
 }
 
 /** Where a provider's model or voice metadata came from. */
-export type ProviderCatalogSource = 'provider-api' | 'official-directory' | 'cache' | 'fixture'
+export type ProviderCatalogSource = 'provider-api' | 'token-plan-account-api' | 'official-directory' | 'cache' | 'fixture'
 
 /** The published/catalogue class of a voice, when the provider distinguishes it. */
 export type ProviderVoiceCatalogKind = 'system' | 'base' | 'custom'

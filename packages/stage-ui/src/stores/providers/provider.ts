@@ -707,6 +707,30 @@ export const useProviderStore = defineStore('provider', () => {
     return providerRuntimeState.value[providerId]?.models ?? emptyProviderModels
   }
 
+  /**
+   * Publishes an already-sanitized provider catalogue result. Network
+   * discovery belongs to the provider's trusted boundary; callers use this
+   * action only after applying provider-specific compatibility filtering.
+   */
+  function setModelsForProvider(providerId: string, models: ModelInfo[]) {
+    initializeProviderRuntimeState(providerId)
+    const normalizedModels = uniqBy(models.filter(model => !!model.id), model => model.id)
+    const currentRuntimeState = providerRuntimeState.value[providerId]
+    if (!currentRuntimeState)
+      return []
+
+    providerRuntimeState.value = {
+      ...providerRuntimeState.value,
+      [providerId]: {
+        ...currentRuntimeState,
+        models: normalizedModels,
+        modelStatus: 'ready',
+        modelError: null,
+      },
+    }
+    return normalizedModels
+  }
+
   // Load models for all configured providers
   async function loadModelsForConfiguredProviders() {
     for (const providerId of availableProviders.value) {
@@ -1021,6 +1045,7 @@ export const useProviderStore = defineStore('provider', () => {
     isLoadingModels,
     modelLoadError,
     fetchModelsForProvider,
+    setModelsForProvider,
     getModelsForProvider,
     listProviderVoices,
     loadProviderModel,
@@ -1054,6 +1079,7 @@ export const useProviderStore = defineStore('provider', () => {
       'deleteProvider',
       'disposeProviderInstance',
       'fetchModelsForProvider',
+      'setModelsForProvider',
       'forceProviderConfigured',
       'initializeProvider',
       'listProviderVoices',
