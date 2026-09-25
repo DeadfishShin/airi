@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import { QWEN_AUDIO_REALTIME_TOKEN_PLAN_ASR_PROVIDER_ID } from '../../libs/providers/providers/qwen-audio-realtime-token-plan'
+import { streamTranscription } from '../../libs/providers/stream-transcription'
 import {
   describeEmptyTranscriptionResponse,
   filterTranscriptionByConfidence,
@@ -48,6 +50,10 @@ describe('resolveStreamTranscriptionExecutor', () => {
     const executor = resolveStreamTranscriptionExecutor('official-provider-transcription')
 
     expect(executor).toBe(resolveStreamTranscriptionExecutor('aliyun-nls-transcription'))
+  })
+
+  it('routes Token Plan realtime-plus ASR through the standard streaming executor', () => {
+    expect(resolveStreamTranscriptionExecutor(QWEN_AUDIO_REALTIME_TOKEN_PLAN_ASR_PROVIDER_ID)).toBe(streamTranscription)
   })
 })
 

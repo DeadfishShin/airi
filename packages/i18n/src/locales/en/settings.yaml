@@ -1611,6 +1611,26 @@ pages:
               auto: Auto-detect
               zh: Chinese
               en: English
+      qwen-audio-realtime-token-plan-transcription:
+        title: Qwen Audio 3.0 Realtime Plus — Token Plan
+        description: Token Plan speech recognition with transcript-only output.
+        environment: >-
+          Uses the existing Token Plan credential stored by the Electron main
+          process. The provider sends audio only for speech recognition and
+          does not generate answers.
+        fields:
+          model:
+            label: ASR model
+            description: Select the Token Plan realtime transcription model.
+            placeholder: Select an ASR model
+          language:
+            label: ASR language
+            description: Choose a language hint for speech recognition, or let the service detect it automatically.
+            placeholder: Select an ASR language
+            options:
+              auto: Auto-detect
+              zh: Chinese
+              en: English
       qwen3-tts-realtime:
         title: Qwen3 realtime TTS
         description: Alibaba Cloud Model Studio realtime text-to-speech canary.

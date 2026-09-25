@@ -48,18 +48,11 @@ describe('qwen Audio Token Plan TTS settings route', () => {
     expect(source).not.toMatch(/onMounted\(.*probeQwenAudioTtsTokenPlanModels/s)
   })
 
-  it('keeps the realtime transcript probe manual, diagnostic-only, and sanitized', () => {
+  it('retires the temporary realtime transcript probe from normal settings', () => {
     const source = readFileSync(new URL('./qwen-audio-tts-token-plan.vue', import.meta.url), 'utf8')
-    expect(source).toContain('qwen-audio-realtime-plus-token-plan-transcript-probe-button')
-    expect(source).toContain('@click="runRealtimeTranscriptProbe"')
-    expect(source).toContain('probeQwenAudioRealtimePlusTokenPlanTranscriptOnly')
-    expect(source).toContain('realtimeProbeResult.responseClass')
-    expect(source).toContain('getQwenAudioRealtimePlusTokenPlanPreflight')
-    expect(source).toContain('qwen-audio-realtime-plus-token-plan-runtime-profile')
-    expect(source).toContain('qwen-audio-realtime-plus-token-plan-runtime-credential')
-    expect(source).toContain('qwen-audio-realtime-plus-token-plan-runtime-fixture')
-    expect(source).toContain('qwen-audio-realtime-plus-token-plan-runtime-readiness')
-    expect(source).not.toMatch(/onMounted\(.*probeQwenAudioRealtimePlusTokenPlanTranscriptOnly/s)
+    expect(source).not.toContain('qwen-audio-realtime-plus-token-plan-transcript-probe-button')
+    expect(source).not.toContain('probeQwenAudioRealtimePlusTokenPlanTranscriptOnly')
+    expect(source).not.toContain('getQwenAudioRealtimePlusTokenPlanPreflight')
     expect(source).not.toMatch(/qwen-audio-asr-token-plan-capability-probe|qwen-audio-3\.0-asr-flash|TOKEN_PLAN_ASR|Authorization\s*:/)
   })
 

@@ -12,6 +12,7 @@
 | Token Plan native WS TTS | PASS | `PROBE_PROVEN` + `REAL_RUNTIME_PROVEN` |
 | Token Plan real audible runtime | PASS | `REAL_RUNTIME_PROVEN` |
 | Token Plan real LLM→TTS overlap | PASS | `REAL_RUNTIME_PROVEN` |
+| Token Plan realtime-plus transcript-only ASR provider | READY FOR RUNTIME ACCEPTANCE | `SOURCE_PROVEN` + focused tests; no live call in development |
 | Token Plan model catalog UI | PASS | `SOURCE_PROVEN` + Owner UI 验收 |
 | Full ASR→LLM→TTS voice E2E | PASS | `REAL_RUNTIME_PROVEN`（bounded integrated macOS Electron run） |
 | Option-B automatic barge-in integrated runtime | PASS | `REAL_RUNTIME_PROVEN`（single + consecutive double interruption） |
@@ -80,6 +81,7 @@ Renderer 只持有 provider/model/voice 的非秘密选择和必要的 session I
 - `packages/stage-ui/src/libs/speech/qwen-audio-tts-token-plan-stage-session.ts`：Token Plan native task protocol 的 Stage adapter。
 - `packages/stage-ui/src/libs/speech/qwen-tts-pcm-playback.ts`：共享的 raw PCM16LE decoder、`AudioBuffer` 创建和调度器。
 - `apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime/`：PAYG realtime ASR main service/protocol。
+- `apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime-token-plan/`：Token Plan realtime-plus transcript-only ASR main service。
 - `apps/stage-tamagotchi/src/main/services/airi/qwen-tts-realtime/`：PAYG Qwen3 realtime TTS main service/protocol。
 - `apps/stage-tamagotchi/src/main/services/airi/qwen-audio-tts-token-plan/`：Token Plan TTS main service/protocol。
 - `packages/stage-ui/src/components/scenes/Stage.vue`：Stage 入口、LLM token hooks、speech state、audio destination 和 lifecycle cancellation。
@@ -92,6 +94,7 @@ Renderer 只持有 provider/model/voice 的非秘密选择和必要的 session I
 | --- | --- | --- | --- | --- | --- |
 | ASR | Qwen PAYG | `qwen-audio-3.0-asr-flash-streaming` | N/A | `DASHSCOPE_API_KEY` + `DASHSCOPE_WORKSPACE_ID` + `DASHSCOPE_REGION` | true realtime partial/final：YES |
 | ASR | Token Plan Personal | `qwen-audio-3.0-asr-flash` | N/A | `TOKEN_PLAN_API_KEY` | 当前矩阵未提供等价的 live streaming replacement；`OPEN` |
+| ASR | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | N/A | `TOKEN_PLAN_API_KEY` | AIRI transcript-only provider path：SOURCE_PROVEN；Owner microphone runtime：PENDING |
 | TTS | Qwen PAYG | `qwen3-tts-flash-realtime` | `Cherry` | PAYG route | native realtime WS；LLM→TTS overlap：PASS |
 | TTS | Token Plan Personal | `qwen-audio-3.0-tts-plus` | AIRI 当前 canary：`longanlingxin` | `TOKEN_PLAN_API_KEY` | native WS runtime：PASS |
 | Speech-to-speech | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | 由服务能力决定 | Token Plan route | protocol matrix：支持 AOQ/WebRTC/WebSocket；作为 end-to-end realtime speech conversation；AIRI custom-app API policy：`NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES`；model-specific entitlement 仍未证明 |
@@ -137,7 +140,7 @@ Token Plan TTS 的配置入口现在是正常设置页，而不是只读的 cana
 
 用户选择保存 canonical voice ID，不保存本地化显示名。provider 初始化、模型目录刷新和应用重启只在选择缺失或与当前模型不兼容时补默认值，不再覆盖有效选择。设置页试听和 Stage 正式 TTS 都通过 `qwenAudioTtsTokenPlanStageSession` 走同一个 Token Plan 原生 duplex WebSocket 路由；通用 REST `speech()` 占位路径仍保持 fail-closed，避免误路由。
 
-当前证据边界：Token Plan TTS 的配置、目录、请求构造和本地 stub/单元测试已由 source/test 证明；本任务不执行真实云端 Token Plan 调用，因此 `TOKEN_PLAN_TTS_LIVE_VALIDATION=NOT_RUN_OWNER_AUTH_REQUIRED`。ASR 仍保持原有边界：`qwen-audio-3.0-asr-flash` 是非 realtime HTTP 型号，`qwen-audio-3.0-asr-flash-streaming` 是独立的 realtime WebSocket 型号，`qwen-audio-3.0-realtime-plus` 属于 realtime speech-to-speech 协议。AIRI 当前 adapter 尚未完成把 Token Plan Personal ASR 接入现有实时 Hearing 链；该项仍为 `OPEN`，不以端到端语音模型替代原有角色、记忆、工具和生成模型链。
+当前证据边界：Token Plan TTS 的配置、目录、请求构造和本地 stub/单元测试已由 source/test 证明；本任务不执行真实云端 Token Plan 调用，因此 `TOKEN_PLAN_TTS_LIVE_VALIDATION=NOT_RUN_OWNER_AUTH_REQUIRED`。ASR 仍需区分三个 model ID：`qwen-audio-3.0-asr-flash` 是非 realtime HTTP 型号，`qwen-audio-3.0-asr-flash-streaming` 是 PAYG/workspace realtime WebSocket 型号，`qwen-audio-3.0-realtime-plus` 现在已有 AIRI transcript-only Token Plan provider source path。后者的 Owner microphone runtime acceptance 仍为 `OPEN`，不以端到端语音模型替代原有角色、记忆、工具和生成模型链。
 
 ## 5. Qwen Realtime ASR Implementation
 
@@ -166,6 +169,18 @@ Singapore: wss://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/infere
 Renderer 通过 typed Eventa IPC 请求 session、发送 PCM、结束任务；main 持有 authenticated WebSocket。partial/final 经过 main → renderer SSE/fullStream bridge 进入 Hearing pipeline。Renderer 不能直接持有 Qwen credential 或 main socket。`SOURCE_PROVEN`。
 
 Hearing 侧的 `consumeRealtimeTranscriptionResult` 把 `transcript.text.snapshot` 当作完整 snapshot 替换当前 partial，而不是把每次 snapshot 当 delta 追加。sentence-final 只在对应的 final/sentence lifecycle 处提交一次。`StreamingTranscriptionConsumers` 按 `consumerId` fan-out 给 Hearing Playground 和 Stage voice input。`SOURCE_PROVEN`。
+
+### Token Plan realtime-plus transcript-only ASR（2026-09-25）
+
+Token Plan 的正式 AIRI provider 使用 `qwen-audio-3.0-realtime-plus` 的 native WebSocket transcript-only seam。每个 VAD utterance 建立一个 bounded session；renderer 只通过 typed Eventa IPC 发送 PCM16 little-endian、mono、16 kHz 音频和 session lifecycle，Electron main 复用现有 Token Plan secure credential authority 后连接：
+
+```text
+wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-audio-3.0-realtime-plus
+```
+
+main 侧只发送 `session.update`、`input_audio_buffer.append` 和一次 `input_audio_buffer.commit`，不发送 `response.create`，也不把 vendor assistant output、音频、工具或历史写入 AIRI。commit acknowledgement、user item correlation、transcription delta/stash 和 completed transcript 均在 main 侧校验后，以 bounded transcript snapshot 送入现有 `consumeRealtimeTranscriptionResult`，再沿 AIRI 原有 voice-input/chat chain 处理。空结果、失败、取消、过期 session 和 provider 切换均 fail-closed，不 retry、不切换 PAYG/Workspace。
+
+该 provider 已加入正常 Hearing provider selection，使用已有 Token Plan credential，不创建第二套 credential store。临时 capability diagnostic UI 已从普通设置页移除；保留的 one-shot probe 仅供显式开发/控制器路径使用，正常启动不会自动执行。当前只完成 source/test/build 边界，未在开发任务中连接真实 provider 或麦克风；下一边界是 Owner 在 packaged candidate 中进行一次受控的真实 microphone transcript runtime acceptance。`SOURCE_PROVEN`，`REAL_RUNTIME_PROVEN` 尚未成立。
 
 ## 6. ASR Debugging Lessons
 

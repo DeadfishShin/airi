@@ -44,6 +44,7 @@ import {
   runTokenPlanRealtimeTranscriptProbe,
   TOKEN_PLAN_REALTIME_TRANSCRIPT_PROBE_DAILY_PROFILE,
 } from './services/airi/qwen-audio-realtime-plus-token-plan-transcript-probe/one-shot-runner'
+import { setupQwenAudioRealtimeTokenPlanAsr } from './services/airi/qwen-audio-realtime-token-plan'
 import { setupQwenAudioTtsTokenPlan } from './services/airi/qwen-audio-tts-token-plan'
 import { setupQwenAudioTtsTokenPlanCredentials } from './services/airi/qwen-audio-tts-token-plan-credentials'
 import { setupQwenAudioTtsTokenPlanModelsProbe } from './services/airi/qwen-audio-tts-token-plan-models-probe'
@@ -296,6 +297,14 @@ app.whenReady().then(async () => {
     }),
   })
 
+  const qwenAudioRealtimeTokenPlanAsr = injeca.provide('modules:qwen-audio-realtime-token-plan-asr', {
+    dependsOn: { lifecycle, qwenAudioTtsTokenPlanCredentials },
+    build: ({ dependsOn }) => setupQwenAudioRealtimeTokenPlanAsr({
+      lifecycle: dependsOn.lifecycle,
+      credentialStore: dependsOn.qwenAudioTtsTokenPlanCredentials,
+    }),
+  })
+
   const qwenAudioRealtimePlusTokenPlanProbe = injeca.provide('modules:qwen-audio-realtime-plus-token-plan-probe', {
     dependsOn: { lifecycle, qwenAudioTtsTokenPlanCredentials },
     build: ({ dependsOn }) => setupQwenAudioRealtimePlusTokenPlanProbe({
@@ -430,7 +439,7 @@ app.whenReady().then(async () => {
   }
 
   injeca.invoke({
-    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioRealtimePlusTokenPlanProbe, qwenAudioTtsTokenPlan, qwenAudioTtsTokenPlanModelsProbe, qwen3TtsRealtime, realtimeVoiceE2eTelemetry, deepSeekCredentials },
+    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioRealtimeTokenPlanAsr, qwenAudioRealtimePlusTokenPlanProbe, qwenAudioTtsTokenPlan, qwenAudioTtsTokenPlanModelsProbe, qwen3TtsRealtime, realtimeVoiceE2eTelemetry, deepSeekCredentials },
     callback: async (deps) => {
       const { context } = createContext(ipcMain)
       await setupArtistryBridge({

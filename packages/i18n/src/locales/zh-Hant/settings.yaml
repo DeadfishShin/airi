@@ -1057,6 +1057,24 @@ pages:
       app-local-audio-transcription:
         title: 應用程式內（本機）
         description: https://github.com/moeru-ai/xsai-transformers
+      qwen-audio-realtime-token-plan-transcription:
+        title: Qwen Audio 3.0 Realtime Plus — Token Plan
+        description: Token Plan 語音辨識，僅輸出轉錄文字。
+        environment: >-
+          使用 Electron 主程序中已儲存的 Token Plan 憑據。此服務來源只傳送音訊用於語音辨識，不會生成回答。
+        fields:
+          model:
+            label: ASR 模型
+            description: 選擇 Token Plan 即時轉錄模型。
+            placeholder: 選擇 ASR 模型
+          language:
+            label: ASR 語言
+            description: 選擇語音辨識的語言提示，或讓服務自動偵測。
+            placeholder: 選擇 ASR 語言
+            options:
+              auto: 自動偵測
+              zh: 中文
+              en: 英文
       app-local-audio-speech:
         title: 應用程式內（本機）
         description: https://github.com/moeru-ai/xsai-transformers

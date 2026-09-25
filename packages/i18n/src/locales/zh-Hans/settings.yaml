@@ -1142,6 +1142,24 @@ pages:
             label: 语言区域
             description: 使用 Apple 语音识别支持的完整语言区域代码，例如 en-US 或 zh-CN。
             placeholder: zh-CN
+      qwen-audio-realtime-token-plan-transcription:
+        title: Qwen Audio 3.0 Realtime Plus — Token Plan
+        description: Token Plan 语音识别，仅输出转写文本。
+        environment: >-
+          使用 Electron 主进程中已保存的 Token Plan 凭据。此服务来源只发送音频用于语音识别，不会生成回答。
+        fields:
+          model:
+            label: ASR 模型
+            description: 选择 Token Plan 实时转写模型。
+            placeholder: 选择 ASR 模型
+          language:
+            label: ASR 语言
+            description: 选择语音识别的语言提示，或让服务自动检测。
+            placeholder: 选择 ASR 语言
+            options:
+              auto: 自动检测
+              zh: 中文
+              en: 英文
       app-local-audio-transcription:
         title: 应用内（本地）
         description: https://github.com/moeru-ai/xsai-transformers
