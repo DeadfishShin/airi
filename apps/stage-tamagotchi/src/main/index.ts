@@ -39,6 +39,11 @@ import { setupMcpStdioManager } from './services/airi/mcp-servers'
 import { setupExtensionHost } from './services/airi/plugins'
 import { setupQwenAudioRealtimeAsr } from './services/airi/qwen-audio-realtime'
 import { setupQwenAudioRealtimePlusTokenPlanProbe } from './services/airi/qwen-audio-realtime-plus-token-plan-transcript-probe'
+import {
+  resolveTokenPlanRealtimeTranscriptProbeMode,
+  runTokenPlanRealtimeTranscriptProbe,
+  TOKEN_PLAN_REALTIME_TRANSCRIPT_PROBE_DAILY_PROFILE,
+} from './services/airi/qwen-audio-realtime-plus-token-plan-transcript-probe/one-shot-runner'
 import { setupQwenAudioTtsTokenPlan } from './services/airi/qwen-audio-tts-token-plan'
 import { setupQwenAudioTtsTokenPlanCredentials } from './services/airi/qwen-audio-tts-token-plan-credentials'
 import { setupQwenAudioTtsTokenPlanModelsProbe } from './services/airi/qwen-audio-tts-token-plan-models-probe'
@@ -89,7 +94,8 @@ setupDebugger()
 
 const log = useLogg('main').useGlobalConfig()
 
-const appUserDataPath = env.APP_USER_DATA_PATH?.trim()
+const tokenPlanRealtimeTranscriptProbeMode = resolveTokenPlanRealtimeTranscriptProbeMode(process.argv)
+const appUserDataPath = env.APP_USER_DATA_PATH?.trim() || (tokenPlanRealtimeTranscriptProbeMode ? TOKEN_PLAN_REALTIME_TRANSCRIPT_PROBE_DAILY_PROFILE : undefined)
 if (appUserDataPath) {
   app.setPath('userData', appUserDataPath)
 }
@@ -178,6 +184,37 @@ app.whenReady().then(async () => {
     // The renderer is still hosted by this production Electron main entry.
     stripLocalDuplexDiagnosticCredentials(env)
     await setupLocalDuplexDiagnosticWindow({ mode: localDuplexDiagnosticMode })
+    return
+  }
+
+  if (tokenPlanRealtimeTranscriptProbeMode) {
+    const credentialStore = setupQwenAudioTtsTokenPlanCredentials()
+    const probe = setupQwenAudioRealtimePlusTokenPlanProbe({ credentialStore })
+    try {
+      const run = await runTokenPlanRealtimeTranscriptProbe({
+        mode: tokenPlanRealtimeTranscriptProbeMode,
+        service: probe,
+      })
+      log.log(JSON.stringify({
+        event: 'token-plan-realtime-transcript-probe-complete',
+        artifactPath: run.artifactPath,
+        finalState: run.artifact.finalState,
+        exitCode: run.exitCode,
+      }))
+      await probe.dispose()
+      await credentialStore.dispose()
+      if (run.exitCode !== 0)
+        process.exitCode = run.exitCode
+    }
+    catch (error) {
+      await probe.dispose()
+      await credentialStore.dispose()
+      console.error(error)
+      process.exitCode = 3
+    }
+    finally {
+      app.quit()
+    }
     return
   }
 
