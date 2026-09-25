@@ -69,6 +69,59 @@ export function disableLive2DSdkBreath(internalModel: { breath?: unknown }) {
   delete internalModel.breath
 }
 
+/**
+ * Releases a transient motion by restoring Cubism's authored parameter
+ * defaults. This is intentionally not a zeroing pass: model defaults are
+ * model-owned and may be non-zero. Later AIRI owners (expression, blink,
+ * focus, lip sync, breath, and manual controls) can then apply their values
+ * in the normal final-plugin stages.
+ */
+export function restoreLive2DModelParameterDefaults(model: {
+  getModel?: () => {
+    parameters?: {
+      count?: unknown
+      ids?: { length: number, [index: number]: unknown }
+      defaultValues?: { length: number, [index: number]: unknown }
+    }
+  } | undefined
+  setParameterValueById: (id: string, value: number) => void
+}): number {
+  let parameters: {
+    count?: unknown
+    ids?: { length: number, [index: number]: unknown }
+    defaultValues?: { length: number, [index: number]: unknown }
+  } | undefined
+  try {
+    parameters = model.getModel?.()?.parameters
+  }
+  catch {
+    return 0
+  }
+
+  if (!parameters?.ids || !parameters.defaultValues)
+    return 0
+
+  const count = typeof parameters.count === 'number' && Number.isSafeInteger(parameters.count)
+    ? Math.min(parameters.count, parameters.ids.length, parameters.defaultValues.length)
+    : Math.min(parameters.ids.length, parameters.defaultValues.length)
+  let restored = 0
+  for (let index = 0; index < count; index++) {
+    const id = parameters.ids[index]
+    const value = parameters.defaultValues[index]
+    if (typeof id !== 'string' || !id || typeof value !== 'number' || !Number.isFinite(value))
+      continue
+
+    try {
+      model.setParameterValueById(id, value)
+      restored++
+    }
+    catch {
+      // A malformed/removed parameter must not stop release of other defaults.
+    }
+  }
+  return restored
+}
+
 export function isLive2DIdleMotion(options: {
   currentGroup?: string
   currentIndex?: number

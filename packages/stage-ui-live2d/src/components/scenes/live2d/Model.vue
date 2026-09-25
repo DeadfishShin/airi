@@ -20,6 +20,7 @@ import {
   createBeatSyncController,
   createLive2DMotionSpring,
   disableLive2DSdkBreath,
+  restoreLive2DModelParameterDefaults,
   useExpressionController,
   useLive2DIdleEyeFocus,
   useLive2DMotionManagerUpdate,
@@ -38,11 +39,12 @@ import {
   acquireLive2DSemanticMotionLoopLease,
   bindLive2DFocusParameterTargets,
   createLive2DCompatibilityProfile,
+  resolveCompletedSemanticMotionHandoff,
   resolveLive2DMotionRequest,
-  shouldHandoffCompletedSemanticMotionToIdle,
   shouldRestartResolvedIdleMotionOnFinish,
 } from '../../../utils/live2d-compatibility'
 import { createLive2DLoadOwnershipGuard, finalizeLive2DLoadState, shouldEmitLive2DLoadError } from '../../../utils/live2d-load-ownership'
+import { clearSelectedLive2DMotion, readSelectedLive2DMotion } from '../../../utils/live2d-runtime-motion'
 
 const props = withDefaults(defineProps<{
   modelSrc?: string
@@ -229,9 +231,11 @@ interface ActiveSemanticMotion {
 let semanticMotionToken = 0
 let activeSemanticMotion: ActiveSemanticMotion | undefined
 let pendingSemanticMotion: Pick<ActiveSemanticMotion, 'token' | 'group' | 'index'> | undefined
+let suppressCanonicalIdleAfterSemanticCompletion = false
 
 function invalidateActiveSemanticMotion() {
   semanticMotionToken += 1
+  suppressCanonicalIdleAfterSemanticCompletion = false
   activeSemanticMotion?.loopLease.restore()
   activeSemanticMotion = undefined
   pendingSemanticMotion = undefined
@@ -418,30 +422,46 @@ async function performModelLoad(request: Live2DLoadRequest) {
       })) || []))
       .filter(Boolean)
 
-    // Check if user has selected a runtime motion to play as idle
-    const selectedMotionGroup = localStorage.getItem('selected-runtime-motion-group')
-    const selectedMotionIndex = localStorage.getItem('selected-runtime-motion-index')
+    // A disabled idle setting is authoritative. Legacy profiles may still
+    // contain the old group/index keys; clear them before they can regain
+    // runtime authority. Invalid model-scoped selections fail closed.
+    const persistedRuntimeMotion = readSelectedLive2DMotion()
+    let selectedRuntimeMotion = persistedRuntimeMotion.motion
+    if (!live2dIdleAnimationEnabled.value || persistedRuntimeMotion.invalid) {
+      clearSelectedLive2DMotion()
+      selectedRuntimeMotion = undefined
+    }
+    else if (selectedRuntimeMotion) {
+      const groupIndex = (motionManager.groups as Record<string, any>)[selectedRuntimeMotion.group]
+      const motion = groupIndex === undefined
+        ? undefined
+        : motionManager.motionGroups[groupIndex]?.[selectedRuntimeMotion.index]
+      if (!motion) {
+        clearSelectedLive2DMotion()
+        selectedRuntimeMotion = undefined
+      }
+    }
 
     // Configure the selected motion to loop
-    if (selectedMotionGroup !== null && selectedMotionIndex) {
-      const groupIndex = (motionManager.groups as Record<string, any>)[selectedMotionGroup]
+    if (selectedRuntimeMotion) {
+      const groupIndex = (motionManager.groups as Record<string, any>)[selectedRuntimeMotion.group]
       if (groupIndex !== undefined && motionManager.motionGroups[groupIndex]) {
-        const motionIndex = Number.parseInt(selectedMotionIndex)
+        const motionIndex = selectedRuntimeMotion.index
         const motion = motionManager.motionGroups[groupIndex][motionIndex]
         if (motion && motion._looper) {
           // Force the motion to loop
           motion._looper.loopDuration = 0 // 0 means infinite loop
-          console.info('Configured motion to loop infinitely:', selectedMotionGroup, motionIndex)
+          console.info('Configured motion to loop infinitely:', selectedRuntimeMotion.group, motionIndex)
         }
       }
     }
 
-    if (selectedMotionGroup !== null && selectedMotionIndex && live2dIdleAnimationEnabled.value) {
+    if (selectedRuntimeMotion && live2dIdleAnimationEnabled.value) {
       setTimeout(() => {
-        console.info('Playing selected runtime motion:', selectedMotionGroup, selectedMotionIndex)
+        console.info('Playing selected runtime motion:', selectedRuntimeMotion.group, selectedRuntimeMotion.index)
         currentMotion.value = {
-          group: selectedMotionGroup,
-          index: Number.parseInt(selectedMotionIndex),
+          group: selectedRuntimeMotion.group,
+          index: selectedRuntimeMotion.index,
         }
       }, 300)
     }
@@ -452,7 +472,7 @@ async function performModelLoad(request: Live2DLoadRequest) {
       && idleMotion.group !== motionManager.groups.idle
       ? idleMotion
       : undefined
-    if (idleMotion && idleMotion.confidence === 'high' && selectedMotionGroup === null && live2dIdleAnimationEnabled.value) {
+    if (idleMotion && idleMotion.confidence === 'high' && !selectedRuntimeMotion && live2dIdleAnimationEnabled.value) {
       setTimeout(() => {
         currentMotion.value = { group: idleMotion.group, index: idleMotion.index }
       }, 300)
@@ -519,7 +539,18 @@ async function performModelLoad(request: Live2DLoadRequest) {
 
     const hookedUpdate = motionManager.update as (model: PixiLive2DInternalModel['coreModel'], now: number) => boolean
     motionManager.update = function (model: PixiLive2DInternalModel['coreModel'], now: number) {
-      return motionManagerUpdate.hookUpdate(model, now, hookedUpdate)
+      const result = motionManagerUpdate.hookUpdate(model, now, hookedUpdate)
+
+      // Cubism can schedule its canonical Idle motion at the end of the same
+      // update that emits motionFinish. A semantic action with idle disabled
+      // explicitly suppresses that fallback for this frame only.
+      if (suppressCanonicalIdleAfterSemanticCompletion) {
+        suppressCanonicalIdleAfterSemanticCompletion = false
+        if (motionManager.state.currentGroup === motionManager.groups.idle)
+          motionManager.stopAllMotions()
+      }
+
+      return result
     }
 
     motionManager.on('motionStart', (group, index) => {
@@ -530,8 +561,7 @@ async function performModelLoad(request: Live2DLoadRequest) {
     // or a finite, non-standard compatibility idle. Every handoff is made by
     // exact group+index; the whole mixed source group is never randomized.
     motionManager.on('motionFinish', () => {
-      const selectedMotionGroup = localStorage.getItem('selected-runtime-motion-group')
-      const selectedMotionIndex = localStorage.getItem('selected-runtime-motion-index')
+      const selectedMotion = readSelectedLive2DMotion().motion
       const finishedGroup = motionManager.state.currentGroup
       const finishedIndex = motionManager.state.currentIndex
 
@@ -558,19 +588,21 @@ async function performModelLoad(request: Live2DLoadRequest) {
           })
         }
 
-        if (selectedMotionGroup !== null && selectedMotionIndex) {
-          queueExactMotion(selectedMotionGroup, Number.parseInt(selectedMotionIndex))
-          return
-        }
-
-        if (shouldHandoffCompletedSemanticMotionToIdle({
+        const handoff = resolveCompletedSemanticMotionHandoff({
           enabled: live2dIdleAnimationEnabled.value,
-          manualMotionSelected: selectedMotionGroup !== null,
+          selectedMotion,
+          compatibilityIdle: resolvedNonStandardIdle,
           active: completedSemantic,
           finishedGroup,
           finishedIndex,
-        }) && resolvedNonStandardIdle) {
-          queueExactMotion(resolvedNonStandardIdle.group, resolvedNonStandardIdle.index)
+        })
+
+        if (handoff.type === 'selected' || handoff.type === 'compatibility') {
+          queueExactMotion(handoff.group, handoff.index)
+        }
+        else if (handoff.type === 'neutral') {
+          restoreLive2DModelParameterDefaults(coreModel)
+          suppressCanonicalIdleAfterSemanticCompletion = true
         }
         return
       }
@@ -582,14 +614,14 @@ async function performModelLoad(request: Live2DLoadRequest) {
       if (pendingSemanticMotion)
         return
 
-      if (selectedMotionGroup !== null && selectedMotionIndex && live2dIdleAnimationEnabled.value) {
+      if (selectedMotion && live2dIdleAnimationEnabled.value) {
         // Restart the selected runtime motion immediately for seamless looping
-        console.info('Motion finished, restarting runtime motion:', selectedMotionGroup, selectedMotionIndex)
+        console.info('Motion finished, restarting runtime motion:', selectedMotion.group, selectedMotion.index)
         // Use requestAnimationFrame to restart on the next frame for smooth transition
         requestAnimationFrame(() => {
           currentMotion.value = {
-            group: selectedMotionGroup,
-            index: Number.parseInt(selectedMotionIndex),
+            group: selectedMotion.group,
+            index: selectedMotion.index,
           }
         })
         return
@@ -600,7 +632,7 @@ async function performModelLoad(request: Live2DLoadRequest) {
 
       const shouldRestartIdle = shouldRestartResolvedIdleMotionOnFinish({
         enabled: live2dIdleAnimationEnabled.value,
-        manualMotionSelected: selectedMotionGroup !== null,
+        manualMotionSelected: selectedMotion !== undefined,
         canonicalIdleGroup: motionManager.groups.idle,
         candidate: resolvedNonStandardIdle,
         finishedGroup,
@@ -612,7 +644,7 @@ async function performModelLoad(request: Live2DLoadRequest) {
       requestAnimationFrame(() => {
         if (!live2dIdleAnimationEnabled.value)
           return
-        if (localStorage.getItem('selected-runtime-motion-group') !== null)
+        if (readSelectedLive2DMotion().motion)
           return
         const activeGroup = motionManager.state.currentGroup
         if (activeGroup && (activeGroup !== resolvedNonStandardIdle.group || motionManager.state.currentIndex !== resolvedNonStandardIdle.index))

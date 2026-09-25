@@ -663,6 +663,48 @@ export function shouldHandoffCompletedSemanticMotionToIdle(options: {
   )
 }
 
+export type CompletedSemanticMotionHandoff
+  = | { type: 'stale' }
+    | { type: 'selected', group: string, index: number }
+    | { type: 'compatibility', group: string, index: number }
+    | { type: 'canonical' }
+    | { type: 'neutral' }
+
+/**
+ * Decide who owns the model after a semantic motion finishes. This policy is
+ * deliberately pure so an old SDK finish event cannot accidentally restore a
+ * stale idle selection or neutralize a newer semantic action.
+ */
+export function resolveCompletedSemanticMotionHandoff(options: {
+  enabled: boolean
+  selectedMotion?: Pick<Live2DMotionCandidate, 'group' | 'index'>
+  compatibilityIdle?: Pick<Live2DMotionCandidate, 'group' | 'index'>
+  active?: Pick<Live2DMotionCandidate, 'group' | 'index'>
+  finishedGroup?: string
+  finishedIndex?: number
+}): CompletedSemanticMotionHandoff {
+  const { enabled, selectedMotion, compatibilityIdle, active, finishedGroup, finishedIndex } = options
+
+  if (!active || active.group !== finishedGroup || active.index !== finishedIndex)
+    return { type: 'stale' }
+
+  if (!enabled)
+    return { type: 'neutral' }
+
+  if (selectedMotion)
+    return { type: 'selected', group: selectedMotion.group, index: selectedMotion.index }
+
+  if (compatibilityIdle) {
+    return {
+      type: 'compatibility',
+      group: compatibilityIdle.group,
+      index: compatibilityIdle.index,
+    }
+  }
+
+  return { type: 'canonical' }
+}
+
 export function shouldRestartResolvedIdleMotionOnFinish(options: {
   enabled: boolean
   manualMotionSelected: boolean

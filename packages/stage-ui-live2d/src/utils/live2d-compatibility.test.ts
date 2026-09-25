@@ -7,6 +7,7 @@ import {
   createLive2DCompatibilityProfile,
   discoverLive2DParameterIds,
   migrateLegacyMotionOverrides,
+  resolveCompletedSemanticMotionHandoff,
   resolveLive2DMotionRequest,
   resolveModelMotionOverrides,
   setModelMotionOverride,
@@ -485,5 +486,54 @@ describe('live2d compatibility resolver', () => {
       finishedGroup: '',
       finishedIndex: 14,
     })).toBe(false)
+  })
+
+  it('returns an exact selected idle handoff, including index zero', () => {
+    expect(resolveCompletedSemanticMotionHandoff({
+      enabled: true,
+      selectedMotion: { group: '', index: 0 },
+      active: { group: 'Happy', index: 1 },
+      finishedGroup: 'Happy',
+      finishedIndex: 1,
+    })).toEqual({ type: 'selected', group: '', index: 0 })
+  })
+
+  it('returns compatibility idle only when no manual idle is selected', () => {
+    expect(resolveCompletedSemanticMotionHandoff({
+      enabled: true,
+      compatibilityIdle: { group: '', index: 14 },
+      active: { group: 'Happy', index: 1 },
+      finishedGroup: 'Happy',
+      finishedIndex: 1,
+    })).toEqual({ type: 'compatibility', group: '', index: 14 })
+  })
+
+  it('returns neutral when idle is disabled, even if stale selection exists', () => {
+    expect(resolveCompletedSemanticMotionHandoff({
+      enabled: false,
+      selectedMotion: { group: 'Idle', index: 2 },
+      compatibilityIdle: { group: '', index: 14 },
+      active: { group: 'Happy', index: 1 },
+      finishedGroup: 'Happy',
+      finishedIndex: 1,
+    })).toEqual({ type: 'neutral' })
+  })
+
+  it('returns canonical when enabled and the SDK owns canonical idle', () => {
+    expect(resolveCompletedSemanticMotionHandoff({
+      enabled: true,
+      active: { group: 'Happy', index: 1 },
+      finishedGroup: 'Happy',
+      finishedIndex: 1,
+    })).toEqual({ type: 'canonical' })
+  })
+
+  it('returns stale without neutralizing a newer semantic owner', () => {
+    expect(resolveCompletedSemanticMotionHandoff({
+      enabled: false,
+      active: { group: 'Happy', index: 1 },
+      finishedGroup: 'Angry',
+      finishedIndex: 2,
+    })).toEqual({ type: 'stale' })
   })
 })

@@ -4,11 +4,19 @@ import type { SelectTabOption } from '@proj-airi/ui'
 
 import type { ModelSettingsRuntimeSnapshot } from './runtime'
 
-import { defaultModelParameters, useExpressionStore, useLive2dParams, useSettingsLive2d } from '@proj-airi/stage-ui-live2d'
+import {
+  clearSelectedLive2DMotion,
+  defaultModelParameters,
+  readSelectedLive2DMotion,
+  useExpressionStore,
+  useLive2dParams,
+  useSettingsLive2d,
+  writeSelectedLive2DMotion,
+} from '@proj-airi/stage-ui-live2d'
 import { OPFSCache } from '@proj-airi/stage-ui-live2d/utils/opfs-loader'
 import { Button, Checkbox, FieldCheckbox, FieldCombobox, FieldRange, SelectTab } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import MagicMotionSettings from '../../../../features/motions/live2d/components/magic-settings.vue'
@@ -158,20 +166,44 @@ watch(() => live2d.availableMotions, (motions) => {
   console.info('Available motions:', runtimeMotions.value)
 }, { immediate: true })
 
+// The disabled option is a real runtime authority, not just a UI toggle.
+// Normalize legacy profiles so stale group/index keys cannot resurrect an old
+// idle motion after reload.
+watch([runtimeMotions, live2dIdleAnimationEnabled], ([motions, enabled]) => {
+  if (!enabled) {
+    clearSelectedLive2DMotion()
+    selectedRuntimeMotion.value = ''
+    return
+  }
+
+  const persisted = readSelectedLive2DMotion()
+  if (!persisted.motion) {
+    selectedRuntimeMotion.value = ''
+    if (persisted.invalid && motions.length > 0) {
+      clearSelectedLive2DMotion()
+      live2dIdleAnimationEnabled.value = false
+    }
+    return
+  }
+
+  const matchingMotion = motions.find(motion => motion.displayPath === persisted.motion?.path
+    && motion.group === persisted.motion?.group
+    && motion.index === persisted.motion?.index)
+  if (!matchingMotion && motions.length > 0) {
+    clearSelectedLive2DMotion()
+    selectedRuntimeMotion.value = ''
+    live2dIdleAnimationEnabled.value = false
+    return
+  }
+
+  selectedRuntimeMotion.value = matchingMotion?.displayPath ?? persisted.motion.path
+}, { immediate: true })
+
 const llmModeOptions = computed(() => [
   { value: 'none', label: t('settings.live2d.expressions.expose-to-llm-options.none') },
   { value: 'all', label: t('settings.live2d.expressions.expose-to-llm-options.all') },
   { value: 'custom', label: t('settings.live2d.expressions.expose-to-llm-options.custom') },
 ])
-
-// Get available runtime motions from the model
-onMounted(() => {
-  // Restore selected motion
-  const savedPath = localStorage.getItem('selected-runtime-motion')
-  if (savedPath) {
-    selectedRuntimeMotion.value = savedPath
-  }
-})
 
 // Function to reset all parameters to default values
 function resetToDefaultParameters() {
@@ -197,13 +229,17 @@ function handleMotionSelect(selectedMotionPath: string | number | undefined) {
 
   const motion = runtimeMotions.value.find(item => item.displayPath === selectedMotionPath)
   if (!motion) {
+    clearSelectedLive2DMotion()
+    selectedRuntimeMotion.value = ''
     live2dIdleAnimationEnabled.value = false
     return
   }
 
-  localStorage.setItem('selected-runtime-motion', motion.displayPath)
-  localStorage.setItem('selected-runtime-motion-group', motion.group)
-  localStorage.setItem('selected-runtime-motion-index', motion.index.toString())
+  writeSelectedLive2DMotion(localStorage, {
+    path: motion.displayPath,
+    group: motion.group,
+    index: motion.index,
+  })
 
   // Enable idle animation
   live2dIdleAnimationEnabled.value = true
