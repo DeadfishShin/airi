@@ -1564,3 +1564,8 @@ final snapshot 的正常结束流会在 complete 时结算一次。异常或 abo
 该 final contract 再进入既有 `streamingVoiceTurnEndpoint`，由 endpoint decision 调用
 `sendVoiceInputTextToChat` 和 `chatStore.send`。同一 utterance 的重复 completion、空文本、
 stop 前的 late completion 和 stale session 仍 fail closed。`SOURCE_PROVEN`。
+
+
+## 40. Android Token Plan implementation handoff
+
+The accepted macOS Token Plan implementation, runtime evidence, failure lessons, protocol examples, and Android porting constraints are consolidated under [docs/handoffs/qwen-token-plan-android-reference/README.md](../handoffs/qwen-token-plan-android-reference/README.md). The handoff is frozen against source authority `7ef071c791483aa362872e473cea676d2f248fa9` / tree `1904fbfc5e0ddf4ee9fab5fcf4dbd05fa45914c9` and is intended as an Android implementation reference rather than an Android repository-state checkpoint. Future Android agents should start from that README and the full handoff instead of reconstructing the macOS exploration history.

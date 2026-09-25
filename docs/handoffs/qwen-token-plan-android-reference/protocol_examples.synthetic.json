@@ -1,0 +1,217 @@
+{
+  "metadata": {
+    "kind": "SYNTHETIC_PROTOCOL_EXAMPLES_NOT_CAPTURED_PROVIDER_TRAFFIC",
+    "source_ref": "7ef071c791483aa362872e473cea676d2f248fa9",
+    "contains_credentials": false,
+    "contains_audio": false,
+    "notes": [
+      "Placeholders are not valid audio or credentials.",
+      "Server event order is illustrative, not a guaranteed total order.",
+      "Do not execute these examples as a live probe without the current controller task boundary."
+    ]
+  },
+  "tts": {
+    "endpoint": "wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
+    "client_events": [
+      {
+        "header": {
+          "action": "run-task",
+          "task_id": "synthetic-task-1",
+          "streaming": "duplex"
+        },
+        "payload": {
+          "task_group": "audio",
+          "task": "tts",
+          "function": "SpeechSynthesizer",
+          "model": "qwen-audio-3.0-tts-plus",
+          "parameters": {
+            "text_type": "PlainText",
+            "voice": "longanlingxin",
+            "format": "pcm",
+            "sample_rate": 24000,
+            "volume": 50,
+            "rate": 1.0,
+            "pitch": 1.0,
+            "enable_ssml": false
+          },
+          "input": {}
+        }
+      },
+      {
+        "header": {
+          "action": "continue-task",
+          "task_id": "synthetic-task-1",
+          "streaming": "duplex"
+        },
+        "payload": {
+          "input": {
+            "text": "这是合成测试文字，不来自用户历史聊天。"
+          }
+        }
+      },
+      {
+        "header": {
+          "action": "finish-task",
+          "task_id": "synthetic-task-1",
+          "streaming": "duplex"
+        },
+        "payload": {
+          "input": {}
+        }
+      }
+    ],
+    "server_control_examples": [
+      {
+        "header": {
+          "event": "task-started",
+          "task_id": "synthetic-task-1"
+        }
+      },
+      {
+        "header": {
+          "event": "result-generated",
+          "task_id": "synthetic-task-1"
+        },
+        "payload": {
+          "output": {
+            "type": "sentence-synthesis"
+          }
+        }
+      },
+      {
+        "header": {
+          "event": "task-finished",
+          "task_id": "synthetic-task-1"
+        }
+      }
+    ],
+    "audio_contract": {
+      "kind": "binary_frames",
+      "encoding": "PCM16_LE",
+      "channels": 1,
+      "sample_rate_hz": 24000,
+      "remote_finished_is_not_local_playback_drained": true
+    }
+  },
+  "asr": {
+    "endpoint": "wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-audio-3.0-realtime-plus",
+    "client_events": [
+      {
+        "type": "session.update",
+        "session": {
+          "modalities": [
+            "text"
+          ],
+          "input_audio_format": "pcm",
+          "turn_detection": null
+        }
+      },
+      {
+        "type": "input_audio_buffer.append",
+        "audio": "PLACEHOLDER_BASE64_RAW_PCM_NOT_EXECUTABLE"
+      },
+      {
+        "type": "input_audio_buffer.commit"
+      }
+    ],
+    "forbidden_client_event": "response.create",
+    "server_events_example_flow": [
+      {
+        "type": "session.created"
+      },
+      {
+        "type": "session.updated"
+      },
+      {
+        "type": "input_audio_buffer.committed",
+        "event_id": "synthetic-event-ack",
+        "item_id": "synthetic-item-1",
+        "previous_item_id": null
+      },
+      {
+        "type": "conversation.item.created",
+        "previous_item_id": null,
+        "item": {
+          "id": "synthetic-item-1",
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_audio"
+            }
+          ]
+        }
+      },
+      {
+        "type": "conversation.item.input_audio_transcription.delta",
+        "item_id": "synthetic-item-1",
+        "content_index": 0,
+        "text": "你好",
+        "stash": "，测试"
+      },
+      {
+        "type": "conversation.item.input_audio_transcription.completed",
+        "item_id": "synthetic-item-1",
+        "content_index": 0,
+        "transcript": "你好，测试。"
+      }
+    ],
+    "failed_example": {
+      "type": "conversation.item.input_audio_transcription.failed",
+      "item_id": "synthetic-item-1",
+      "content_index": 0,
+      "error": {
+        "type": "synthetic_error",
+        "code": "synthetic_code",
+        "message": "Synthetic test failure."
+      }
+    },
+    "unexpected_vendor_output_examples": [
+      {
+        "type": "response.created"
+      },
+      {
+        "type": "response.audio.delta",
+        "delta": "PLACEHOLDER_NOT_REAL_AUDIO"
+      },
+      {
+        "type": "conversation.item.created",
+        "item": {
+          "id": "synthetic-assistant-1",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "This must never enter the AIRI chat path."
+            }
+          ]
+        }
+      }
+    ],
+    "audio_contract": {
+      "encoding": "PCM16_LE",
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "samples_per_chunk": 512,
+      "bytes_per_full_chunk": 1024,
+      "milliseconds_per_full_chunk": 32,
+      "wav_header_sent": false
+    },
+    "application_final_example": {
+      "type": "transcript.text.snapshot",
+      "text": "你好，测试。",
+      "isFinal": true,
+      "locale": "auto",
+      "startMilliseconds": 0,
+      "durationMilliseconds": 0
+    },
+    "acceptance_invariants": [
+      "Only a valid final authority can complete this Token Plan utterance.",
+      "Partial updates do not directly invoke Chat.",
+      "Accepted final handoff is exactly once.",
+      "Abort before accepted final drops late/incomplete results.",
+      "No vendor response is played or injected."
+    ]
+  }
+}
