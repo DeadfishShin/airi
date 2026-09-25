@@ -1549,3 +1549,18 @@ content index 的事件会被忽略，响应生成类 vendor 事件仍 fail-clos
 音频，没有发送 `response.create`，也没有新增 Provider/ASR/TTS/LLM 调用；
 `qwen-audio-3.0-realtime-plus` 的 Token Plan entitlement 与完整 transcript 能力仍保持
 `NOT_YET_PROVEN`，须由后续独立的 Owner-authorized runtime probe 决定。`SOURCE_PROVEN`。
+
+## 39. Completed transcript to chat handoff repair
+
+Owner 的真实麦克风验收证明 Token Plan realtime-plus transcript 已进入 Hearing UI，但四条
+completed transcript 均没有进入 AIRI Chat。源码追踪确认，Hearing UI 与 voice-input
+handoff 是两条独立消费者路径；前者消费每次 `transcript.text.snapshot`，后者原先只在
+stream reader 结束时结算 final snapshot。Owner 停止监听时，abort 可以先结束 reader，
+因此最终文本只更新 Hearing UI，不会调用 `sendVoiceInputTextToChat`。
+
+`createStreamingTranscriptionFinalConsumer` 现在把非 final snapshot 与 delta 只发送到
+interim update 回调。`isFinal=true` 的 snapshot 会立即结算一次 final transcript；没有
+final snapshot 的正常结束流会在 complete 时结算一次。异常或 abort 流不会结算不完整文本。
+该 final contract 再进入既有 `streamingVoiceTurnEndpoint`，由 endpoint decision 调用
+`sendVoiceInputTextToChat` 和 `chatStore.send`。同一 utterance 的重复 completion、空文本、
+stop 前的 late completion 和 stale session 仍 fail closed。`SOURCE_PROVEN`。
