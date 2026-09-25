@@ -12,6 +12,7 @@
 | Token Plan native WS TTS | PASS | `PROBE_PROVEN` + `REAL_RUNTIME_PROVEN` |
 | Token Plan real audible runtime | PASS | `REAL_RUNTIME_PROVEN` |
 | Token Plan real LLM→TTS overlap | PASS | `REAL_RUNTIME_PROVEN` |
+| Token Plan realtime-plus transcript-only ASR provider | READY FOR RUNTIME ACCEPTANCE | `SOURCE_PROVEN` + focused tests; no live call in development |
 | Token Plan model catalog UI | PASS | `SOURCE_PROVEN` + Owner UI 验收 |
 | Full ASR→LLM→TTS voice E2E | PASS | `REAL_RUNTIME_PROVEN`（bounded integrated macOS Electron run） |
 | Option-B automatic barge-in integrated runtime | PASS | `REAL_RUNTIME_PROVEN`（single + consecutive double interruption） |
@@ -80,6 +81,7 @@ Renderer 只持有 provider/model/voice 的非秘密选择和必要的 session I
 - `packages/stage-ui/src/libs/speech/qwen-audio-tts-token-plan-stage-session.ts`：Token Plan native task protocol 的 Stage adapter。
 - `packages/stage-ui/src/libs/speech/qwen-tts-pcm-playback.ts`：共享的 raw PCM16LE decoder、`AudioBuffer` 创建和调度器。
 - `apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime/`：PAYG realtime ASR main service/protocol。
+- `apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime-token-plan/`：Token Plan realtime-plus transcript-only ASR main service。
 - `apps/stage-tamagotchi/src/main/services/airi/qwen-tts-realtime/`：PAYG Qwen3 realtime TTS main service/protocol。
 - `apps/stage-tamagotchi/src/main/services/airi/qwen-audio-tts-token-plan/`：Token Plan TTS main service/protocol。
 - `packages/stage-ui/src/components/scenes/Stage.vue`：Stage 入口、LLM token hooks、speech state、audio destination 和 lifecycle cancellation。
@@ -92,16 +94,22 @@ Renderer 只持有 provider/model/voice 的非秘密选择和必要的 session I
 | --- | --- | --- | --- | --- | --- |
 | ASR | Qwen PAYG | `qwen-audio-3.0-asr-flash-streaming` | N/A | `DASHSCOPE_API_KEY` + `DASHSCOPE_WORKSPACE_ID` + `DASHSCOPE_REGION` | true realtime partial/final：YES |
 | ASR | Token Plan Personal | `qwen-audio-3.0-asr-flash` | N/A | `TOKEN_PLAN_API_KEY` | 当前矩阵未提供等价的 live streaming replacement；`OPEN` |
+| ASR | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | N/A | `TOKEN_PLAN_API_KEY` | AIRI transcript-only provider path：SOURCE_PROVEN；Owner microphone runtime：PENDING |
 | TTS | Qwen PAYG | `qwen3-tts-flash-realtime` | `Cherry` | PAYG route | native realtime WS；LLM→TTS overlap：PASS |
 | TTS | Token Plan Personal | `qwen-audio-3.0-tts-plus` | AIRI 当前 canary：`longanlingxin` | `TOKEN_PLAN_API_KEY` | native WS runtime：PASS |
-| Speech-to-speech | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | 由服务能力决定 | Token Plan route | protocol matrix：支持 AOQ/WebRTC/WebSocket；作为 end-to-end realtime speech conversation；AIRI custom-app API policy：`OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE` |
+| Speech-to-speech | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | 由服务能力决定 | Token Plan route | protocol matrix：支持 AOQ/WebRTC/WebSocket；作为 end-to-end realtime speech conversation；AIRI custom-app API policy：`NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES`；model-specific entitlement 仍未证明 |
 | Realtime transcript seam | Token Plan Personal / realtime-plus | `qwen-audio-3.0-realtime-plus` | N/A | Token Plan route | push-to-talk/manual 下可先提交音频并接收 transcript，再独立决定是否发送 `response.create`；runtime entitlement 未证明 |
 
 重要区分：`qwen-audio-3.0-asr-flash` 与 `qwen-audio-3.0-asr-flash-streaming` 不是同一个 model ID。当前官方 ASR model 文档把前者描述为非 realtime HTTP 模式，把后者描述为 realtime WebSocket 模式。[Alibaba ASR model 文档](https://help.aliyun.com/zh/model-studio/asr-model)（`OFFICIAL_DOC_SUPPORTED`）。
 
 当前 Token Plan Personal 官方 overview 列出的音频模型至少包括：`qwen-audio-3.0-tts-plus`、`qwen-audio-3.0-realtime-plus`、`qwen-audio-3.0-asr-flash`，区域为华北 2（北京）。[Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)（`OFFICIAL_DOC_SUPPORTED`）。
 
-Token Plan Personal 的当前官方 overview 与第三方工具页面明确规定：仅限兼容的 AI coding / agent tools 中的交互使用，并明确不支持自定义应用程序直接在自动化脚本或应用后端调用 API。故对 AIRI 自研应用 API 使用必须标记为 `OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE`。这不是自行作出的法律结论；AIRI 是否能被 Alibaba/provider 明确认定为允许的“agent tool”仍需 provider explicit confirmation。Owner-operated interactive AIRI canary 的 runtime 成功不能覆盖该政策边界。`OFFICIAL_DOC_SUPPORTED` + `REAL_RUNTIME_PROVEN`，但不作法律保证。
+当前 primary-source review 未发现针对 AIRI 这类自定义应用 API 使用的明确禁止条款，因此本项目不再把 `OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE` 作为已成立的官方事实或门禁。该结论不等于已证明 Token Plan 对 AIRI 的商业适用性、账号 entitlement 或本任务假设的 ASR 请求合同；这些仍需 provider/Controller 另行确认。Owner-operated runtime 成功同样不能替代这些确认。
+
+```text
+TOKEN_PLAN_CUSTOM_AIRI_POLICY = NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES
+TOKEN_PLAN_QWEN_AUDIO_ASR_MODEL_SPECIFIC_REQUEST_CONTRACT = UNPROVEN
+```
 
 ## 4. Credential / Cost Isolation Rules
 
@@ -116,6 +124,23 @@ Token Plan Personal 的当前官方 overview 与第三方工具页面明确规�
 7. 日志不得打印 `Authorization`、`Bearer` credential、raw environment、cookies、完整 request headers、request bodies、用户语音、LLM 输出文本或 PCM/base64 音频。
 
 这不是纯粹的类型设计，而是防止“用户以为消耗套餐 credits，实际却产生 PAYG 账单”的成本安全边界。`CURRENT_DESIGN_DECISION`，并由 main service 的独立 credential resolution 与 fake tests 进行 `SOURCE_PROVEN` 守护。
+
+### Token Plan TTS 设置与音色选择（2026-09-22）
+
+Token Plan TTS 的配置入口现在是正常设置页，而不是只读的 canary 展示。凭据通过 Electron main 侧的加密 secure storage 保存、替换和清除；若没有已保存值，才显式使用 `TOKEN_PLAN_API_KEY` 环境回退。该回退只属于 Token Plan，不会读取 PAYG 的 `DASHSCOPE_*` 凭据，也不会在失败时静默切换到 PAYG。UI 的“已保存”只表示凭据已保存，不表示套餐额度或云端调用已验证。
+
+`qwen-audio-3.0-tts-plus` 的官方公开目录当前包含两类音色，不能把系统音色数量误写成模型的完整音色数量：
+
+- `longanlingxin`：女性、温暖/富有同理心，普通话与英语。
+- `longanlufeng`：男性、明亮/活泼，普通话与英语。
+
+此外，Alibaba 为该模型发布了独立的基础音色 Excel 目录（当前转换为 AIRI 的轻量目录数据），本次目录快照包含 597 个基础音色条目。每个条目保留 canonical voice ID、公开名称、语言和官方表格中的场景/音质描述；试听音频文件没有打包进应用。Token Plan 页面按模型过滤并区分 `system`、`base`、`custom` 来源，保存和请求仍只使用 voice ID。
+
+目录来源：[Qwen-Audio-TTS 音色列表（Alibaba Cloud）](https://help.aliyun.com/zh/model-studio/qwen-audio-tts-voice-list) 与官方基础音色表（`qwen-audio-3.0-tts-plus-base-voices-en.xlsx`），访问/发布日期 2026-07-23。模型目录使用 [Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview) 作为公开来源。Token Plan 当前没有被文档证明支持“用 Token Plan Key 返回账号授权模型列表”的专属 API；百炼的通用模型列表接口属于业务空间端点，不能直接冒充 Token Plan 目录查询。完整系统音色目录也没有被文档证明存在可直接查询的 Token Plan API；账号自定义音色查询本次未宣称支持。故 UI 将这些状态标为官方公布目录/提供商查询受限，而不是“根据当前 Key 刚刚获取”。目录可以在未配置凭据时显示；试听和正式合成仍要求 Token Plan 凭据与实际套餐适用性，当前任务不自动执行额外收费调用。
+
+用户选择保存 canonical voice ID，不保存本地化显示名。provider 初始化、模型目录刷新和应用重启只在选择缺失或与当前模型不兼容时补默认值，不再覆盖有效选择。设置页试听和 Stage 正式 TTS 都通过 `qwenAudioTtsTokenPlanStageSession` 走同一个 Token Plan 原生 duplex WebSocket 路由；通用 REST `speech()` 占位路径仍保持 fail-closed，避免误路由。
+
+当前证据边界：Token Plan TTS 的配置、目录、请求构造和本地 stub/单元测试已由 source/test 证明；本任务不执行真实云端 Token Plan 调用，因此 `TOKEN_PLAN_TTS_LIVE_VALIDATION=NOT_RUN_OWNER_AUTH_REQUIRED`。ASR 仍需区分三个 model ID：`qwen-audio-3.0-asr-flash` 是非 realtime HTTP 型号，`qwen-audio-3.0-asr-flash-streaming` 是 PAYG/workspace realtime WebSocket 型号，`qwen-audio-3.0-realtime-plus` 现在已有 AIRI transcript-only Token Plan provider source path。后者的 Owner microphone runtime acceptance 仍为 `OPEN`，不以端到端语音模型替代原有角色、记忆、工具和生成模型链。
 
 ## 5. Qwen Realtime ASR Implementation
 
@@ -144,6 +169,18 @@ Singapore: wss://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/infere
 Renderer 通过 typed Eventa IPC 请求 session、发送 PCM、结束任务；main 持有 authenticated WebSocket。partial/final 经过 main → renderer SSE/fullStream bridge 进入 Hearing pipeline。Renderer 不能直接持有 Qwen credential 或 main socket。`SOURCE_PROVEN`。
 
 Hearing 侧的 `consumeRealtimeTranscriptionResult` 把 `transcript.text.snapshot` 当作完整 snapshot 替换当前 partial，而不是把每次 snapshot 当 delta 追加。sentence-final 只在对应的 final/sentence lifecycle 处提交一次。`StreamingTranscriptionConsumers` 按 `consumerId` fan-out 给 Hearing Playground 和 Stage voice input。`SOURCE_PROVEN`。
+
+### Token Plan realtime-plus transcript-only ASR（2026-09-25）
+
+Token Plan 的正式 AIRI provider 使用 `qwen-audio-3.0-realtime-plus` 的 native WebSocket transcript-only seam。每个 VAD utterance 建立一个 bounded session；renderer 只通过 typed Eventa IPC 发送 PCM16 little-endian、mono、16 kHz 音频和 session lifecycle，Electron main 复用现有 Token Plan secure credential authority 后连接：
+
+```text
+wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime?model=qwen-audio-3.0-realtime-plus
+```
+
+main 侧只发送 `session.update`、`input_audio_buffer.append` 和一次 `input_audio_buffer.commit`，不发送 `response.create`，也不把 vendor assistant output、音频、工具或历史写入 AIRI。commit acknowledgement、user item correlation、transcription delta/stash 和 completed transcript 均在 main 侧校验后，以 bounded transcript snapshot 送入现有 `consumeRealtimeTranscriptionResult`，再沿 AIRI 原有 voice-input/chat chain 处理。空结果、失败、取消、过期 session 和 provider 切换均 fail-closed，不 retry、不切换 PAYG/Workspace。
+
+该 provider 已加入正常 Hearing provider selection，使用已有 Token Plan credential，不创建第二套 credential store。临时 capability diagnostic UI 已从普通设置页移除；保留的 one-shot probe 仅供显式开发/控制器路径使用，正常启动不会自动执行。当前只完成 source/test/build 边界，未在开发任务中连接真实 provider 或麦克风；下一边界是 Owner 在 packaged candidate 中进行一次受控的真实 microphone transcript runtime acceptance。`SOURCE_PROVEN`，`REAL_RUNTIME_PROVEN` 尚未成立。
 
 ## 6. ASR Debugging Lessons
 
@@ -512,15 +549,16 @@ wss://token-plan.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference
 
 ### A. Token Plan Personal policy
 
-当前中国站官方公开规则不是“所有自研交互应用都未分类”，而是明确规定 Token Plan Personal 仅供个人在指定的 AI coding / agent tools 中交互使用，并明确不支持自定义应用程序直接在自动化脚本或应用后端调用 API。`more-tools` 页面进一步把工作流/自动化平台、API 测试工具和自定义应用程序列为不支持类型；FAQ 也把生产自动化、批量脚本和后台定时任务列为不允许场景。[Token Plan Personal overview](https://help.aliyun.com/zh/model-studio/token-plan-personal-overview)、[更多工具](https://help.aliyun.com/zh/model-studio/more-tools)、[Token Plan Personal FAQ](https://help.aliyun.com/zh/model-studio/token-plan-personal-faq)（`OFFICIAL_DOC_SUPPORTED`）。
+当前 primary-source review 未发现针对 AIRI custom application API 使用的明确禁止条款；这只纠正旧笔记的过强表述，并不证明任何具体模型、账号或商业场景已经获准。相关 Token Plan 文档仍需作为能力与套餐范围证据分别核对，不能由 runtime 成功倒推出政策允许。
 
-因此本项目不得再把政策状态写成简单的 `NOT_YET_CLEARED`：
+因此本项目应保留精确的不确定性，而不是把政策冲突当作既定事实：
 
 ```text
-TOKEN_PLAN_CUSTOM_AIRI_POLICY = OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE
+TOKEN_PLAN_CUSTOM_AIRI_POLICY = NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES
+TOKEN_PLAN_QWEN_AUDIO_ASR_MODEL_SPECIFIC_REQUEST_CONTRACT = UNPROVEN
 ```
 
-这不是法律意见，也不自行判断 AIRI 是否属于官方所称的“agent tool”。如果要继续把 Token Plan Personal 用于 AIRI，自研应用是否可被 provider 明确认定为允许类别必须取得 provider explicit confirmation；在确认前，正式架构决策为：
+这不是法律意见，也不自行判断 AIRI 的商业适用性。当前 ASR probe 仍必须等待 Controller 的一次性授权，并且只能把返回结果作为 `qwen-audio-3.0-asr-flash` 请求合同的能力证据；在合同未证明前，正式 production ASR 路径保持：
 
 ```text
 HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS
@@ -621,7 +659,7 @@ HOLD_REAL_TOKEN_PLAN_CUSTOM_APP_CALLS
 | realtime-plus 的 AOQ/WebRTC/WebSocket protocol matrix | YES | `OFFICIAL_DOC_SUPPORTED` |
 | ARCH_C' transcript-before-`response.create` seam | YES | `OFFICIAL_DOC_SUPPORTED` |
 | Token Plan realtime-plus AIRI custom-app runtime entitlement | NOT_YET_PROVEN | `OPEN` |
-| Token Plan Personal 对 AIRI custom-app API 的政策允许 | NOT_CONFIRMED / `OFFICIAL_POLICY_CONFLICT_FOR_CUSTOM_APP_API_USE` | `OFFICIAL_DOC_SUPPORTED` |
+| Token Plan Personal 对 AIRI custom-app API 的政策允许 | `NO_EXPLICIT_CUSTOM_APP_PROHIBITION_FOUND_IN_CURRENT_PRIMARY_SOURCES`；商业适用性仍未确认 | `OPEN` |
 | realtime-plus 等价替换 standalone ASR | NO | model/protocol semantics differ |
 | realtime-plus 作为 current Token Plan TTS adapter | NO / NOT_YET_PROVEN | 未发现 incremental TTS-only contract |
 
@@ -1494,3 +1532,40 @@ TOKEN_PLAN_CUSTOM_APP=HOLD
 该 integrated Electron Level-3 PASS 的 authority 是实际 AIRI production Electron runtime，而不是已经退役的 standalone Electron Level-3 harness。它由 playback-only 无 speech false positive/user turn、播放期间真实用户语音被检测、旧 TTS 被及时取消、stale output 未恢复以及 quiet-tail 无幽灵事件共同支持。此前的 `MACOS_CHROMIUM_LEVEL3_LOCAL_DEVICE_CANDIDATE=PASS` 继续保留，但不与 integrated Electron 结果混为同一 host authority。
 
 本次接受不改变 production VAD 参数、麦克风 constraints、ASR/TTS/LLM routing、provider selection、fallback policy、endpointing 或 barge-in semantics，也不把 PAYG 测试授权推广为默认计费路径。没有新增 provider call；没有记录 raw microphone audio、PCM/base64、transcript、prompt、LLM confidential payload 或 credential。这里的 integrated PASS 仅属于实际 AIRI Electron runtime；此前退役的 standalone Electron diagnostic harness 不恢复为 authority。Android 与跨设备认证仍不在本节结论内。`OWNER_RUNTIME_EVIDENCE` + `CURRENT_DESIGN_DECISION`。
+
+## 38. Realtime-plus transcription event parser repair
+
+此前一次 transcript-only runtime probe 收到服务端的
+`conversation.item.input_audio_transcription.delta` 事件后，被错误归类为
+`MALFORMED_EVENT`。根因是 probe parser 只接受了假设性的 `delta` 字段；Qwen-Audio
+realtime server event 使用 `text` 与 `stash`，二者都允许为空。当前 parser 已按该事件
+形状读取这两个字段，并对可选的 `item_id` / 非负 `content_index` 做相关性校验；未知
+附加字段会被忽略。部分 delta（包括结构不完整但仍可继续等待的事件）不会提前结束
+probe，只有匹配的 `input_audio_transcription.completed.transcript` 才能结算成功或空结果；
+匹配的 `input_audio_transcription.failed` 会返回受限的错误 code/message。不同 item 或
+content index 的事件会被忽略，响应生成类 vendor 事件仍 fail-closed。
+
+该修复只覆盖本地协议解析与 deterministic tests。当前没有重新建立 WebSocket，没有发送
+音频，没有发送 `response.create`，也没有新增 Provider/ASR/TTS/LLM 调用；
+`qwen-audio-3.0-realtime-plus` 的 Token Plan entitlement 与完整 transcript 能力仍保持
+`NOT_YET_PROVEN`，须由后续独立的 Owner-authorized runtime probe 决定。`SOURCE_PROVEN`。
+
+## 39. Completed transcript to chat handoff repair
+
+Owner 的真实麦克风验收证明 Token Plan realtime-plus transcript 已进入 Hearing UI，但四条
+completed transcript 均没有进入 AIRI Chat。源码追踪确认，Hearing UI 与 voice-input
+handoff 是两条独立消费者路径；前者消费每次 `transcript.text.snapshot`，后者原先只在
+stream reader 结束时结算 final snapshot。Owner 停止监听时，abort 可以先结束 reader，
+因此最终文本只更新 Hearing UI，不会调用 `sendVoiceInputTextToChat`。
+
+`createStreamingTranscriptionFinalConsumer` 现在把非 final snapshot 与 delta 只发送到
+interim update 回调。`isFinal=true` 的 snapshot 会立即结算一次 final transcript；没有
+final snapshot 的正常结束流会在 complete 时结算一次。异常或 abort 流不会结算不完整文本。
+该 final contract 再进入既有 `streamingVoiceTurnEndpoint`，由 endpoint decision 调用
+`sendVoiceInputTextToChat` 和 `chatStore.send`。同一 utterance 的重复 completion、空文本、
+stop 前的 late completion 和 stale session 仍 fail closed。`SOURCE_PROVEN`。
+
+
+## 40. Android Token Plan implementation handoff
+
+The accepted macOS Token Plan implementation, runtime evidence, failure lessons, protocol examples, and Android porting constraints are consolidated under [docs/handoffs/qwen-token-plan-android-reference/README.md](../handoffs/qwen-token-plan-android-reference/README.md). The handoff is frozen against source authority `7ef071c791483aa362872e473cea676d2f248fa9` / tree `1904fbfc5e0ddf4ee9fab5fcf4dbd05fa45914c9` and is intended as an Android implementation reference rather than an Android repository-state checkpoint. Future Android agents should start from that README and the full handoff instead of reconstructing the macOS exploration history.

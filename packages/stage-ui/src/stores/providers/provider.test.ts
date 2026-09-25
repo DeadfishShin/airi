@@ -172,6 +172,20 @@ describe('provider store synchronization boundary', () => {
     expect(second).toEqual([])
   })
 
+  it('publishes a sanitized account model catalogue without replacing unrelated providers', () => {
+    const store = useProviderStore()
+    const accountModel = {
+      id: 'qwen-audio-3.0-tts-plus',
+      name: 'Qwen Audio 3.0 TTS Plus',
+      provider: 'qwen-audio-tts-token-plan',
+      catalogSource: 'token-plan-account-api' as const,
+    }
+
+    expect(store.setModelsForProvider('qwen-audio-tts-token-plan', [accountModel])).toEqual([accountModel])
+    expect(store.getModelsForProvider('qwen-audio-tts-token-plan')).toEqual([accountModel])
+    expect(store.getModelsForProvider('unrelated-provider')).toEqual([])
+  })
+
   it('applies provider-owned reasoning options without changing the cached provider', async () => {
     const store = useProviderStore()
     const configStore = useProviderConfigStore()

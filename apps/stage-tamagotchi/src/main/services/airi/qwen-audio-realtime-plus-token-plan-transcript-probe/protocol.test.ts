@@ -1,0 +1,108 @@
+import { readFileSync } from 'node:fs'
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  buildQwenAudioRealtimePlusAudioAppendFrame,
+  buildQwenAudioRealtimePlusAudioCommitFrame,
+  buildQwenAudioRealtimePlusSessionUpdateFrame,
+  chunkPcm,
+  parsePcm16Mono16kWav,
+  parseQwenAudioRealtimePlusServerMessage,
+} from './protocol'
+
+const fixture = new Uint8Array(readFileSync(new URL('../../../../../resources/token-plan-asr-capability-probe.wav', import.meta.url)))
+
+describe('token Plan realtime-plus transcript-only probe protocol', () => {
+  it('validates WAV and strips the header into 16 kHz mono PCM chunks', () => {
+    const parsed = parsePcm16Mono16kWav(fixture)
+    expect(parsed.sampleRate).toBe(16_000)
+    expect(parsed.channels).toBe(1)
+    expect(parsed.bitsPerSample).toBe(16)
+    expect(parsed.pcm.byteLength).toBeGreaterThan(0)
+    expect(parsed.pcm.byteLength).toBeLessThan(fixture.byteLength)
+    for (const chunk of chunkPcm(parsed.pcm)) {
+      expect(chunk.byteLength).toBeLessThanOrEqual(1024)
+      expect(chunk.byteLength % 2).toBe(0)
+    }
+  })
+
+  it('builds the exact manual event sequence without response.create', () => {
+    expect(buildQwenAudioRealtimePlusSessionUpdateFrame()).toEqual({
+      type: 'session.update',
+      session: { modalities: ['text'], input_audio_format: 'pcm', turn_detection: null },
+    })
+    expect(buildQwenAudioRealtimePlusAudioAppendFrame(new Uint8Array([1, 2]))).toEqual({
+      type: 'input_audio_buffer.append',
+      audio: 'AQI=',
+    })
+    expect(buildQwenAudioRealtimePlusAudioCommitFrame()).toEqual({ type: 'input_audio_buffer.commit' })
+    expect(JSON.stringify([
+      buildQwenAudioRealtimePlusSessionUpdateFrame(),
+      buildQwenAudioRealtimePlusAudioAppendFrame(new Uint8Array([1, 2])),
+      buildQwenAudioRealtimePlusAudioCommitFrame(),
+    ])).not.toContain('response.create')
+  })
+
+  it('accepts only bounded transcript events and fails closed for vendor generation', () => {
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({ type: 'session.created' }))).toEqual({ type: 'session.created' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_x', content_index: 0, transcript: 'AIRI probe' }))).toEqual({ type: 'transcription.completed', itemId: 'item_x', contentIndex: 0, transcript: 'AIRI probe' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({ type: 'response.created' }))).toEqual({ type: 'unexpected-generation', eventType: 'response.created' })
+    expect(() => parseQwenAudioRealtimePlusServerMessage('{')).toThrow()
+  })
+
+  it('accepts the normal commit acknowledgement and matching user input item as non-terminal events', () => {
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      event_id: 'event_commit',
+      type: 'input_audio_buffer.committed',
+      previous_item_id: 'item_prev',
+      item_id: 'item_user',
+    }))).toEqual({ type: 'commit.ack', previousItemId: 'item_prev', itemId: 'item_user' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.created',
+      previous_item_id: 'item_prev',
+      item: {
+        id: 'item_user',
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_audio' }],
+      },
+    }))).toEqual({ type: 'user.item.created', previousItemId: 'item_prev', itemId: 'item_user' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.created',
+      item: { id: 'item_assistant', type: 'message', role: 'assistant', content: [{ type: 'output_text' }] },
+    }))).toEqual({ type: 'unexpected-generation', eventType: 'conversation.item.created' })
+  })
+
+  it('parses Qwen-Audio delta text and stash fields without requiring vendor response.delta', () => {
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.input_audio_transcription.delta',
+      event_id: 'event_x',
+      item_id: 'item_x',
+      content_index: 0,
+      text: 'AIRI',
+      stash: ' probe',
+      extra: 'ignored',
+    }))).toEqual({ type: 'transcription.delta', itemId: 'item_x', contentIndex: 0, text: 'AIRI', stash: ' probe' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item_x',
+      content_index: 0,
+      text: '',
+      stash: '',
+    }))).toEqual({ type: 'transcription.delta', itemId: 'item_x', contentIndex: 0, text: '', stash: '' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.input_audio_transcription.delta',
+      delta: 'legacy field',
+    }))).toEqual({ type: 'transcription.delta.malformed' })
+  })
+
+  it('parses transcription failure without exposing the raw event', () => {
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.input_audio_transcription.failed',
+      item_id: 'item_x',
+      content_index: 0,
+      error: { type: 'invalid_request_error', code: 'transcription_failed', message: 'bounded message' },
+    }))).toEqual({ type: 'transcription.failed', itemId: 'item_x', contentIndex: 0, code: 'transcription_failed', message: 'bounded message' })
+  })
+})

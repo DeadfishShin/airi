@@ -11,7 +11,7 @@ diff --git a/cubism/.vscode/tasks.json b/cubism/.vscode/tasks.json
 deleted file mode 100644
 index 7cd3fffed85da69d5af154f63480bce8766a038f..0000000000000000000000000000000000000000
 diff --git a/dist/cubism2.es.js b/dist/cubism2.es.js
-index 0d40d5d40533881d154e3c2cdda9b360c57eaaa6..8dbdb1b36e2da42da264dc3533523e61745102f7 100644
+index 0d40d5d40533881d154e3c2cdda9b360c57eaaa6..70e0d63a88a9605ed02330621004d4b6be6cfd6b 100644
 --- a/dist/cubism2.es.js
 +++ b/dist/cubism2.es.js
 @@ -1373,7 +1373,7 @@ const _FileLoader = class {
@@ -42,7 +42,7 @@ index 0d40d5d40533881d154e3c2cdda9b360c57eaaa6..8dbdb1b36e2da42da264dc3533523e61
          throw new Error("Settings file not found");
        }
 diff --git a/dist/cubism2.js b/dist/cubism2.js
-index c3db490f8dbfdd63ad40648fe0e0325604f22e95..4b452db0b109ba7deaddf397ef351ae7bcfe145c 100644
+index c3db490f8dbfdd63ad40648fe0e0325604f22e95..3d49392617b92fcb3be29033bcabc2cd53e64a1c 100644
 --- a/dist/cubism2.js
 +++ b/dist/cubism2.js
 @@ -1373,7 +1373,7 @@ var __async = (__this, __arguments, generator) => {
@@ -73,10 +73,46 @@ index c3db490f8dbfdd63ad40648fe0e0325604f22e95..4b452db0b109ba7deaddf397ef351ae7
            throw new Error("Settings file not found");
          }
 diff --git a/dist/cubism4.es.js b/dist/cubism4.es.js
-index f21619f5794c00542bb2a9df340e50d4453a0367..38bd069a5d1ec37380c376c2ff2d7fed9c0042b2 100644
+index f21619f5794c00542bb2a9df340e50d4453a0367..20de7529a7becceff2275293da14f12d86805492 100644
 --- a/dist/cubism4.es.js
 +++ b/dist/cubism4.es.js
-@@ -5012,7 +5012,7 @@ const _FileLoader = class {
+@@ -1699,7 +1699,10 @@ class CubismMotion extends ACubismMotion {
+       }
+     }
+     const curves = this._motionData.curves;
+-    for (c = 0; c < this._motionData.curveCount && curves[c].type == CubismMotionCurveTarget.CubismMotionCurveTarget_Model; ++c) {
++    for (c = 0; c < this._motionData.curveCount; ++c) {
++      if (curves[c].type != CubismMotionCurveTarget.CubismMotionCurveTarget_Model) {
++        continue;
++      }
+       value = evaluateCurve(this._motionData, c, time);
+       if (curves[c].id == this._modelCurveIdEyeBlink) {
+         eyeBlinkValue = value;
+@@ -1707,7 +1710,10 @@ class CubismMotion extends ACubismMotion {
+         lipSyncValue = value;
+       }
+     }
+-    for (; c < this._motionData.curveCount && curves[c].type == CubismMotionCurveTarget.CubismMotionCurveTarget_Parameter; ++c) {
++    for (c = 0; c < this._motionData.curveCount; ++c) {
++      if (curves[c].type != CubismMotionCurveTarget.CubismMotionCurveTarget_Parameter) {
++        continue;
++      }
+       parameterIndex = model.getParameterIndex(curves[c].id);
+       if (parameterIndex == -1) {
+         continue;
+@@ -1775,7 +1781,10 @@ class CubismMotion extends ACubismMotion {
+         }
+       }
+     }
+-    for (; c < this._motionData.curveCount && curves[c].type == CubismMotionCurveTarget.CubismMotionCurveTarget_PartOpacity; ++c) {
++    for (c = 0; c < this._motionData.curveCount; ++c) {
++      if (curves[c].type != CubismMotionCurveTarget.CubismMotionCurveTarget_PartOpacity) {
++        continue;
++      }
+       value = evaluateCurve(this._motionData, c, time);
+       if (CubismConfig.setOpacityFromMotion) {
+         model.setPartOpacityById(curves[c].id, value);
+@@ -5012,7 +5021,7 @@ const _FileLoader = class {
    }
    static createSettings(files) {
      return __async(this, null, function* () {
@@ -85,7 +121,7 @@ index f21619f5794c00542bb2a9df340e50d4453a0367..38bd069a5d1ec37380c376c2ff2d7fed
        if (!settingsFile) {
          throw new TypeError("Settings file not found");
        }
-@@ -5050,7 +5050,7 @@ FileLoader.factory = (context, next) => __async(void 0, null, function* () {
+@@ -5050,7 +5059,7 @@ FileLoader.factory = (context, next) => __async(void 0, null, function* () {
      } else if (!settings._objectURL) {
        throw new Error('"_objectURL" must be specified in ModelSettings');
      }
@@ -94,7 +130,7 @@ index f21619f5794c00542bb2a9df340e50d4453a0367..38bd069a5d1ec37380c376c2ff2d7fed
      yield _FileLoader.upload(files, settings);
      settings.resolveURL = function(url2) {
        return _FileLoader.resolveURL(this._objectURL, url2);
-@@ -5097,7 +5097,7 @@ const _ZipLoader = class {
+@@ -5097,7 +5106,7 @@ const _ZipLoader = class {
    static createSettings(reader) {
      return __async(this, null, function* () {
        const filePaths = yield _ZipLoader.getFilePaths(reader);
@@ -104,10 +140,46 @@ index f21619f5794c00542bb2a9df340e50d4453a0367..38bd069a5d1ec37380c376c2ff2d7fed
          throw new Error("Settings file not found");
        }
 diff --git a/dist/cubism4.js b/dist/cubism4.js
-index 03c1fb2b32b3b908a8b0e604aa3ee50aa9130169..99fc587e3ca7e6f433099e13f33e0e480a10c25a 100644
+index 03c1fb2b32b3b908a8b0e604aa3ee50aa9130169..2a09bbcf5c5ff8685070dae50adc68e027eb99cd 100644
 --- a/dist/cubism4.js
 +++ b/dist/cubism4.js
-@@ -5012,7 +5012,7 @@ var __async = (__this, __arguments, generator) => {
+@@ -1699,7 +1699,10 @@ var __async = (__this, __arguments, generator) => {
+         }
+       }
+       const curves = this._motionData.curves;
+-      for (c = 0; c < this._motionData.curveCount && curves[c].type == CubismMotionCurveTarget.CubismMotionCurveTarget_Model; ++c) {
++      for (c = 0; c < this._motionData.curveCount; ++c) {
++        if (curves[c].type != CubismMotionCurveTarget.CubismMotionCurveTarget_Model) {
++          continue;
++        }
+         value = evaluateCurve(this._motionData, c, time);
+         if (curves[c].id == this._modelCurveIdEyeBlink) {
+           eyeBlinkValue = value;
+@@ -1707,7 +1710,10 @@ var __async = (__this, __arguments, generator) => {
+           lipSyncValue = value;
+         }
+       }
+-      for (; c < this._motionData.curveCount && curves[c].type == CubismMotionCurveTarget.CubismMotionCurveTarget_Parameter; ++c) {
++      for (c = 0; c < this._motionData.curveCount; ++c) {
++        if (curves[c].type != CubismMotionCurveTarget.CubismMotionCurveTarget_Parameter) {
++          continue;
++        }
+         parameterIndex = model.getParameterIndex(curves[c].id);
+         if (parameterIndex == -1) {
+           continue;
+@@ -1775,7 +1781,10 @@ var __async = (__this, __arguments, generator) => {
+           }
+         }
+       }
+-      for (; c < this._motionData.curveCount && curves[c].type == CubismMotionCurveTarget.CubismMotionCurveTarget_PartOpacity; ++c) {
++      for (c = 0; c < this._motionData.curveCount; ++c) {
++        if (curves[c].type != CubismMotionCurveTarget.CubismMotionCurveTarget_PartOpacity) {
++          continue;
++        }
+         value = evaluateCurve(this._motionData, c, time);
+         if (exports2.CubismConfig.setOpacityFromMotion) {
+           model.setPartOpacityById(curves[c].id, value);
+@@ -5012,7 +5021,7 @@ var __async = (__this, __arguments, generator) => {
      }
      static createSettings(files) {
        return __async(this, null, function* () {
@@ -116,7 +188,7 @@ index 03c1fb2b32b3b908a8b0e604aa3ee50aa9130169..99fc587e3ca7e6f433099e13f33e0e48
          if (!settingsFile) {
            throw new TypeError("Settings file not found");
          }
-@@ -5050,7 +5050,7 @@ var __async = (__this, __arguments, generator) => {
+@@ -5050,7 +5059,7 @@ var __async = (__this, __arguments, generator) => {
        } else if (!settings._objectURL) {
          throw new Error('"_objectURL" must be specified in ModelSettings');
        }
@@ -125,7 +197,7 @@ index 03c1fb2b32b3b908a8b0e604aa3ee50aa9130169..99fc587e3ca7e6f433099e13f33e0e48
        yield _FileLoader.upload(files, settings);
        settings.resolveURL = function(url) {
          return _FileLoader.resolveURL(this._objectURL, url);
-@@ -5097,7 +5097,7 @@ var __async = (__this, __arguments, generator) => {
+@@ -5097,7 +5106,7 @@ var __async = (__this, __arguments, generator) => {
      static createSettings(reader) {
        return __async(this, null, function* () {
          const filePaths = yield _ZipLoader.getFilePaths(reader);
@@ -135,7 +207,7 @@ index 03c1fb2b32b3b908a8b0e604aa3ee50aa9130169..99fc587e3ca7e6f433099e13f33e0e48
            throw new Error("Settings file not found");
          }
 diff --git a/dist/index.es.js b/dist/index.es.js
-index f969d304f346c4e420b6798dbd4dec81b902a5e4..7e6b4d3ef53f1ea0648030899de9debd291fc551 100644
+index f969d304f346c4e420b6798dbd4dec81b902a5e4..22e714552a57a83dd2e81b85b3eedc58ec49eb49 100644
 --- a/dist/index.es.js
 +++ b/dist/index.es.js
 @@ -1373,7 +1373,7 @@ const _FileLoader = class {
@@ -166,7 +238,7 @@ index f969d304f346c4e420b6798dbd4dec81b902a5e4..7e6b4d3ef53f1ea0648030899de9debd
          throw new Error("Settings file not found");
        }
 diff --git a/dist/index.js b/dist/index.js
-index bc3d800c45889979190175cc88cdd8251feb9b5e..d1a660708ff81e1379f173709a32c6f4aa16696a 100644
+index bc3d800c45889979190175cc88cdd8251feb9b5e..1f4e1f41be7c606e1ef01393eb06af35497a47c7 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1373,7 +1373,7 @@ var __async = (__this, __arguments, generator) => {

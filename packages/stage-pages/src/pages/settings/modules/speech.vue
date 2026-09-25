@@ -14,9 +14,11 @@ import {
 } from '@proj-airi/stage-ui/components'
 import { useAnalytics } from '@proj-airi/stage-ui/composables'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/providers/official'
+import { QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/qwen-audio-tts-token-plan-ipc'
 import { QWEN3_TTS_REALTIME_PROVIDER_ID } from '@proj-airi/stage-ui/libs/providers/qwen-tts-realtime-ipc'
 import { normalizeQwen3TtsRealtimeModel } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-models'
 import { normalizeQwen3TtsRealtimeVoice } from '@proj-airi/stage-ui/libs/providers/qwen3-tts-realtime-voices'
+import { createQwenAudioTtsTokenPlanStageSession } from '@proj-airi/stage-ui/libs/speech/qwen-audio-tts-token-plan-stage-session'
 import { createQwen3TtsStreamingPreviewController, QWEN3_TTS_PREVIEW_MAX_TEXT_CHARS, validateQwen3TtsPreviewText } from '@proj-airi/stage-ui/libs/speech/qwen-tts-streaming-preview'
 import { useAiriCardStore } from '@proj-airi/stage-ui/stores'
 import { useSpeechStore } from '@proj-airi/stage-ui/stores/modules/speech'
@@ -92,6 +94,8 @@ let qwenPreviewAnalyticsContext: {
 
 const STREAMING_MODEL_OPTION_PREFIX = 'streaming:'
 const isQwenRealtimeProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)
+const isQwenTokenPlanProvider = computed(() => activeSpeechProvider.value === QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID)
+const isQwenPaygTtsProvider = computed(() => activeSpeechProvider.value === QWEN3_TTS_REALTIME_PROVIDER_ID)
 
 function sanitizeQwenPreviewError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : ''
@@ -132,6 +136,18 @@ const qwenStreamingPreview = createQwen3TtsStreamingPreviewController({
       source: 'manual_preview',
     })
     qwenPreviewAnalyticsContext = undefined
+  },
+})
+
+const qwenTokenPlanStreamingPreview = createQwen3TtsStreamingPreviewController({
+  createAudioContext: () => new AudioContext() as unknown as Qwen3TtsStreamingPreviewAudioContext,
+  createSession: options => createQwenAudioTtsTokenPlanStageSession(options),
+  onStateChange: (state) => {
+    qwenPreviewState.value = state
+    isGenerating.value = state === 'starting' || state === 'active'
+  },
+  onError: (error) => {
+    errorMessage.value = errorMessageFrom(error) ?? 'Qwen Audio Token Plan preview failed.'
   },
 })
 
@@ -462,7 +478,7 @@ watch(activeSpeechModel, async (model) => {
   // Qwen3 realtime voices are model-scoped. Keep a selected voice alive while
   // the new catalog loads; the shared speech store normalizes it to Cherry
   // only when the selected model does not support that voice.
-  if (activeSpeechProvider.value !== QWEN3_TTS_REALTIME_PROVIDER_ID) {
+  if (activeSpeechProvider.value !== QWEN3_TTS_REALTIME_PROVIDER_ID && activeSpeechProvider.value !== QWEN_AUDIO_TTS_TOKEN_PLAN_PROVIDER_ID) {
     activeSpeechVoiceId.value = ''
     activeSpeechVoice.value = undefined
   }
@@ -472,8 +488,10 @@ watch(activeSpeechModel, async (model) => {
 })
 
 watch([activeSpeechProvider, activeSpeechModel, activeSpeechVoiceId], ([provider, model, voiceId]) => {
-  if (qwenPreviewState.value === 'starting' || qwenPreviewState.value === 'active')
+  if (qwenPreviewState.value === 'starting' || qwenPreviewState.value === 'active') {
     qwenStreamingPreview.cancel('speech-selection-changed')
+    qwenTokenPlanStreamingPreview.cancel('speech-selection-changed')
+  }
   void airiCardStore.updateActiveCardSpeech({ provider, model, voice_id: voiceId })
 })
 
@@ -528,10 +546,35 @@ function startQwenStreamingPreview() {
   }
 }
 
+function startQwenTokenPlanStreamingPreview() {
+  let text: string
+  try {
+    text = validateQwen3TtsPreviewText(testText.value)
+  }
+  catch (error) {
+    errorMessage.value = errorMessageFrom(error) ?? 'Preview text is required.'
+    return
+  }
+
+  const model = activeSpeechModel.value
+  const voice = activeSpeechVoice.value
+  if (!model || !voice) {
+    errorMessage.value = 'Qwen Audio Token Plan preview is not ready because no model or voice is selected.'
+    return
+  }
+
+  errorMessage.value = ''
+  qwenTokenPlanStreamingPreview.start({ model, voice: voice.id, text })
+}
+
 // Function to generate speech
 async function generateTestSpeech() {
   if (isQwenRealtimeProvider.value) {
     startQwenStreamingPreview()
+    return
+  }
+  if (isQwenTokenPlanProvider.value) {
+    startQwenTokenPlanStreamingPreview()
     return
   }
 
@@ -674,6 +717,11 @@ function stopTestAudio() {
     return
   }
 
+  if (isQwenTokenPlanProvider.value) {
+    qwenTokenPlanStreamingPreview.cancel('preview-stopped')
+    return
+  }
+
   if (audioPlayer.value) {
     audioPlayer.value.pause()
     audioPlayer.value.currentTime = 0
@@ -690,6 +738,7 @@ function stopTestAudio() {
 onUnmounted(() => {
   qwenPreviewAnalyticsContext = undefined
   qwenStreamingPreview.cancel('settings-unmounted')
+  qwenTokenPlanStreamingPreview.cancel('settings-unmounted')
   if (audioUrl.value) {
     URL.revokeObjectURL(audioUrl.value)
   }
@@ -742,7 +791,7 @@ function handleDeleteProvider(providerId: string) {
 
 <template>
   <div flex="~ col md:row gap-6">
-    <DashScopePaygCredentialSettings class="md:col-span-2" />
+    <DashScopePaygCredentialSettings v-if="isQwenPaygTtsProvider" class="md:col-span-2" />
     <div bg="neutral-100 dark:[rgba(0,0,0,0.3)]" rounded-xl p-4 flex="~ col gap-4" class="h-fit w-full md:w-[40%]">
       <div flex="~ col gap-4">
         <div>
@@ -1121,6 +1170,14 @@ function handleDeleteProvider(providerId: string) {
               </button>
             </div>
             <audio v-if="audioUrl" ref="audioPlayer" :src="audioUrl" controls class="mt-2 w-full" />
+            <p
+              v-if="errorMessage && !isQwenRealtimeProvider"
+              data-testid="speech-preview-error"
+              class="text-sm text-red-600 dark:text-red-400"
+              role="alert"
+            >
+              {{ errorMessage }}
+            </p>
           </template>
         </div>
       </div>

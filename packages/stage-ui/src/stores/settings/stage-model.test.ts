@@ -1,10 +1,20 @@
-import type { DisplayModelURL } from '../display-models'
+import type { DisplayModelFile, DisplayModelURL } from '../display-models'
 
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
+import { DisplayModelBinaryUnreadableError, DisplayModelPersistenceWriteError } from '../display-model-persistence'
 import { DisplayModelFormat, useDisplayModelsStore } from '../display-models'
 import { useSettingsStageModel } from './stage-model'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
 
 vi.mock('@proj-airi/stage-shared/composables', async () => {
   const { refManualReset } = await import('@vueuse/core')
@@ -26,6 +36,10 @@ vi.mock('@vueuse/core', async (importOriginal) => {
 describe('settings stage model store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   // https://github.com/moeru-ai/airi/issues/1984
@@ -61,6 +75,62 @@ describe('settings stage model store', () => {
     expect(getDisplayModelSpy).toHaveBeenCalledWith(fallbackModel.id)
   })
 
+  it('degrades to a disabled stage while preserving an unreadable custom selection', async () => {
+    const unreadableModelId = 'display-model-unreadable'
+    const unreadableError = new DisplayModelBinaryUnreadableError(unreadableModelId, new Error('NotFoundError'))
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockRejectedValue(unreadableError)
+
+    const store = useSettingsStageModel()
+    store.stageModelSelected = unreadableModelId
+
+    await expect(store.initializeStageModel()).resolves.toBeUndefined()
+
+    expect(store.stageModelSelected).toBe(unreadableModelId)
+    expect(store.stageModelSelectedDisplayModel).toBeUndefined()
+    expect(store.stageModelSelectedUrl).toBeUndefined()
+    expect(store.stageModelResolved).toBeUndefined()
+    expect(store.stageModelRenderer).toBe('disabled')
+  })
+
+  it('does not swallow display-model persistence write failures', async () => {
+    const modelId = 'preset-live2d-1'
+    const persistenceError = new DisplayModelPersistenceWriteError(modelId, new Error('quota'))
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockRejectedValue(persistenceError)
+
+    const store = useSettingsStageModel()
+
+    await expect(store.updateStageModel()).rejects.toBe(persistenceError)
+  })
+
+  it('does not swallow unexpected display-model errors', async () => {
+    const unexpectedError = new Error('unexpected failure')
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockRejectedValue(unexpectedError)
+
+    const store = useSettingsStageModel()
+
+    await expect(store.updateStageModel()).rejects.toBe(unexpectedError)
+  })
+
+  it('degrades safely when the selection watcher updates an unreadable custom model', async () => {
+    const unreadableModelId = 'display-model-watched-unreadable'
+    const unreadableError = new DisplayModelBinaryUnreadableError(unreadableModelId, new Error('NotFoundError'))
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockRejectedValue(unreadableError)
+
+    const store = useSettingsStageModel()
+    store.stageModelSelected = unreadableModelId
+
+    await nextTick()
+    await Promise.resolve()
+
+    expect(store.stageModelSelected).toBe(unreadableModelId)
+    expect(store.stageModelResolved).toBeUndefined()
+    expect(store.stageModelRenderer).toBe('disabled')
+  })
+
   it('routes Tachie archives to the Tachie renderer', async () => {
     const tachieModel: DisplayModelURL = {
       id: 'tachie-model',
@@ -81,5 +151,185 @@ describe('settings stage model store', () => {
     expect(store.stageModelSelectedDisplayModel).toEqual(tachieModel)
     expect(store.stageModelSelectedUrl).toBe(tachieModel.url)
     expect(store.stageModelRenderer).toBe('tachie')
+  })
+
+  it('keeps the previous resolved pair while a new model source is pending', async () => {
+    const aquaModel: DisplayModelFile = {
+      id: 'aqua-model',
+      format: DisplayModelFormat.Live2dZip,
+      type: 'file',
+      file: new File(['aqua'], 'aqua.zip'),
+      name: 'Aqua',
+      importedAt: 1,
+    }
+    const hiyoriModel: DisplayModelURL = {
+      id: 'hiyori-model',
+      format: DisplayModelFormat.Live2dZip,
+      type: 'url',
+      url: 'https://example.com/hiyori.zip',
+      name: 'Hiyori',
+      importedAt: 1,
+    }
+    const pendingHiyori = deferred<DisplayModelURL>()
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:aqua')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockImplementation(async (id) => {
+      if (id === aquaModel.id)
+        return aquaModel
+      if (id === hiyoriModel.id)
+        return pendingHiyori.promise
+      return undefined
+    })
+
+    const store = useSettingsStageModel()
+    store.stageModelSelected = aquaModel.id
+    await store.initializeStageModel()
+
+    expect(store.stageModelResolved).toEqual({
+      modelId: aquaModel.id,
+      modelSrc: 'blob:aqua',
+      renderer: 'live2d',
+    })
+
+    store.stageModelSelected = hiyoriModel.id
+    await nextTick()
+
+    expect(store.stageModelResolved).toEqual({
+      modelId: aquaModel.id,
+      modelSrc: 'blob:aqua',
+      renderer: 'live2d',
+    })
+
+    pendingHiyori.resolve(hiyoriModel)
+    await Promise.resolve()
+    await nextTick()
+
+    expect(store.stageModelResolved).toEqual({
+      modelId: hiyoriModel.id,
+      modelSrc: hiyoriModel.url,
+      renderer: 'live2d',
+    })
+  })
+
+  it('commits a reverse Hiyori to Aqua transition as one resolved pair', async () => {
+    const hiyoriModel: DisplayModelURL = {
+      id: 'hiyori-model',
+      format: DisplayModelFormat.Live2dZip,
+      type: 'url',
+      url: 'https://example.com/hiyori.zip',
+      name: 'Hiyori',
+      importedAt: 1,
+    }
+    const aquaModel: DisplayModelFile = {
+      id: 'aqua-model',
+      format: DisplayModelFormat.Live2dZip,
+      type: 'file',
+      file: new File(['aqua'], 'aqua.zip'),
+      name: 'Aqua',
+      importedAt: 1,
+    }
+    const pendingAqua = deferred<DisplayModelFile>()
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:aqua')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockImplementation(async (id) => {
+      if (id === hiyoriModel.id)
+        return hiyoriModel
+      if (id === aquaModel.id)
+        return pendingAqua.promise
+      return undefined
+    })
+
+    const store = useSettingsStageModel()
+    store.stageModelSelected = hiyoriModel.id
+    await store.initializeStageModel()
+
+    expect(store.stageModelResolved).toEqual({
+      modelId: hiyoriModel.id,
+      modelSrc: hiyoriModel.url,
+      renderer: 'live2d',
+    })
+
+    store.stageModelSelected = aquaModel.id
+    await nextTick()
+
+    expect(store.stageModelResolved).toEqual({
+      modelId: hiyoriModel.id,
+      modelSrc: hiyoriModel.url,
+      renderer: 'live2d',
+    })
+
+    pendingAqua.resolve(aquaModel)
+    await Promise.resolve()
+    await nextTick()
+
+    expect(store.stageModelResolved).toEqual({
+      modelId: aquaModel.id,
+      modelSrc: 'blob:aqua',
+      renderer: 'live2d',
+    })
+  })
+
+  it('allows only the latest rapid switch to commit its resolved pair', async () => {
+    const aquaModel: DisplayModelURL = {
+      id: 'aqua-model',
+      format: DisplayModelFormat.Live2dZip,
+      type: 'url',
+      url: 'https://example.com/aqua.zip',
+      name: 'Aqua',
+      importedAt: 1,
+    }
+    const hiyoriModel: DisplayModelURL = {
+      id: 'hiyori-model',
+      format: DisplayModelFormat.Live2dZip,
+      type: 'url',
+      url: 'https://example.com/hiyori.zip',
+      name: 'Hiyori',
+      importedAt: 1,
+    }
+    const hk416Model: DisplayModelURL = {
+      id: 'hk416-model',
+      format: DisplayModelFormat.Live2dZip,
+      type: 'url',
+      url: 'https://example.com/hk416.zip',
+      name: 'HK416',
+      importedAt: 1,
+    }
+    const pendingHiyori = deferred<DisplayModelURL>()
+    const pendingHk416 = deferred<DisplayModelURL>()
+    const displayModelsStore = useDisplayModelsStore()
+    vi.spyOn(displayModelsStore, 'getDisplayModel').mockImplementation(async (id) => {
+      if (id === aquaModel.id)
+        return aquaModel
+      if (id === hiyoriModel.id)
+        return pendingHiyori.promise
+      if (id === hk416Model.id)
+        return pendingHk416.promise
+      return undefined
+    })
+
+    const store = useSettingsStageModel()
+    store.stageModelSelected = aquaModel.id
+    await store.initializeStageModel()
+
+    store.stageModelSelected = hiyoriModel.id
+    await nextTick()
+    store.stageModelSelected = hk416Model.id
+    await nextTick()
+
+    pendingHiyori.resolve(hiyoriModel)
+    await Promise.resolve()
+    await nextTick()
+    expect(store.stageModelResolved?.modelId).toBe(aquaModel.id)
+
+    pendingHk416.resolve(hk416Model)
+    await Promise.resolve()
+    await nextTick()
+    expect(store.stageModelResolved).toEqual({
+      modelId: hk416Model.id,
+      modelSrc: hk416Model.url,
+      renderer: 'live2d',
+    })
   })
 })

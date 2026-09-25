@@ -1,5 +1,6 @@
 export { randomSaccadeInterval } from './eye-motions'
 
+export * from './live2d-compatibility'
 export * from './live2d-opfs-registration'
 export * from './live2d-preview'
 export * from './live2d-validator'

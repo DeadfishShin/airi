@@ -8,6 +8,8 @@ import { neutralLive2DMotionControlPose } from '../../stores/motion-control'
 import { createLive2DMotionSpring } from './motion-control-spring'
 import {
   disableLive2DSdkBreath,
+  isLive2DIdleMotion,
+  restoreLive2DModelParameterDefaults,
   useMotionUpdatePluginAutoEyeBlink,
   useMotionUpdatePluginBreathControl,
   useMotionUpdatePluginIdleDisable,
@@ -73,6 +75,21 @@ function createContext(overrides: Partial<MotionManagerPluginContext> = {}): Mot
 }
 
 describe('live2d motion manager plugins', () => {
+  it('treats only the resolved candidate as idle in a mixed source group', () => {
+    expect(isLive2DIdleMotion({
+      currentGroup: '',
+      currentIndex: 14,
+      canonicalIdleGroup: 'Idle',
+      compatibilityIdle: { group: '', index: 14 },
+    })).toBe(true)
+    expect(isLive2DIdleMotion({
+      currentGroup: '',
+      currentIndex: 1,
+      canonicalIdleGroup: 'Idle',
+      compatibilityIdle: { group: '', index: 14 },
+    })).toBe(false)
+  })
+
   it('keeps SDK breath from changing AIRI-owned idle parameters', () => {
     const updateParameters = vi.fn()
     const internalModel = {
@@ -91,6 +108,36 @@ describe('live2d motion manager plugins', () => {
     internalModel.breath?.updateParameters()
 
     expect(updateParameters).not.toHaveBeenCalled()
+  })
+
+  it('restores authored model defaults without writing guessed zeros', () => {
+    const setParameterValueById = vi.fn()
+    const model = {
+      getModel: () => ({
+        parameters: {
+          count: 2,
+          ids: ['ParamAngleX', 'ParamEyeLOpen'],
+          defaultValues: [0.25, 0.8],
+        },
+      }),
+      setParameterValueById,
+    }
+
+    expect(restoreLive2DModelParameterDefaults(model)).toBe(2)
+    expect(setParameterValueById).toHaveBeenNthCalledWith(1, 'ParamAngleX', 0.25)
+    expect(setParameterValueById).toHaveBeenNthCalledWith(2, 'ParamEyeLOpen', 0.8)
+    expect(setParameterValueById).not.toHaveBeenCalledWith('ParamAngleX', 0)
+  })
+
+  it('does not reset parameters when the model exposes no default authority', () => {
+    const setParameterValueById = vi.fn()
+    const model = {
+      getModel: () => ({ parameters: { ids: ['ParamAngleX'] } }),
+      setParameterValueById,
+    }
+
+    expect(restoreLive2DModelParameterDefaults(model)).toBe(0)
+    expect(setParameterValueById).not.toHaveBeenCalled()
   })
 
   it('applies manual breath after motion and restores the configured value on release', () => {

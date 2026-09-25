@@ -176,6 +176,14 @@ export default defineConfig({
 
   preload: {
     build: {
+      externalizeDeps: {
+        // The preload imports private stage-ui TypeScript sources through
+        // package exports. Bundle them so packaged Electron never attempts
+        // to load workspace .ts files from app.asar/node_modules.
+        exclude: [
+          '@proj-airi/stage-ui',
+        ],
+      },
       lib: {
         entry: {
           'index': resolve(join(import.meta.dirname, 'src', 'preload', 'index.ts')),

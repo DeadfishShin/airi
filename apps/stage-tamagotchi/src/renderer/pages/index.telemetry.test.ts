@@ -23,6 +23,17 @@ describe('voice transcript ingress telemetry source contract', () => {
     expect(source).toContain('sendVoiceInputTextToChat(decision.aggregatedText, decision.telemetryTurnId)')
   })
 
+  it('completed_snapshot_handoff_is_immediate_and_deltas_stay_interim', () => {
+    const consumeStart = hearingSource.indexOf('function consumeRealtimeTranscriptionResult')
+    const consumeEnd = hearingSource.indexOf('\n  async function startVadRealtimeTranscription', consumeStart)
+    const consumePath = hearingSource.slice(consumeStart, consumeEnd)
+
+    expect(consumePath).toContain('createStreamingTranscriptionFinalConsumer')
+    expect(consumePath).toContain('onFinal: (text) =>')
+    expect(consumePath).toContain('finalConsumer.complete()')
+    expect(consumePath).not.toContain('onSentenceEnd?.(value.delta)')
+  })
+
   it('buffered_recorder_1200ms_attribution_test keeps recorder finals on the existing buffer', () => {
     const start = source.indexOf('onTranscriptionResult:')
     const end = source.indexOf('onTranscriptionEmpty:', start)
@@ -111,6 +122,6 @@ describe('voice transcript ingress telemetry source contract', () => {
     expect(orchestratorSource).toContain('cancelActiveGenerations(sessionId?: string)')
     expect(orchestratorSource).toContain('generationAbortController.signal')
     expect(orchestratorSource).toContain('sessionGenerationEpochs')
-    expect(hearingSource).toContain('canStart: options.canStartRemoteAsr')
+    expect(hearingSource).toContain('canStart: remoteAsrOwnerSyncGate.compose(options.canStartRemoteAsr)')
   })
 })

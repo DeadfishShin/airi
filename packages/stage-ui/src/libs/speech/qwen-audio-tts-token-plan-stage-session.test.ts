@@ -77,10 +77,10 @@ class FakeAudioContext implements Qwen3TtsPcmAudioContext {
   }
 }
 
-function snapshot(): StreamingSessionSnapshot {
+function snapshot(voice = 'longanlingxin'): StreamingSessionSnapshot {
   return {
     model: 'qwen-audio-3.0-tts-plus',
-    voice: 'longanlingxin',
+    voice,
     voiceType: 'custom_configured',
     bufferEntireSession: false,
     extraBody: {},
@@ -99,7 +99,7 @@ async function settle() {
   }
 }
 
-function createSessionHarness(options: { now?: () => number } = {}) {
+function createSessionHarness(options: { now?: () => number, voice?: string } = {}) {
   const context = createContext()
   const audioContext = new FakeAudioContext()
   const calls: { start: number, text: string[], finish: number, cancel: number } = { start: 0, text: [], finish: 0, cancel: 0 }
@@ -108,9 +108,11 @@ function createSessionHarness(options: { now?: () => number } = {}) {
   const onError = vi.fn()
   const onSpeakingChange = vi.fn()
   const diagnostics: string[] = []
+  const starts: Array<{ sessionId: string, model: string, voice: string }> = []
 
-  defineInvokeHandler(context, qwenAudioTtsTokenPlanSessionStart, () => {
+  defineInvokeHandler(context, qwenAudioTtsTokenPlanSessionStart, (payload) => {
     calls.start++
+    starts.push(payload)
   })
   defineInvokeHandler(context, qwenAudioTtsTokenPlanTextAppend, async (payload) => {
     calls.text.push(payload.text)
@@ -129,7 +131,7 @@ function createSessionHarness(options: { now?: () => number } = {}) {
   const session = createStageTtsSession({
     providerId: 'qwen-audio-tts-token-plan',
     transport: 'bidirectional-ws',
-    streaming: snapshot,
+    streaming: () => snapshot(options.voice),
     audioContext: audioContext as unknown as BaseAudioContext,
     playbackManager: { schedule: vi.fn(), stopByIntent: vi.fn() },
     openIntent: () => { throw new Error('Token Plan must not use the segmenter.') },
@@ -143,7 +145,7 @@ function createSessionHarness(options: { now?: () => number } = {}) {
     },
   })
 
-  return { context, audioContext, calls, diagnostics, onDone, onError, onSpeakingChange, session, stageSummaries }
+  return { context, audioContext, calls, diagnostics, onDone, onError, onSpeakingChange, session, stageSummaries, starts }
 }
 
 describe('token Plan Qwen Audio TTS Stage adapter', () => {
@@ -163,6 +165,13 @@ describe('token Plan Qwen Audio TTS Stage adapter', () => {
       'TOKEN_PLAN_RENDERER_START_REQUESTED',
       'TOKEN_PLAN_RENDERER_START_RESOLVED',
     ])
+  })
+
+  it('forwards the selected canonical voice to the preview/formal Token Plan session route', async () => {
+    const harness = createSessionHarness({ voice: 'longanlufeng' })
+    await settle()
+
+    expect(harness.starts[0]?.voice).toBe('longanlufeng')
   })
 
   it('delivers binary PCM to the real bridge and waits for local drain after task-finished', async () => {

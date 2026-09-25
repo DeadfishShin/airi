@@ -34,6 +34,7 @@ lerna-debug.log*
 *.pcm
 *.wav
 !*.test.wav
+!apps/stage-tamagotchi/resources/token-plan-asr-capability-probe.wav
 *.ogg
 *.mp3
 

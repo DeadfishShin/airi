@@ -11,6 +11,7 @@ export interface QwenAudioTtsTokenPlanSessionPayload {
 }
 
 export interface QwenAudioTtsTokenPlanSessionStartPayload extends QwenAudioTtsTokenPlanSessionPayload {
+  model: string
   voice: string
 }
 

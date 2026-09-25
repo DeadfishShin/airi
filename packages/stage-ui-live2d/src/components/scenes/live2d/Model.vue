@@ -2,6 +2,8 @@
 import type { Application } from '@pixi/app'
 
 import type { PixiLive2DInternalModel } from '../../../composables/live2d'
+import type { Live2DCompatibilityProfile, Live2DLogicalParameter, Live2DMotionLoopLease } from '../../../utils/live2d-compatibility'
+import type { Live2DLoadRequest } from '../../../utils/live2d-load-ownership'
 
 import { listenBeatSyncBeatSignal } from '@proj-airi/stage-shared/beat-sync'
 import { useTheme } from '@proj-airi/ui'
@@ -18,7 +20,9 @@ import {
   createBeatSyncController,
   createLive2DMotionSpring,
   disableLive2DSdkBreath,
+  restoreLive2DModelParameterDefaults,
   useExpressionController,
+  useLive2DIdleEyeFocus,
   useLive2DMotionManagerUpdate,
   useMotionUpdatePluginAutoEyeBlink,
   useMotionUpdatePluginBeatSync,
@@ -30,8 +34,17 @@ import {
   useMotionUpdatePluginManualControl,
 } from '../../../composables/live2d'
 import { useFitModel } from '../../../composables/live2d/fit-model'
-import { Emotion, EmotionNeutralMotionName } from '../../../constants/emotions'
 import { getLive2DMotionControlModelOffset, useL2dViewControl, useLive2DMotionControl, useLive2dParams } from '../../../stores'
+import {
+  acquireLive2DSemanticMotionLoopLease,
+  bindLive2DFocusParameterTargets,
+  createLive2DCompatibilityProfile,
+  resolveCompletedSemanticMotionHandoff,
+  resolveLive2DMotionRequest,
+  shouldRestartResolvedIdleMotionOnFinish,
+} from '../../../utils/live2d-compatibility'
+import { createLive2DLoadOwnershipGuard, finalizeLive2DLoadState, shouldEmitLive2DLoadError } from '../../../utils/live2d-load-ownership'
+import { clearSelectedLive2DMotion, readSelectedLive2DMotion } from '../../../utils/live2d-runtime-motion'
 
 const props = withDefaults(defineProps<{
   modelSrc?: string
@@ -88,8 +101,11 @@ const {
 const modelSrcRef = toRef(() => props.modelSrc)
 
 const modelLoading = ref(false)
-// NOTICE: boolean is sufficient; this flag is only used inside loadModel to bail out if the component unmounts mid-load.
+// Every in-flight load is also guarded by a generation. A newer request or
+// unmount invalidates older async results before they can attach to the stage.
 let isUnmounted = false
+const loadOwnership = createLive2DLoadOwnershipGuard()
+let refreshCompatibilityProfile: (() => void) | undefined
 
 const modelLoadMutex = new Mutex()
 
@@ -104,6 +120,16 @@ const pixiApp = toRef(() => props.app)
 const paused = toRef(() => props.paused)
 const focusAt = toRef(() => props.focusAt)
 const model = shallowRef<Live2DModel<PixiLive2DInternalModel>>()
+const compatibilityProfile = shallowRef<Live2DCompatibilityProfile>()
+// Keep plugin registrations stable while allowing a model-scoped mapping to
+// refresh the resolver in place. The proxy delegates every read to the latest
+// resolved profile, so no model reload or duplicate motion pipeline is needed.
+const compatibilityRuntime = new Proxy({} as Live2DCompatibilityProfile, {
+  get(_target, property: keyof Live2DCompatibilityProfile) {
+    const profile = compatibilityProfile.value
+    return profile?.[property]
+  },
+})
 const initialModelWidth = ref<number>(0)
 const initialModelHeight = ref<number>(0)
 const mouthOpenSize = computed(() => Math.max(0, Math.min(100, props.mouthOpenSize)))
@@ -170,7 +196,6 @@ const live2dStore = useLive2dParams()
 const {
   currentMotion,
   availableMotions,
-  motionMap,
   modelParameters,
 } = storeToRefs(live2dStore)
 
@@ -196,6 +221,26 @@ const savedEyeBlink = shallowRef<any>(null)
 const savedExpressionManager = shallowRef<any>(null)
 
 const localCurrentMotion = ref<{ group: string, index: number }>({ group: 'Idle', index: 0 })
+interface ActiveSemanticMotion {
+  token: number
+  group: string
+  index: number
+  loopLease: Live2DMotionLoopLease
+}
+
+let semanticMotionToken = 0
+let activeSemanticMotion: ActiveSemanticMotion | undefined
+let pendingSemanticMotion: Pick<ActiveSemanticMotion, 'token' | 'group' | 'index'> | undefined
+let suppressCanonicalIdleAfterSemanticCompletion = false
+
+function invalidateActiveSemanticMotion() {
+  semanticMotionToken += 1
+  suppressCanonicalIdleAfterSemanticCompletion = false
+  activeSemanticMotion?.loopLease.restore()
+  activeSemanticMotion = undefined
+  pendingSemanticMotion = undefined
+}
+
 const beatSync = createBeatSyncController({
   baseAngles: () => ({
     x: modelParameters.value.angleX,
@@ -209,81 +254,129 @@ const beatSync = createBeatSyncController({
 const disposeShouldUpdateView = live2dStore.onShouldUpdateView(() => {
   loadModel()
 })
+const disposeMotionMappingChanged = live2dStore.onMotionMappingChanged(() => {
+  refreshCompatibilityProfile?.()
+})
 
 async function loadModel() {
+  refreshCompatibilityProfile = undefined
+  const request = loadOwnership.begin(modelSrcRef.value, props.modelId)
+
   await until(modelLoading).not.toBeTruthy()
 
   await modelLoadMutex.acquire()
   try {
-    await performModelLoad()
+    await performModelLoad(request)
   }
   finally {
     modelLoadMutex.release()
   }
 }
 
-async function performModelLoad() {
-  modelLoading.value = true
-  componentState.value = 'loading'
+function isCurrentLoadRequest(request: Live2DLoadRequest, target?: { app?: Application, stage?: Application['stage'] }) {
+  return loadOwnership.isCurrent(request, {
+    currentModelSrc: modelSrcRef.value,
+    currentModelId: props.modelId,
+    isUnmounted,
+    appIsCurrent: target?.app === undefined ? undefined : pixiApp.value === target.app,
+    stageIsCurrent: target?.stage === undefined ? undefined : pixiApp.value?.stage === target.stage,
+  })
+}
 
-  if (!pixiApp.value || !pixiApp.value.stage) {
-    try {
-      // NOTICE: shouldUpdateView can fire while the canvas (pixiApp) is being torn down/recreated.
-      // Wait briefly for the new stage instead of bailing out, otherwise we keep a blank screen.
-      await until(() => !!pixiApp.value && !!pixiApp.value.stage).toBeTruthy({ timeout: 1500 })
-    }
-    catch {
-      modelLoading.value = false
-      componentState.value = 'mounted'
-      return
-    }
-  }
-
-  // REVIEW: here as await until(...) guarded the pixiApp and stage to be valid.
-  if (model.value && pixiApp.value?.stage) {
-    // Dispose expression controller before destroying the old model
+function discardLoadedModel(candidate: Live2DModel<PixiLive2DInternalModel>) {
+  if (model.value === candidate) {
     expressionController.dispose()
     internalModelRef.value = undefined
-
-    try {
-      pixiApp.value.stage.removeChild(model.value)
-      model.value.destroy()
-    }
-    catch (error) {
-      console.warn('Error removing old model:', error)
-    }
+    compatibilityProfile.value = undefined
     model.value = undefined
-  }
-  if (!modelSrcRef.value) {
-    console.warn('No Live2D model source provided.')
-    modelLoading.value = false
-    componentState.value = 'mounted'
-    return
   }
 
   try {
-    if (isUnmounted) {
-      modelLoading.value = false
-      componentState.value = 'mounted'
+    candidate.parent?.removeChild(candidate)
+  }
+  catch (error) {
+    console.warn('[Live2D] Failed to detach stale model candidate:', error)
+  }
+
+  try {
+    candidate.destroy()
+  }
+  catch (error) {
+    console.warn('[Live2D] Failed to destroy stale model candidate:', error)
+  }
+}
+
+async function performModelLoad(request: Live2DLoadRequest) {
+  if (!isCurrentLoadRequest(request))
+    return
+
+  modelLoading.value = true
+  componentState.value = 'loading'
+  invalidateActiveSemanticMotion()
+
+  // Once the loading latch is raised, every terminal path below must pass
+  // through the finalizer. This includes stale requests that resume after
+  // waiting for a recreated PIXI stage.
+  let targetApp: Application | undefined
+  let targetStage: Application['stage'] | undefined
+
+  try {
+    if (!pixiApp.value || !pixiApp.value.stage) {
+      try {
+        // NOTICE: shouldUpdateView can fire while the canvas (pixiApp) is being torn down/recreated.
+        // Wait briefly for the new stage instead of bailing out, otherwise we keep a blank screen.
+        await until(() => !!pixiApp.value && !!pixiApp.value.stage).toBeTruthy({ timeout: 1500 })
+      }
+      catch {
+        return
+      }
+    }
+
+    targetApp = pixiApp.value
+    targetStage = targetApp?.stage
+    if (!targetApp || !targetStage || !isCurrentLoadRequest(request, { app: targetApp, stage: targetStage }))
+      return
+
+    // REVIEW: here as await until(...) guarded the pixiApp and stage to be valid.
+    if (model.value && targetStage) {
+      // Dispose expression controller before destroying the old model
+      expressionController.dispose()
+      internalModelRef.value = undefined
+      compatibilityProfile.value = undefined
+
+      try {
+        targetStage.removeChild(model.value)
+        model.value.destroy()
+      }
+      catch (error) {
+        console.warn('Error removing old model:', error)
+      }
+      model.value = undefined
+    }
+    const requestModelSrc = request.modelSrc
+    if (!requestModelSrc) {
+      console.warn('No Live2D model source provided.')
+      return
+    }
+
+    if (!isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })) {
       return
     }
 
     const live2DModel = new Live2DModel<PixiLive2DInternalModel>()
-    await Live2DFactory.setupLive2DModel(live2DModel, { url: modelSrcRef.value, id: props.modelId }, { autoInteract: false })
-    availableMotions.value.forEach((motion) => {
-      if (motion.motionName in Emotion) {
-        motionMap.value[motion.fileName] = motion.motionName
-      }
-      else {
-        motionMap.value[motion.fileName] = EmotionNeutralMotionName
-      }
-    })
+    await Live2DFactory.setupLive2DModel(live2DModel, { url: requestModelSrc, id: request.modelId }, { autoInteract: false })
+
+    // setupLive2DModel is asynchronous. A late candidate must never attach,
+    // install listeners, or reclaim the stage after its request is obsolete.
+    if (!isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })) {
+      discardLoadedModel(live2DModel)
+      return
+    }
 
     // --- Scene
 
     model.value = live2DModel
-    // REVIEW: pixiApp and stage are guaranteed to be valid here due to the until(...) above.
-    pixiApp.value!.stage.addChild(model.value)
+    targetStage.addChild(model.value)
     initialModelWidth.value = model.value.width
     initialModelHeight.value = model.value.height
     model.value.anchor.set(0.5, 0.5)
@@ -301,8 +394,24 @@ async function performModelLoad() {
     const internalModel = model.value.internalModel
     const coreModel = internalModel.coreModel
     const motionManager = internalModel.motionManager
+    const modelSettings = internalModel.settings as any
+    refreshCompatibilityProfile = () => {
+      const nextProfile = createLive2DCompatibilityProfile({
+        coreModel,
+        groups: modelSettings?.groups ?? modelSettings?.Groups,
+        motionDefinitions: motionManager.definitions,
+        motionOverrides: live2dStore.getMotionOverrides(request.modelId),
+        modelId: request.modelId,
+      })
+      compatibilityProfile.value = nextProfile
+      bindLive2DFocusParameterTargets(internalModel, nextProfile)
+    }
+    refreshCompatibilityProfile()
+    // Keep pixi-live2d-display's focus geometry and smoothing as the only
+    // pointer-coordinate authority. The compatibility layer only redirects
+    // Cubism4InternalModel's physical focus targets for legacy IDs.
     disableLive2DSdkBreath(internalModel)
-    coreModel.setParameterValueById('ParamMouthOpenY', mouthOpenSize.value)
+    compatibilityRuntime.setParameter(coreModel, 'mouthOpen', mouthOpenSize.value)
 
     availableMotions.value = Object
       .entries(motionManager.definitions)
@@ -313,52 +422,98 @@ async function performModelLoad() {
       })) || []))
       .filter(Boolean)
 
-    // Check if user has selected a runtime motion to play as idle
-    const selectedMotionGroup = localStorage.getItem('selected-runtime-motion-group')
-    const selectedMotionIndex = localStorage.getItem('selected-runtime-motion-index')
+    // A disabled idle setting is authoritative. Legacy profiles may still
+    // contain the old group/index keys; clear them before they can regain
+    // runtime authority. Invalid model-scoped selections fail closed.
+    const persistedRuntimeMotion = readSelectedLive2DMotion()
+    let selectedRuntimeMotion = persistedRuntimeMotion.motion
+    if (!live2dIdleAnimationEnabled.value || persistedRuntimeMotion.invalid) {
+      clearSelectedLive2DMotion()
+      selectedRuntimeMotion = undefined
+    }
+    else if (selectedRuntimeMotion) {
+      const groupIndex = (motionManager.groups as Record<string, any>)[selectedRuntimeMotion.group]
+      const motion = groupIndex === undefined
+        ? undefined
+        : motionManager.motionGroups[groupIndex]?.[selectedRuntimeMotion.index]
+      if (!motion) {
+        clearSelectedLive2DMotion()
+        selectedRuntimeMotion = undefined
+      }
+    }
 
     // Configure the selected motion to loop
-    if (selectedMotionGroup !== null && selectedMotionIndex) {
-      const groupIndex = (motionManager.groups as Record<string, any>)[selectedMotionGroup]
+    if (selectedRuntimeMotion) {
+      const groupIndex = (motionManager.groups as Record<string, any>)[selectedRuntimeMotion.group]
       if (groupIndex !== undefined && motionManager.motionGroups[groupIndex]) {
-        const motionIndex = Number.parseInt(selectedMotionIndex)
+        const motionIndex = selectedRuntimeMotion.index
         const motion = motionManager.motionGroups[groupIndex][motionIndex]
         if (motion && motion._looper) {
           // Force the motion to loop
           motion._looper.loopDuration = 0 // 0 means infinite loop
-          console.info('Configured motion to loop infinitely:', selectedMotionGroup, motionIndex)
+          console.info('Configured motion to loop infinitely:', selectedRuntimeMotion.group, motionIndex)
         }
       }
     }
 
-    if (selectedMotionGroup !== null && selectedMotionIndex && live2dIdleAnimationEnabled.value) {
+    if (selectedRuntimeMotion && live2dIdleAnimationEnabled.value) {
       setTimeout(() => {
-        console.info('Playing selected runtime motion:', selectedMotionGroup, selectedMotionIndex)
+        console.info('Playing selected runtime motion:', selectedRuntimeMotion.group, selectedRuntimeMotion.index)
         currentMotion.value = {
-          group: selectedMotionGroup,
-          index: Number.parseInt(selectedMotionIndex),
+          group: selectedRuntimeMotion.group,
+          index: selectedRuntimeMotion.index,
         }
       }, 300)
     }
 
-    // Remove eye ball movements from idle motion group to prevent conflicts
-    // This is too hacky
-    // FIXME: it cannot blink if loading a model only have idle motion
-    if (motionManager.groups.idle) {
-      motionManager.motionGroups[motionManager.groups.idle]?.forEach((motion) => {
-        motion._motionData.curves.forEach((curve: any) => {
-        // TODO: After emotion mapper, stage editor, eye related parameters should be take cared to be dynamical instead of hardcoding
-          if (curve.id === 'ParamEyeBallX' || curve.id === 'ParamEyeBallY') {
-            curve.id = `_${curve.id}`
-          }
-        })
+    const idleMotion = compatibilityRuntime.motionMap.idle
+    const resolvedNonStandardIdle = idleMotion
+      && idleMotion.confidence === 'high'
+      && idleMotion.group !== motionManager.groups.idle
+      ? idleMotion
+      : undefined
+    if (idleMotion && idleMotion.confidence === 'high' && !selectedRuntimeMotion && live2dIdleAnimationEnabled.value) {
+      setTimeout(() => {
+        currentMotion.value = { group: idleMotion.group, index: idleMotion.index }
+      }, 300)
+    }
+
+    // Prevent idle eye curves from fighting pointer focus. For a mixed
+    // non-standard source group, only protect the resolved idle candidate;
+    // sibling Happy/Angry/etc. motions must keep their authored curves.
+    const eyeBallIds = new Set([
+      compatibilityRuntime.parameterId('eyeBallX'),
+      compatibilityRuntime.parameterId('eyeBallY'),
+    ].filter(Boolean))
+    const protectIdleEyeCurves = (motion: any) => {
+      motion?._motionData?.curves?.forEach((curve: any) => {
+        if (eyeBallIds.has(curve.id))
+          curve.id = `_${curve.id}`
       })
+    }
+    if (eyeBallIds.size > 0) {
+      if (resolvedNonStandardIdle) {
+        const idleMotionObject = motionManager.motionGroups[resolvedNonStandardIdle.group]?.[resolvedNonStandardIdle.index]
+          ?? await motionManager.loadMotion(resolvedNonStandardIdle.group, resolvedNonStandardIdle.index)
+        if (!isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })) {
+          if (model.value === live2DModel)
+            model.value = undefined
+          discardLoadedModel(live2DModel)
+          return
+        }
+        protectIdleEyeCurves(idleMotionObject)
+      }
+      else {
+        const canonicalIdleGroup = motionManager.groups.idle
+        motionManager.motionGroups[canonicalIdleGroup]?.forEach(protectIdleEyeCurves)
+      }
     }
 
     // This is hacky too
     const motionManagerUpdate = useLive2DMotionManagerUpdate({
       internalModel,
       motionManager,
+      compatibility: compatibilityRuntime,
       modelParameters,
       live2dEyeTrackingEnabled,
       live2dEyeFocusSourceActive,
@@ -370,8 +525,8 @@ async function performModelLoad() {
     })
 
     motionManagerUpdate.register(useMotionUpdatePluginBeatSync(beatSync), 'pre')
-    motionManagerUpdate.register(useMotionUpdatePluginIdleDisable(), 'pre')
-    motionManagerUpdate.register(useMotionUpdatePluginIdleFocus(), 'post')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleDisable(useLive2DIdleEyeFocus(compatibilityRuntime)), 'pre')
+    motionManagerUpdate.register(useMotionUpdatePluginIdleFocus(useLive2DIdleEyeFocus(compatibilityRuntime)), 'post')
     // Both run in 'final' stage (ignores handled state).
     // Expression first: sets desired parameter values (e.g. closed eyes = 0).
     // Blink second: reads post-expression eye values, Multiply-modulates on top.
@@ -384,53 +539,155 @@ async function performModelLoad() {
 
     const hookedUpdate = motionManager.update as (model: PixiLive2DInternalModel['coreModel'], now: number) => boolean
     motionManager.update = function (model: PixiLive2DInternalModel['coreModel'], now: number) {
-      return motionManagerUpdate.hookUpdate(model, now, hookedUpdate)
+      const result = motionManagerUpdate.hookUpdate(model, now, hookedUpdate)
+
+      // Cubism can schedule its canonical Idle motion at the end of the same
+      // update that emits motionFinish. A semantic action with idle disabled
+      // explicitly suppresses that fallback for this frame only.
+      if (suppressCanonicalIdleAfterSemanticCompletion) {
+        suppressCanonicalIdleAfterSemanticCompletion = false
+        if (motionManager.state.currentGroup === motionManager.groups.idle)
+          motionManager.stopAllMotions()
+      }
+
+      return result
     }
 
     motionManager.on('motionStart', (group, index) => {
       localCurrentMotion.value = { group, index }
     })
 
-    // Listen for motion finish to restart runtime motion for looping
+    // Listen for semantic-action completion, selected runtime motion restart,
+    // or a finite, non-standard compatibility idle. Every handoff is made by
+    // exact group+index; the whole mixed source group is never randomized.
     motionManager.on('motionFinish', () => {
-      const selectedMotionGroup = localStorage.getItem('selected-runtime-motion-group')
-      const selectedMotionIndex = localStorage.getItem('selected-runtime-motion-index')
+      const selectedMotion = readSelectedLive2DMotion().motion
+      const finishedGroup = motionManager.state.currentGroup
+      const finishedIndex = motionManager.state.currentIndex
 
-      if (selectedMotionGroup !== null && selectedMotionIndex && live2dIdleAnimationEnabled.value) {
+      if (activeSemanticMotion) {
+        const completedSemantic = activeSemanticMotion
+        const isCurrentSemanticMotion = completedSemantic.group === finishedGroup
+          && completedSemantic.index === finishedIndex
+
+        // A completion from an older motion must never steal ownership from a
+        // newer semantic action. The SDK emits this event without the motion
+        // identity, so the current manager state is the authoritative check.
+        if (!isCurrentSemanticMotion)
+          return
+
+        activeSemanticMotion = undefined
+        completedSemantic.loopLease.restore()
+
+        const completionToken = completedSemantic.token
+        const queueExactMotion = (group: string, index: number) => {
+          requestAnimationFrame(() => {
+            if (semanticMotionToken !== completionToken)
+              return
+            currentMotion.value = { group, index }
+          })
+        }
+
+        const handoff = resolveCompletedSemanticMotionHandoff({
+          enabled: live2dIdleAnimationEnabled.value,
+          selectedMotion,
+          compatibilityIdle: resolvedNonStandardIdle,
+          active: completedSemantic,
+          finishedGroup,
+          finishedIndex,
+        })
+
+        if (handoff.type === 'selected' || handoff.type === 'compatibility') {
+          queueExactMotion(handoff.group, handoff.index)
+        }
+        else if (handoff.type === 'neutral') {
+          restoreLive2DModelParameterDefaults(coreModel)
+          suppressCanonicalIdleAfterSemanticCompletion = true
+        }
+        return
+      }
+
+      // A newer semantic request may still be loading its physical motion.
+      // Ignore the older motion's finish event until that request establishes
+      // its ownership; otherwise the SDK finish callback could queue idle and
+      // steal playback from the newer semantic action.
+      if (pendingSemanticMotion)
+        return
+
+      if (selectedMotion && live2dIdleAnimationEnabled.value) {
         // Restart the selected runtime motion immediately for seamless looping
-        console.info('Motion finished, restarting runtime motion:', selectedMotionGroup, selectedMotionIndex)
+        console.info('Motion finished, restarting runtime motion:', selectedMotion.group, selectedMotion.index)
         // Use requestAnimationFrame to restart on the next frame for smooth transition
         requestAnimationFrame(() => {
           currentMotion.value = {
-            group: selectedMotionGroup,
-            index: Number.parseInt(selectedMotionIndex),
+            group: selectedMotion.group,
+            index: selectedMotion.index,
           }
         })
+        return
       }
+
+      if (!resolvedNonStandardIdle)
+        return
+
+      const shouldRestartIdle = shouldRestartResolvedIdleMotionOnFinish({
+        enabled: live2dIdleAnimationEnabled.value,
+        manualMotionSelected: selectedMotion !== undefined,
+        canonicalIdleGroup: motionManager.groups.idle,
+        candidate: resolvedNonStandardIdle,
+        finishedGroup,
+        finishedIndex,
+      })
+      if (!shouldRestartIdle)
+        return
+
+      requestAnimationFrame(() => {
+        if (!live2dIdleAnimationEnabled.value)
+          return
+        if (readSelectedLive2DMotion().motion)
+          return
+        const activeGroup = motionManager.state.currentGroup
+        if (activeGroup && (activeGroup !== resolvedNonStandardIdle.group || motionManager.state.currentIndex !== resolvedNonStandardIdle.index))
+          return
+        currentMotion.value = {
+          group: resolvedNonStandardIdle.group,
+          index: resolvedNonStandardIdle.index,
+        }
+      })
     })
 
-    // Apply all stored parameters to the model
-    coreModel.setParameterValueById('ParamAngleX', modelParameters.value.angleX)
-    coreModel.setParameterValueById('ParamAngleY', modelParameters.value.angleY)
-    coreModel.setParameterValueById('ParamAngleZ', modelParameters.value.angleZ)
-    coreModel.setParameterValueById('ParamEyeLOpen', modelParameters.value.leftEyeOpen)
-    coreModel.setParameterValueById('ParamEyeROpen', modelParameters.value.rightEyeOpen)
-    coreModel.setParameterValueById('ParamEyeSmile', modelParameters.value.leftEyeSmile)
-    coreModel.setParameterValueById('ParamBrowLX', modelParameters.value.leftEyebrowLR)
-    coreModel.setParameterValueById('ParamBrowRX', modelParameters.value.rightEyebrowLR)
-    coreModel.setParameterValueById('ParamBrowLY', modelParameters.value.leftEyebrowY)
-    coreModel.setParameterValueById('ParamBrowRY', modelParameters.value.rightEyebrowY)
-    coreModel.setParameterValueById('ParamBrowLAngle', modelParameters.value.leftEyebrowAngle)
-    coreModel.setParameterValueById('ParamBrowRAngle', modelParameters.value.rightEyebrowAngle)
-    coreModel.setParameterValueById('ParamBrowLForm', modelParameters.value.leftEyebrowForm)
-    coreModel.setParameterValueById('ParamBrowRForm', modelParameters.value.rightEyebrowForm)
-    coreModel.setParameterValueById('ParamMouthOpenY', modelParameters.value.mouthOpen)
-    coreModel.setParameterValueById('ParamMouthForm', modelParameters.value.mouthForm)
-    coreModel.setParameterValueById('ParamCheek', modelParameters.value.cheek)
-    coreModel.setParameterValueById('ParamBodyAngleX', modelParameters.value.bodyAngleX)
-    coreModel.setParameterValueById('ParamBodyAngleY', modelParameters.value.bodyAngleY)
-    coreModel.setParameterValueById('ParamBodyAngleZ', modelParameters.value.bodyAngleZ)
-    coreModel.setParameterValueById('ParamBreath', modelParameters.value.breath)
+    // The SDK's own idle fallback only knows the canonical `Idle` group. A
+    // resolved non-standard candidate therefore needs the listener above;
+    // canonical groups remain owned by pixi-live2d-display.
+
+    // Apply all stored parameters through the resolved logical compatibility map.
+    const setLogical = (logical: Live2DLogicalParameter, value: number) => {
+      compatibilityProfile.value?.setParameter(coreModel, logical, value)
+    }
+    const setPhysical = (id: string, value: number) => {
+      compatibilityProfile.value?.setPhysicalParameter(coreModel, id, value)
+    }
+    setLogical('angleX', modelParameters.value.angleX)
+    setLogical('angleY', modelParameters.value.angleY)
+    setLogical('angleZ', modelParameters.value.angleZ)
+    setLogical('eyeLeftOpen', modelParameters.value.leftEyeOpen)
+    setLogical('eyeRightOpen', modelParameters.value.rightEyeOpen)
+    setPhysical('ParamEyeSmile', modelParameters.value.leftEyeSmile)
+    setPhysical('ParamBrowLX', modelParameters.value.leftEyebrowLR)
+    setPhysical('ParamBrowRX', modelParameters.value.rightEyebrowLR)
+    setPhysical('ParamBrowLY', modelParameters.value.leftEyebrowY)
+    setPhysical('ParamBrowRY', modelParameters.value.rightEyebrowY)
+    setPhysical('ParamBrowLAngle', modelParameters.value.leftEyebrowAngle)
+    setPhysical('ParamBrowRAngle', modelParameters.value.rightEyebrowAngle)
+    setPhysical('ParamBrowLForm', modelParameters.value.leftEyebrowForm)
+    setPhysical('ParamBrowRForm', modelParameters.value.rightEyebrowForm)
+    setLogical('mouthOpen', modelParameters.value.mouthOpen)
+    setLogical('mouthForm', modelParameters.value.mouthForm)
+    setPhysical('ParamCheek', modelParameters.value.cheek)
+    setLogical('bodyAngleX', modelParameters.value.bodyAngleX)
+    setLogical('bodyAngleY', modelParameters.value.bodyAngleY)
+    setLogical('bodyAngleZ', modelParameters.value.bodyAngleZ)
+    setLogical('breath', modelParameters.value.breath)
 
     // Save SDK manager references so they can be restored if expression is
     // toggled off at runtime.
@@ -460,11 +717,21 @@ async function performModelLoad() {
   }
   catch (error) {
     console.error('[Live2D] Failed to load model:', error)
+    const requestIsCurrent = isCurrentLoadRequest(request, { app: targetApp, stage: targetStage })
+    if (!shouldEmitLive2DLoadError(requestIsCurrent)) {
+      console.warn('[Live2D] Suppressed stale load error:', error)
+      return
+    }
+
     emits('error', error instanceof Error ? error : new Error(String(error)))
   }
   finally {
-    modelLoading.value = false
-    componentState.value = 'mounted'
+    const finalizedState = finalizeLive2DLoadState({
+      modelLoading: modelLoading.value,
+      componentState: componentState.value,
+    }, isUnmounted)
+    modelLoading.value = finalizedState.modelLoading
+    componentState.value = finalizedState.componentState
     await initExpressionController(internalModelRef.value).catch((err) => {
       console.warn('[Model.vue] Expression controller initialization failed:', err)
     })
@@ -507,18 +774,94 @@ async function initExpressionController(internalModel?: PixiLive2DInternalModel)
 
 async function setMotion(motionName: string, index?: number) {
   // TODO: motion? Not every Live2D model has motion, we do need to help users to set motion
-  if (!model.value) {
+  const currentModel = model.value
+  if (!currentModel) {
     console.warn('Cannot set motion: model not loaded')
     return
   }
 
-  console.info('Setting motion:', motionName, 'index:', index)
+  const motionDefinitions = currentModel.internalModel.motionManager.definitions
+  const resolvedRequest = resolveLive2DMotionRequest(
+    compatibilityRuntime,
+    motionName,
+    index,
+    motionDefinitions,
+  )
+  if (!resolvedRequest) {
+    console.warn('Cannot resolve Live2D motion:', motionName)
+    return
+  }
+
+  invalidateActiveSemanticMotion()
+  const requestToken = semanticMotionToken
+
+  const resolvedGroup = resolvedRequest.group
+  const resolvedIndex = resolvedRequest.index
+  console.info('Setting motion:', resolvedGroup, 'index:', resolvedIndex)
+
+  // The model's motion metadata is authoritative for direct/manual playback,
+  // but AIRI semantic emotions are transient actions. Temporarily disabling a
+  // looping semantic motion lets the normal SDK finish path run, after which
+  // the listener above hands the model back to the exact resolved idle motion.
+  let loopLease: Live2DMotionLoopLease | undefined
+  if (resolvedRequest.source === 'semantic') {
+    pendingSemanticMotion = {
+      token: requestToken,
+      group: resolvedGroup,
+      index: resolvedIndex,
+    }
+    let motion: Awaited<ReturnType<typeof currentModel.internalModel.motionManager.loadMotion>> | undefined
+    try {
+      motion = await currentModel.internalModel.motionManager.loadMotion(resolvedGroup, resolvedIndex)
+    }
+    catch (error) {
+      if (pendingSemanticMotion?.token === requestToken)
+        pendingSemanticMotion = undefined
+      console.error('Failed to load semantic Live2D motion:', resolvedGroup, resolvedIndex, error)
+      return
+    }
+    if (semanticMotionToken !== requestToken) {
+      return
+    }
+    if (!motion) {
+      if (pendingSemanticMotion?.token === requestToken)
+        pendingSemanticMotion = undefined
+      console.warn('Cannot load Live2D motion:', resolvedGroup, resolvedIndex)
+      return
+    }
+    pendingSemanticMotion = undefined
+    loopLease = acquireLive2DSemanticMotionLoopLease(motion)
+    activeSemanticMotion = {
+      token: requestToken,
+      group: resolvedGroup,
+      index: resolvedIndex,
+      loopLease,
+    }
+  }
+
   try {
-    await model.value.motion(motionName, index, MotionPriority.FORCE)
-    console.info('Motion started successfully:', motionName)
+    if (semanticMotionToken !== requestToken) {
+      loopLease?.restore()
+      return
+    }
+    const started = await currentModel.motion(resolvedGroup, resolvedIndex, MotionPriority.FORCE)
+    if (semanticMotionToken !== requestToken) {
+      loopLease?.restore()
+      return
+    }
+    if (!started) {
+      loopLease?.restore()
+      if (activeSemanticMotion?.token === requestToken)
+        activeSemanticMotion = undefined
+      return
+    }
+    console.info('Motion started successfully:', resolvedGroup)
   }
   catch (error) {
-    console.error('Failed to start motion:', motionName, error)
+    loopLease?.restore()
+    if (activeSemanticMotion?.token === requestToken)
+      activeSemanticMotion = undefined
+    console.error('Failed to start motion:', resolvedGroup, error)
   }
 }
 
@@ -542,7 +885,7 @@ function updateDropShadowFilter() {
   model.value.filters = [dropShadowFilter.value]
 }
 
-watch(modelSrcRef, async () => await loadModel(), { immediate: true })
+watch([modelSrcRef, () => props.modelId], async () => await loadModel(), { immediate: true })
 watch(dark, updateDropShadowFilter, { immediate: true })
 watch([model, themeColorsHue], updateDropShadowFilter)
 watch(live2dShadowEnabled, updateDropShadowFilter)
@@ -572,145 +915,99 @@ watch(currentMotion, value => setMotion(value.group, value.index))
 watch(paused, value => value ? pixiApp.value?.stop() : pixiApp.value?.start())
 
 // Watch and apply model parameters
+function setCurrentLogicalParameter(logical: Live2DLogicalParameter, value: number) {
+  const coreModel = model.value?.internalModel.coreModel
+  if (!coreModel)
+    return
+  compatibilityProfile.value?.setParameter(coreModel, logical, value)
+}
+
+function setCurrentPhysicalParameter(id: string, value: number) {
+  const coreModel = model.value?.internalModel.coreModel
+  if (!coreModel)
+    return
+  compatibilityProfile.value?.setPhysicalParameter(coreModel, id, value)
+}
+
 watch(() => modelParameters.value.angleX, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamAngleX', value)
-  }
+  setCurrentLogicalParameter('angleX', value)
 })
 
 watch(() => modelParameters.value.angleY, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamAngleY', value)
-  }
+  setCurrentLogicalParameter('angleY', value)
 })
 
 watch(() => modelParameters.value.angleZ, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamAngleZ', value)
-  }
+  setCurrentLogicalParameter('angleZ', value)
 })
 
 watch(() => modelParameters.value.leftEyeOpen, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamEyeLOpen', value)
-  }
+  setCurrentLogicalParameter('eyeLeftOpen', value)
 })
 
 watch(() => modelParameters.value.rightEyeOpen, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamEyeROpen', value)
-  }
+  setCurrentLogicalParameter('eyeRightOpen', value)
 })
 
 watch(() => modelParameters.value.mouthOpen, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamMouthOpenY', value)
-  }
+  setCurrentLogicalParameter('mouthOpen', value)
 })
 
 watch(() => modelParameters.value.mouthForm, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamMouthForm', value)
-  }
+  setCurrentLogicalParameter('mouthForm', value)
 })
 
 watch(() => modelParameters.value.cheek, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamCheek', value)
-  }
+  setCurrentPhysicalParameter('ParamCheek', value)
 })
 
 watch(() => modelParameters.value.bodyAngleX, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBodyAngleX', value)
-  }
+  setCurrentLogicalParameter('bodyAngleX', value)
 })
 
 watch(() => modelParameters.value.bodyAngleY, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBodyAngleY', value)
-  }
+  setCurrentLogicalParameter('bodyAngleY', value)
 })
 
 watch(() => modelParameters.value.bodyAngleZ, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBodyAngleZ', value)
-  }
+  setCurrentLogicalParameter('bodyAngleZ', value)
 })
 
 watch(() => modelParameters.value.breath, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBreath', value)
-  }
+  setCurrentLogicalParameter('breath', value)
 })
 
 // Watch eyebrow parameters
 watch(() => modelParameters.value.leftEyebrowLR, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowLX', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowLX', value)
 })
 
 watch(() => modelParameters.value.rightEyebrowLR, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowRX', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowRX', value)
 })
 
 watch(() => modelParameters.value.leftEyebrowY, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowLY', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowLY', value)
 })
 
 watch(() => modelParameters.value.rightEyebrowY, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowRY', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowRY', value)
 })
 
 watch(() => modelParameters.value.leftEyebrowAngle, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowLAngle', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowLAngle', value)
 })
 
 watch(() => modelParameters.value.rightEyebrowAngle, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowRAngle', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowRAngle', value)
 })
 
 watch(() => modelParameters.value.leftEyebrowForm, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowLForm', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowLForm', value)
 })
 
 watch(() => modelParameters.value.rightEyebrowForm, (value) => {
-  if (model.value) {
-    const internalModel = model.value.internalModel
-    internalModel.coreModel.setParameterValueById('ParamBrowRForm', value)
-  }
+  setCurrentPhysicalParameter('ParamBrowRForm', value)
 })
 
 // Watch for idle animation setting changes and stop motions if disabled
@@ -770,9 +1067,13 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true
+  loadOwnership.invalidate()
+  invalidateActiveSemanticMotion()
   resizeAnimation?.pause()
   disposeShouldUpdateView?.()
+  disposeMotionMappingChanged?.()
   expressionController.dispose()
+  compatibilityProfile.value = undefined
 })
 
 function listMotionGroups() {

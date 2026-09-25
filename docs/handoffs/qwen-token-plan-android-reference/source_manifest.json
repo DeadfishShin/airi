@@ -1,0 +1,160 @@
+{
+  "document_version": "1.0",
+  "generated_date": "2026-09-25",
+  "purpose": "Android implementation reference, not an Android repository state checkpoint",
+  "source_repository": "DeadfishShin/airi",
+  "source_pr": 15,
+  "accepted_branch": "codex/macos-live2d-generic-compatibility-v1",
+  "accepted_head": "7ef071c791483aa362872e473cea676d2f248fa9",
+  "accepted_tree": "1904fbfc5e0ddf4ee9fab5fcf4dbd05fa45914c9",
+  "accepted_daily_app_asar_sha256": "77134827610ca31345c6b5a3b2ff2e6ced41c5eb82cdd6b39bd84a26b884a20a",
+  "pr_status_at_last_accepted_report": {
+    "state": "OPEN",
+    "draft": true,
+    "merged": false
+  },
+  "android_repository_current_state": "NOT_INSPECTED_DO_NOT_INFER",
+  "mac_local_deployment_evidence": "Owner confirmation and latest CODEX_REPORT; no direct Mac access in this documentation pass",
+  "sources": [
+    {
+      "id": "S01",
+      "title": "工程笔记（包含多处历史状态，须按正文说明判读）",
+      "path": "docs/project-notes/qwen-audio-realtime-voice-integration.md",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/docs/project-notes/qwen-audio-realtime-voice-integration.md",
+      "blob_sha": "b8ff2be777764de9fcb0ca65637078005680d0a5",
+      "inspection": "selected_sections_read"
+    },
+    {
+      "id": "S02",
+      "title": "Token Plan TTS 原生 WS 协议、参数、音频帧判定",
+      "path": "apps/stage-tamagotchi/src/main/services/airi/qwen-audio-tts-token-plan/protocol.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/apps/stage-tamagotchi/src/main/services/airi/qwen-audio-tts-token-plan/protocol.ts",
+      "blob_sha": null,
+      "inspection": "protocol_definitions_and_parser_read"
+    },
+    {
+      "id": "S03",
+      "title": "Token Plan StageTtsSession 与本地播放 drain",
+      "path": "packages/stage-ui/src/libs/speech/qwen-audio-tts-token-plan-stage-session.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/packages/stage-ui/src/libs/speech/qwen-audio-tts-token-plan-stage-session.ts",
+      "blob_sha": "56d2d94689f7d6641ac92d4362b09a305b6cbc11",
+      "inspection": "lines_1_250_read"
+    },
+    {
+      "id": "S04",
+      "title": "Token Plan secure credential store / 诊断 / 环境回退",
+      "path": "apps/stage-tamagotchi/src/main/services/airi/qwen-audio-tts-token-plan-credentials/store.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/apps/stage-tamagotchi/src/main/services/airi/qwen-audio-tts-token-plan-credentials/store.ts",
+      "blob_sha": "8c70aeabd52570bd3ed7786a6ba6f2afde16bc4f",
+      "inspection": "full_read"
+    },
+    {
+      "id": "S05",
+      "title": "账号 model-list 请求与兼容性过滤",
+      "path": "apps/stage-tamagotchi/src/main/services/airi/qwen-audio-tts-token-plan-models-probe/index.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/apps/stage-tamagotchi/src/main/services/airi/qwen-audio-tts-token-plan-models-probe/index.ts",
+      "blob_sha": "f7cfc86cbd18c6e196251b0d994ca882950c23c2",
+      "inspection": "lines_1_240_read"
+    },
+    {
+      "id": "S06",
+      "title": "1 个 bundled model、599 voice 快照及动态模型交集",
+      "path": "packages/stage-ui/src/libs/providers/qwen-audio-tts-token-plan-catalog.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/packages/stage-ui/src/libs/providers/qwen-audio-tts-token-plan-catalog.ts",
+      "blob_sha": "01aeb566f908e81b347f6e5e87af5e40c32fde46",
+      "inspection": "header_and_mapping_functions_read; voice_count_from_accepted_reports"
+    },
+    {
+      "id": "S07",
+      "title": "TTS 设置页、搜索、浏览/选择、model/voice 来源分离",
+      "path": "packages/stage-pages/src/pages/settings/providers/speech/qwen-audio-tts-token-plan.vue",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/packages/stage-pages/src/pages/settings/providers/speech/qwen-audio-tts-token-plan.vue",
+      "blob_sha": "ef46cae7de59cce67ac2ddd1e1e1c5dc26939048",
+      "inspection": "lines_1_250_read"
+    },
+    {
+      "id": "S08",
+      "title": "Realtime-plus 共用事件 parser、WAV parser、请求构造",
+      "path": "apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime-plus-token-plan-transcript-probe/protocol.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime-plus-token-plan-transcript-probe/protocol.ts",
+      "blob_sha": "dbb786b4e03895499a45e3b2bf56605b95ef31c5",
+      "inspection": "full_read"
+    },
+    {
+      "id": "S09",
+      "title": "生产 Token Plan realtime-plus ASR main service",
+      "path": "apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime-token-plan/index.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/apps/stage-tamagotchi/src/main/services/airi/qwen-audio-realtime-token-plan/index.ts",
+      "blob_sha": "ce0dc4f851ffbad2c7aae75654bfeed4b22e59a0",
+      "inspection": "full_read"
+    },
+    {
+      "id": "S10",
+      "title": "生产 ASR renderer provider、SSE 内部桥接、平台 gate",
+      "path": "packages/stage-ui/src/libs/providers/providers/qwen-audio-realtime-token-plan/index.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/packages/stage-ui/src/libs/providers/providers/qwen-audio-realtime-token-plan/index.ts",
+      "blob_sha": "1270257ecc6a0b014f4920741aa308a72d231f7c",
+      "inspection": "full_read"
+    },
+    {
+      "id": "S11",
+      "title": "final transcript 消费器",
+      "path": "packages/stage-ui/src/libs/providers/stream-transcription/final-transcript-consumer.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/packages/stage-ui/src/libs/providers/stream-transcription/final-transcript-consumer.ts",
+      "blob_sha": null,
+      "inspection": "full_added_file_read_in_commit_diff"
+    },
+    {
+      "id": "S12",
+      "title": "final transcript 消费器测试",
+      "path": "packages/stage-ui/src/libs/providers/stream-transcription/final-transcript-consumer.test.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/packages/stage-ui/src/libs/providers/stream-transcription/final-transcript-consumer.test.ts",
+      "blob_sha": null,
+      "inspection": "full_added_file_read_in_commit_diff"
+    },
+    {
+      "id": "S13",
+      "title": "Hearing 消费器与最终交接调用点",
+      "path": "packages/stage-ui/src/stores/modules/hearing.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/packages/stage-ui/src/stores/modules/hearing.ts",
+      "blob_sha": null,
+      "inspection": "relevant_final_commit_diff_read"
+    },
+    {
+      "id": "S14",
+      "title": "渲染端 chat ingress 契约测试",
+      "path": "apps/stage-tamagotchi/src/renderer/pages/index.telemetry.test.ts",
+      "url": "https://github.com/DeadfishShin/airi/blob/7ef071c791483aa362872e473cea676d2f248fa9/apps/stage-tamagotchi/src/renderer/pages/index.telemetry.test.ts",
+      "blob_sha": null,
+      "inspection": "relevant_final_commit_diff_read"
+    }
+  ],
+  "commit_evidence": {
+    "url": "https://github.com/DeadfishShin/airi/commit/7ef071c791483aa362872e473cea676d2f248fa9",
+    "read": true
+  },
+  "legacy_handoff_lookup": {
+    "path": "docs/handoffs/QWEN_MACOS_TO_ANDROID_IMPLEMENTATION_HANDOFF.md",
+    "ref": "7ef071c791483aa362872e473cea676d2f248fa9",
+    "result": "GitHub fetch_file returned 404; not used as content authority"
+  },
+  "fixture": {
+    "path": "apps/stage-tamagotchi/resources/token-plan-asr-capability-probe.wav",
+    "sha256": "713844ea446a4b5bf38536485be3992d02ca1be45f2e4945add65aa210523f2e",
+    "wav_bytes": 34080,
+    "raw_pcm_bytes": 29984,
+    "sample_rate": 16000,
+    "channels": 1,
+    "bits_per_sample": 16,
+    "duration_seconds": 0.937,
+    "expected_text": "AIRI probe",
+    "included_in_this_document_bundle": false
+  },
+  "security": {
+    "real_credentials_included": false,
+    "ciphertext_included": false,
+    "user_profile_included": false,
+    "real_audio_included": false,
+    "generated_protocol_examples_are_synthetic": true
+  }
+}

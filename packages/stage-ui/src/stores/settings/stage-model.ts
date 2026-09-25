@@ -5,12 +5,22 @@ import type { DisplayModel } from '../display-models'
 import { useLocalStorageManualReset } from '@proj-airi/stage-shared/composables'
 import { refManualReset, useEventListener } from '@vueuse/core'
 import { defineStore, storeToRefs } from 'pinia'
-import { computed, watch } from 'vue'
+import { computed, shallowRef, watch } from 'vue'
 
-import { DisplayModelFormat, useDisplayModelsStore } from '../display-models'
+import { DisplayModelBinaryUnreadableError, DisplayModelFormat, useDisplayModelsStore } from '../display-models'
 
 export type StageModelRenderer = 'live2d' | 'vrm' | 'spine' | 'tachie' | 'mmd' | 'godot' | 'disabled' | undefined
-type BuiltInStageModelRenderer = Exclude<StageModelRenderer, 'godot'>
+export type BuiltInStageModelRenderer = Exclude<StageModelRenderer, 'godot'>
+
+/**
+ * Renderer-facing model identity. The id and source are committed together
+ * only after the selected display model has been resolved.
+ */
+export interface ResolvedStageModel {
+  modelId: string
+  modelSrc: string
+  renderer: BuiltInStageModelRenderer
+}
 
 const useStageModelSelectionStore = defineStore('settings-stage-model-selection', () => {
   // Pinia synchronization owns live cross-window state. localStorage only
@@ -47,6 +57,7 @@ export const useSettingsStageModel = defineStore('settings-stage-model', () => {
   })
   const stageModelSelectedDisplayModel = refManualReset<DisplayModel | undefined>(undefined)
   const stageModelSelectedUrl = refManualReset<string | undefined>(undefined)
+  const stageModelResolved = shallowRef<ResolvedStageModel | undefined>(undefined)
   const stageModelRenderer = refManualReset<StageModelRenderer>(undefined)
   const stageModelBuiltInRenderer = refManualReset<BuiltInStageModelRenderer>(undefined)
 
@@ -88,20 +99,54 @@ export const useSettingsStageModel = defineStore('settings-stage-model', () => {
     }
   }
 
+  function clearResolvedStageModel() {
+    stageModelResolved.value = undefined
+    replaceStageModelUrl(undefined)
+    stageModelSelectedDisplayModel.value = undefined
+    stageModelBuiltInRenderer.value = 'disabled'
+    if (stageModelRenderer.value !== 'godot')
+      stageModelRenderer.value = 'disabled'
+  }
+
+  function commitResolvedStageModel(model: DisplayModel, modelSrc: string, renderer: BuiltInStageModelRenderer) {
+    // The main Stage consumes only this ownership unit. The legacy refs below
+    // remain available for settings/preview UI and durable-selection flows.
+    stageModelResolved.value = {
+      modelId: model.id,
+      modelSrc,
+      renderer,
+    }
+    stageModelSelectedDisplayModel.value = model
+    replaceStageModelUrl(modelSrc)
+    stageModelBuiltInRenderer.value = renderer
+    if (stageModelRenderer.value !== 'godot')
+      stageModelRenderer.value = renderer
+  }
+
   async function updateStageModel() {
     const requestId = ++stageModelUpdateSequence
     const selectedModelId = stageModelSelectedState.value
 
     if (!selectedModelId) {
-      replaceStageModelUrl(undefined)
-      stageModelSelectedDisplayModel.value = undefined
-      stageModelBuiltInRenderer.value = 'disabled'
-      if (stageModelRenderer.value !== 'godot')
-        stageModelRenderer.value = 'disabled'
+      clearResolvedStageModel()
       return
     }
 
-    const model = await displayModelsStore.getDisplayModel(selectedModelId)
+    let model: DisplayModel | undefined
+    try {
+      model = await displayModelsStore.getDisplayModel(selectedModelId)
+    }
+    catch (error) {
+      if (!(error instanceof DisplayModelBinaryUnreadableError))
+        throw error
+
+      // Keep the durable selection so the model selector can expose its repair
+      // action. The stage must publish no resolved model while its source is
+      // unreadable, and later selection changes can retry through this seam.
+      if (requestId === stageModelUpdateSequence)
+        clearResolvedStageModel()
+      return
+    }
     if (requestId !== stageModelUpdateSequence)
       return
 
@@ -112,18 +157,12 @@ export const useSettingsStageModel = defineStore('settings-stage-model', () => {
         return
       }
 
-      replaceStageModelUrl(undefined)
-      stageModelSelectedDisplayModel.value = undefined
-      stageModelBuiltInRenderer.value = 'disabled'
-      if (stageModelRenderer.value !== 'godot')
-        stageModelRenderer.value = 'disabled'
+      clearResolvedStageModel()
       return
     }
 
     const builtInRenderer = resolveBuiltInStageModelRenderer(model)
-    stageModelBuiltInRenderer.value = builtInRenderer
-    if (stageModelRenderer.value !== 'godot')
-      stageModelRenderer.value = builtInRenderer
+    let resolvedModelUrl: string
 
     if (model.type === 'file') {
       const nextUrl = URL.createObjectURL(model.file)
@@ -132,13 +171,13 @@ export const useSettingsStageModel = defineStore('settings-stage-model', () => {
         return
       }
 
-      replaceStageModelUrl(nextUrl)
+      resolvedModelUrl = nextUrl
     }
     else {
-      replaceStageModelUrl(model.url)
+      resolvedModelUrl = model.url
     }
 
-    stageModelSelectedDisplayModel.value = model
+    commitResolvedStageModel(model, resolvedModelUrl, builtInRenderer)
   }
 
   function setStageModelRenderer(renderer: StageModelRenderer) {
@@ -167,6 +206,7 @@ export const useSettingsStageModel = defineStore('settings-stage-model', () => {
     stageModelSelectionStore.resetState()
     stageModelSelectedDisplayModel.reset()
     stageModelSelectedUrl.reset()
+    stageModelResolved.value = undefined
     stageModelRenderer.reset()
     stageModelBuiltInRenderer.reset()
     stageViewControlsEnabled.reset()
@@ -179,6 +219,7 @@ export const useSettingsStageModel = defineStore('settings-stage-model', () => {
     stageModelSelected,
     stageModelSelectedUrl,
     stageModelSelectedDisplayModel,
+    stageModelResolved,
     stageViewControlsEnabled,
 
     initializeStageModel,

@@ -26,7 +26,9 @@ import { OFFICIAL_TRANSCRIPTION_PROVIDER_ID } from '../../libs/providers'
 import { APPLE_SPEECH_TRANSCRIPTION_PROVIDER_ID, executeAppleSpeechStream } from '../../libs/providers/providers/apple-speech'
 import { streamWebSpeechAPITranscription } from '../../libs/providers/providers/browser-web-speech-api'
 import { QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID } from '../../libs/providers/providers/qwen-audio-realtime'
+import { QWEN_AUDIO_REALTIME_TOKEN_PLAN_ASR_PROVIDER_ID } from '../../libs/providers/providers/qwen-audio-realtime-token-plan'
 import { streamTranscription } from '../../libs/providers/stream-transcription'
+import { createStreamingTranscriptionFinalConsumer } from '../../libs/providers/stream-transcription/final-transcript-consumer'
 import { useVAD } from '../ai/models/vad'
 import { useProviderConfigStore } from '../providers/config'
 import { useProviderStore } from '../providers/provider'
@@ -244,6 +246,7 @@ const STREAM_TRANSCRIPTION_EXECUTORS: Record<string, StreamTranscription> = {
   [APPLE_SPEECH_TRANSCRIPTION_PROVIDER_ID]: executeAppleSpeechStream,
   [OFFICIAL_TRANSCRIPTION_PROVIDER_ID]: streamTranscription,
   [QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID]: streamTranscription,
+  [QWEN_AUDIO_REALTIME_TOKEN_PLAN_ASR_PROVIDER_ID]: streamTranscription,
   // Web Speech API is handled specially in transcribeForMediaStream since it works directly with MediaStream
 }
 
@@ -852,7 +855,16 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
     const sessionCallbacks = session.callbacks
     void (async () => {
       let fullText = ''
-      let latestSnapshotIsFinal = false
+      const finalConsumer = createStreamingTranscriptionFinalConsumer({
+        onUpdate: (text) => {
+          fullText = text
+          sessionCallbacks?.onTranscriptionUpdate?.(text)
+        },
+        onFinal: (text) => {
+          sessionSpan?.addEvent(IOEvents.ASRSentenceEnd, { [IOAttributes.ASRText]: text })
+          sessionCallbacks?.onSentenceEnd?.(text)
+        },
+      })
       try {
         const reader = result.fullStream.getReader()
 
@@ -860,30 +872,15 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
           const { done, value } = await reader.read()
           if (done)
             break
-          if (value.type === 'transcript.text.snapshot') {
-            latestSnapshotIsFinal = value.isFinal
-            fullText = value.text
-            sessionCallbacks?.onTranscriptionUpdate?.(fullText)
-            continue
-          }
-          if (value.type !== 'transcript.text.delta' || !value.delta)
-            continue
-
-          fullText += value.delta
-          sessionCallbacks?.onTranscriptionUpdate?.(fullText)
-          sessionSpan?.addEvent(IOEvents.ASRSentenceEnd, { [IOAttributes.ASRText]: value.delta })
-          sessionCallbacks?.onSentenceEnd?.(value.delta)
+          finalConsumer.consume(value)
         }
+        finalConsumer.complete()
       }
       catch (err) {
         if (!isExpectedStreamStopError(err))
           console.error('Error reading text stream:', err)
       }
       finally {
-        if (latestSnapshotIsFinal && fullText.trim()) {
-          sessionSpan?.addEvent(IOEvents.ASRSentenceEnd, { [IOAttributes.ASRText]: fullText })
-          sessionCallbacks?.onSentenceEnd?.(fullText)
-        }
         sessionSpan?.setAttribute(IOAttributes.ASRText, fullText)
         sessionSpan?.end()
         if (asrSpan === sessionSpan)
@@ -918,7 +915,7 @@ export const useHearingSpeechInputPipeline = defineStore('modules:hearing:speech
     streamingSession.value = session
     startStreamingAsrSpan(providerId)
 
-    const providerOptions = providerId === QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID
+    const providerOptions = providerId === QWEN_AUDIO_REALTIME_ASR_PROVIDER_ID || providerId === QWEN_AUDIO_REALTIME_TOKEN_PLAN_ASR_PROVIDER_ID
       ? {
           ...options.providerOptions,
           language: options.providerOptions?.language

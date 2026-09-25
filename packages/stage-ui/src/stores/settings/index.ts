@@ -72,6 +72,7 @@ export const useSettings = defineStore('settings', () => {
     stageModelSelected: stageModelRefs.stageModelSelected,
     stageModelSelectedUrl: stageModelRefs.stageModelSelectedUrl,
     stageModelSelectedDisplayModel: stageModelRefs.stageModelSelectedDisplayModel,
+    stageModelResolved: stageModelRefs.stageModelResolved,
     stageViewControlsEnabled: stageModelRefs.stageViewControlsEnabled,
 
     // Spine settings

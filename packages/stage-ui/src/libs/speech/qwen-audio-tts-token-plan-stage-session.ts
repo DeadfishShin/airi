@@ -221,7 +221,7 @@ export function createQwenAudioTtsTokenPlanStageSession(options: QwenAudioTtsTok
   removeFinishedListener = eventa.context.on(qwenAudioTtsTokenPlanSessionFinished, handleRemoteFinished)
 
   queueOperation(async () => {
-    const payload: QwenAudioTtsTokenPlanSessionStartPayload = { sessionId: intentId, voice: snapshot.voice }
+    const payload: QwenAudioTtsTokenPlanSessionStartPayload = { sessionId: intentId, model: snapshot.model, voice: snapshot.voice }
     emitDiagnostic('TOKEN_PLAN_RENDERER_START_REQUESTED')
     await start(payload)
     emitDiagnostic('TOKEN_PLAN_RENDERER_START_RESOLVED')

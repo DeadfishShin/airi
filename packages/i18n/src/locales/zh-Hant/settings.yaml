@@ -130,6 +130,17 @@ live2d:
   map-motions:
     play: 播放動作
     title: 映射動作
+    semantic:
+      auto: 自動 / 未設定
+      idle: 待機
+      happy: 開心
+      sad: 悲傷
+      angry: 生氣
+      think: 思考
+      surprise: 驚訝
+      awkward: 尷尬
+      question: 疑問
+      curious: 好奇
   title: Live2D 設定
   scale-and-position:
     title: 縮放與位置
@@ -870,6 +881,38 @@ pages:
       buy: Charge
       description: Flux packages to choose from.
   providers:
+    speech:
+      qwen-audio-tts-token-plan:
+        catalog:
+          loading: 正在載入隨應用提供的官方 Token Plan 目錄……
+          empty: 內建目錄沒有返回 Token Plan TTS 模型；已保留現有選擇和目錄。
+          emptyVoices: 目前模型沒有返回音色；已保留之前的目錄和選擇。
+          failed: 內建目錄載入失敗；已保留現有選擇和目錄。
+          loaded: 已從隨應用提供的官方目錄快照載入 {models} 個 Token Plan TTS 模型和 {voices} 個相容音色（資料日期：{date}）。
+          source: 隨應用提供的官方目錄快照
+          accountSource: Token Plan 帳號 API
+          modelSourceLabel: 模型來源
+          voiceSourceLabel: 音色來源
+          accountTitle: 帳號模型目錄
+          accountDescription: 透過 Token Plan API 重新整理目前帳號支援的 TTS 模型。已儲存的憑據只在 Electron 主程序中使用；官方目錄仍作為備用目錄。
+          accountReload: 重新整理帳號模型
+          accountReloading: 正在重新整理帳號模型……
+          accountLoading: 正在重新整理 Token Plan 帳號模型目錄……
+          accountLoaded: 已從 Token Plan 帳號 API 載入 {models} 個相容 TTS 模型；{voices} 個音色仍來自隨應用提供的官方目錄快照。
+          accountFailed: '帳號模型重新整理返回 {responseClass}；仍可使用隨應用提供的官方目錄。'
+          notConfigured: 尚未設定 Token Plan 憑據；仍可使用隨應用提供的官方目錄。
+          customNotQueried: 自訂音色：未查詢
+        realtimeProbe:
+          title: Token Plan 即時轉寫診斷
+          description: 針對 qwen-audio-3.0-realtime-plus 的一次手動、有界、僅轉寫探測假設。這不是正式 ASR 功能。
+          profile: 執行 profile 權威
+          credential: Token Plan 憑據
+          diagnosticReason: 憑據診斷原因
+          fixture: 探測音訊（原始 PCM）
+          readiness: 探測就緒狀態
+          runtimePath: 主程序 user data 路徑
+          button: 探測 Token Plan 即時轉寫合同
+          running: 正在探測 Token Plan 即時轉寫……
     catalog:
       edit:
         config-id-not-found: 找不到提供者設定。
@@ -1014,6 +1057,24 @@ pages:
       app-local-audio-transcription:
         title: 應用程式內（本機）
         description: https://github.com/moeru-ai/xsai-transformers
+      qwen-audio-realtime-token-plan-transcription:
+        title: Qwen Audio 3.0 Realtime Plus — Token Plan
+        description: Token Plan 語音辨識，僅輸出轉錄文字。
+        environment: >-
+          使用 Electron 主程序中已儲存的 Token Plan 憑據。此服務來源只傳送音訊用於語音辨識，不會生成回答。
+        fields:
+          model:
+            label: ASR 模型
+            description: 選擇 Token Plan 即時轉錄模型。
+            placeholder: 選擇 ASR 模型
+          language:
+            label: ASR 語言
+            description: 選擇語音辨識的語言提示，或讓服務自動偵測。
+            placeholder: 選擇 ASR 語言
+            options:
+              auto: 自動偵測
+              zh: 中文
+              en: 英文
       app-local-audio-speech:
         title: 應用程式內（本機）
         description: https://github.com/moeru-ai/xsai-transformers

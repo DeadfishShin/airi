@@ -5,6 +5,16 @@ import { nanoid } from 'nanoid'
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
+import {
+  createRuntimeFile,
+  DisplayModelBinaryUnreadableError,
+  DisplayModelPersistenceWriteError,
+  hydratePersistedDisplayModelFile,
+  serializeDisplayModelFile,
+} from './display-model-persistence'
+
+export { DisplayModelBinaryUnreadableError } from './display-model-persistence'
+
 export enum DisplayModelFormat {
   Live2dZip = 'live2d-zip',
   Live2dDirectory = 'live2d-directory',
@@ -19,6 +29,16 @@ export enum DisplayModelFormat {
 export type DisplayModel
   = | DisplayModelFile
     | DisplayModelURL
+
+export interface UnreadableDisplayModelMetadata {
+  id: string
+  format: DisplayModelFormat
+  type: 'file'
+  name: string
+  fileName?: string
+  previewImage?: string
+  importedAt: number
+}
 
 const presetLive2dProUrl = new URL('../assets/live2d/models/hiyori_pro_zh.zip', import.meta.url).href
 const presetLive2dFreeUrl = new URL('../assets/live2d/models/hiyori_free_zh.zip', import.meta.url).href
@@ -65,30 +85,124 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
   let generateMMDPreview: (file: File) => Promise<string | undefined>
 
   const displayModelsFromIndexedDBLoading = ref(false)
+  const displayModelLoadErrors = ref<Record<string, DisplayModelBinaryUnreadableError>>({})
+  const displayModelLoadErrorMetadata = ref<Record<string, UnreadableDisplayModelMetadata>>({})
+
+  const isCustomDisplayModelId = (id: string) => id.startsWith('display-model-')
+
+  function rememberLoadError(id: string, error: unknown, value?: unknown) {
+    if (error instanceof DisplayModelBinaryUnreadableError) {
+      displayModelLoadErrors.value = { ...displayModelLoadErrors.value, [id]: error }
+    }
+    else {
+      const wrappedError = new DisplayModelBinaryUnreadableError(id, error)
+      displayModelLoadErrors.value = { ...displayModelLoadErrors.value, [id]: wrappedError }
+    }
+
+    const metadata = readUnreadableDisplayModelMetadata(id, value)
+    if (metadata) {
+      displayModelLoadErrorMetadata.value = {
+        ...displayModelLoadErrorMetadata.value,
+        [id]: metadata,
+      }
+    }
+  }
+
+  function readUnreadableDisplayModelMetadata(id: string, value: unknown): UnreadableDisplayModelMetadata | undefined {
+    if (!value || typeof value !== 'object')
+      return undefined
+
+    const record = value as {
+      format?: unknown
+      type?: unknown
+      name?: unknown
+      previewImage?: unknown
+      importedAt?: unknown
+      file?: { name?: unknown }
+    }
+    if (record.type !== 'file' || typeof record.format !== 'string' || typeof record.importedAt !== 'number')
+      return undefined
+
+    const fileName = typeof record.file?.name === 'string' ? record.file.name : undefined
+    return {
+      id,
+      format: record.format as DisplayModelFormat,
+      type: 'file',
+      name: typeof record.name === 'string' ? record.name : fileName ?? id,
+      fileName,
+      previewImage: typeof record.previewImage === 'string' ? record.previewImage : undefined,
+      importedAt: record.importedAt,
+    }
+  }
+
+  async function persistRecord(id: string, value: unknown) {
+    try {
+      await localforage.setItem(id, value)
+    }
+    catch (error) {
+      throw new DisplayModelPersistenceWriteError(id, error)
+    }
+  }
+
+  async function hydrateModel(id: string, value: unknown) {
+    const hydrated = await hydratePersistedDisplayModelFile(id, value)
+    if (hydrated.migratedRecord)
+      await persistRecord(id, hydrated.migratedRecord)
+
+    return {
+      ...hydrated.model,
+      format: hydrated.model.format as DisplayModelFormat,
+    } satisfies DisplayModelFile
+  }
+
+  function publishHydratedModel(model: DisplayModelFile) {
+    const index = displayModels.value.findIndex(item => item.id === model.id)
+    if (index === -1) {
+      displayModels.value = [...displayModels.value, model]
+      return
+    }
+
+    displayModels.value[index] = model
+  }
 
   async function loadDisplayModelsFromIndexedDB() {
     await until(displayModelsFromIndexedDBLoading).toBe(false)
 
     displayModelsFromIndexedDBLoading.value = true
     const models = [...displayModelsPresets]
+    displayModelLoadErrors.value = {}
+    displayModelLoadErrorMetadata.value = {}
 
     try {
-      await localforage.iterate<{ format: DisplayModelFormat, file: File, importedAt: number, previewImage?: string }, void>((val, key) => {
-        if (key.startsWith('display-model-')) {
-          models.push({ id: key, format: val.format, type: 'file', file: val.file, name: val.file.name, importedAt: val.importedAt, previewImage: val.previewImage })
-        }
-      })
-    }
-    catch (err) {
-      console.error(err)
-    }
+      const keys = (await localforage.keys()).filter(key => isCustomDisplayModelId(key))
+      for (const id of keys) {
+        const value = await localforage.getItem<unknown>(id)
+        if (!value)
+          continue
 
-    displayModels.value = models.sort((a, b) => b.importedAt - a.importedAt)
-    displayModelsFromIndexedDBLoading.value = false
+        try {
+          models.push(await hydrateModel(id, value))
+        }
+        catch (error) {
+          if (error instanceof DisplayModelPersistenceWriteError)
+            throw error
+          rememberLoadError(id, error, value)
+        }
+      }
+
+      displayModels.value = models.sort((a, b) => b.importedAt - a.importedAt)
+    }
+    finally {
+      displayModelsFromIndexedDBLoading.value = false
+    }
   }
 
   async function getDisplayModel(id: string) {
     await until(displayModelsFromIndexedDBLoading).toBe(false)
+    const loadError = displayModelLoadErrors.value[id]
+    if (loadError)
+      throw loadError
+
     // NOTICE:
     // Newly imported file models are inserted into displayModels before callers pick them.
     // Reading memory first keeps updateStageModel from racing an IndexedDB write and treating
@@ -99,12 +213,24 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
     if (modelFromMemory)
       return modelFromMemory
 
-    const modelFromFile = await localforage.getItem<DisplayModelFile>(id)
+    const modelFromFile = await localforage.getItem<unknown>(id)
     if (modelFromFile) {
-      return modelFromFile
+      try {
+        const hydratedModel = await hydrateModel(id, modelFromFile)
+        publishHydratedModel(hydratedModel)
+        return hydratedModel
+      }
+      catch (error) {
+        if (!(error instanceof DisplayModelPersistenceWriteError))
+          rememberLoadError(id, error, modelFromFile)
+        throw error
+      }
     }
 
     // Fallback to in-memory presets if not found in localforage
+    if (isCustomDisplayModelId(id))
+      return undefined
+
     return displayModelsPresets.find(model => model.id === id)
   }
 
@@ -116,23 +242,23 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
 
   async function addDisplayModel(format: DisplayModelFormat, file: File) {
     await until(displayModelsFromIndexedDBLoading).toBe(false)
-    const newDisplayModel: DisplayModelFile = { id: `display-model-${nanoid()}`, format, type: 'file', file, name: file.name, importedAt: Date.now() }
+    const newDisplayModelMetadata: Omit<DisplayModelFile, 'file'> = { id: `display-model-${nanoid()}`, format, type: 'file', name: file.name, importedAt: Date.now() }
 
     if (format === DisplayModelFormat.Live2dZip) {
       const previewImage = await loadLive2DModelPreview(file)
-      newDisplayModel.previewImage = previewImage
+      newDisplayModelMetadata.previewImage = previewImage
     }
     else if (format === DisplayModelFormat.VRM) {
       const previewImage = await loadVrmModelPreview(file)
-      newDisplayModel.previewImage = previewImage
+      newDisplayModelMetadata.previewImage = previewImage
     }
     else if (format === DisplayModelFormat.SpineZip) {
       const previewImage = await loadSpineModelPreview(file)
-      newDisplayModel.previewImage = previewImage
+      newDisplayModelMetadata.previewImage = previewImage
     }
     else if (format === DisplayModelFormat.TachieZip) {
       const previewImage = await loadTachieModelPreview(file)
-      newDisplayModel.previewImage = previewImage
+      newDisplayModelMetadata.previewImage = previewImage
     }
     else if (format === DisplayModelFormat.PMXZip || format === DisplayModelFormat.PMXDirectory || format === DisplayModelFormat.PMD) {
       // NOTICE:
@@ -144,55 +270,97 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
       try {
         if (!generateMMDPreview)
           throw new Error('MMD preview module not initialized')
-        newDisplayModel.previewImage = await loadMMDModelPreview(file)
+        newDisplayModelMetadata.previewImage = await loadMMDModelPreview(file)
       }
       catch (err) {
         console.error('[display-models] MMD preview generation failed; importing without a thumbnail:', err)
       }
     }
 
-    displayModels.value.unshift(newDisplayModel)
+    const newDisplayModel = { ...newDisplayModelMetadata, file } satisfies DisplayModelFile
+    const persistedRecord = await serializeDisplayModelFile(newDisplayModel)
+    await persistRecord(newDisplayModel.id, persistedRecord)
 
-    // NOTICE:
-    // Keep this awaited. The settings model pick flow can call getDisplayModel immediately
-    // after import; fire-and-forget persistence creates a race where the selected custom model
-    // exists in the UI but is not yet readable from IndexedDB in a later route/render pass.
-    // Source/context: model-selector import flow -> settings-stage-model.updateStageModel().
-    // Removal condition: imported display models are persisted through a transactional queue
-    // that blocks pick/navigation until the write is durably complete.
-    await localforage.setItem<DisplayModelFile>(newDisplayModel.id, newDisplayModel)
-      .catch(err => console.error(err))
-
-    return newDisplayModel
+    const runtimeModel: DisplayModelFile = { ...newDisplayModel, file: createRuntimeFile(persistedRecord) }
+    displayModels.value.unshift(runtimeModel)
+    return runtimeModel
   }
 
   async function renameDisplayModel(id: string, name: string) {
     await until(displayModelsFromIndexedDBLoading).toBe(false)
-    const displayModel = id.startsWith('display-model-')
-      ? await localforage.getItem<DisplayModelFile>(id)
-      : displayModels.value.find(m => m.id === id)
+    const displayModel = await getDisplayModel(id)
 
     if (!displayModel)
       return
 
-    displayModel.name = name
+    if (displayModel.type === 'file') {
+      const updatedModel = { ...displayModel, name }
+      const persistedRecord = await serializeDisplayModelFile(updatedModel)
+      await persistRecord(id, persistedRecord)
+      publishHydratedModel(updatedModel)
+      return
+    }
 
-    // Update reactive state
     const index = displayModels.value.findIndex(m => m.id === id)
-    if (index !== -1) {
-      displayModels.value[index].name = name
-    }
+    if (index !== -1)
+      displayModels.value[index] = { ...displayModels.value[index], name }
+  }
 
-    // Persist if it's a file-based model
-    if (id.startsWith('display-model-')) {
-      await localforage.setItem(id, displayModel)
+  async function replaceDisplayModelFilePayload(existingModelId: string, replacementFile: File) {
+    await until(displayModelsFromIndexedDBLoading).toBe(false)
+    if (!isCustomDisplayModelId(existingModelId))
+      throw new Error(`Only custom display-model records can be repaired: ${existingModelId}`)
+
+    const storedRecord = await localforage.getItem<unknown>(existingModelId)
+    if (!storedRecord || typeof storedRecord !== 'object')
+      throw new Error(`Display-model record not found: ${existingModelId}`)
+
+    const stored = storedRecord as { format?: unknown, name?: unknown, importedAt?: unknown, previewImage?: unknown }
+    const currentModel = displayModels.value.find(model => model.id === existingModelId)
+    const format = typeof stored.format === 'string'
+      ? stored.format as DisplayModelFormat
+      : currentModel?.type === 'file' ? currentModel.format : undefined
+    if (!format || typeof stored.importedAt !== 'number')
+      throw new Error(`Display-model record metadata is invalid: ${existingModelId}`)
+
+    const replacementModel: DisplayModelFile = {
+      id: existingModelId,
+      format,
+      type: 'file',
+      file: replacementFile,
+      name: typeof stored.name === 'string'
+        ? stored.name
+        : currentModel?.type === 'file' ? currentModel.name : replacementFile.name,
+      importedAt: stored.importedAt,
+      previewImage: typeof stored.previewImage === 'string' ? stored.previewImage : undefined,
     }
+    const persistedRecord = await serializeDisplayModelFile(replacementModel)
+    await persistRecord(existingModelId, persistedRecord)
+
+    const hydratedReplacement: DisplayModelFile = {
+      ...replacementModel,
+      file: createRuntimeFile(persistedRecord),
+    }
+    publishHydratedModel(hydratedReplacement)
+    const remainingErrors = { ...displayModelLoadErrors.value }
+    delete remainingErrors[existingModelId]
+    displayModelLoadErrors.value = remainingErrors
+    const remainingMetadata = { ...displayModelLoadErrorMetadata.value }
+    delete remainingMetadata[existingModelId]
+    displayModelLoadErrorMetadata.value = remainingMetadata
+    return hydratedReplacement
   }
 
   async function removeDisplayModel(id: string) {
     await until(displayModelsFromIndexedDBLoading).toBe(false)
     await localforage.removeItem(id)
     displayModels.value = displayModels.value.filter(model => model.id !== id)
+    const remainingErrors = { ...displayModelLoadErrors.value }
+    delete remainingErrors[id]
+    displayModelLoadErrors.value = remainingErrors
+    const remainingMetadata = { ...displayModelLoadErrorMetadata.value }
+    delete remainingMetadata[id]
+    displayModelLoadErrorMetadata.value = remainingMetadata
   }
 
   async function resetDisplayModels() {
@@ -237,11 +405,14 @@ export const useDisplayModelsStore = defineStore('display-models', () => {
   return {
     displayModels,
     displayModelsFromIndexedDBLoading,
+    displayModelLoadErrors,
+    displayModelLoadErrorMetadata,
 
     initialize,
     loadDisplayModelsFromIndexedDB,
     getDisplayModel,
     addDisplayModel,
+    replaceDisplayModelFilePayload,
     renameDisplayModel,
     removeDisplayModel,
     resetDisplayModels,

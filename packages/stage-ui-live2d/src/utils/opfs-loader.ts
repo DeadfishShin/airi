@@ -22,8 +22,10 @@ interface OPFSCacheMeta {
  *
  * v3: entry paths are now decoded via `decodeZipFileName`; bumping invalidates
  * caches written with the previous mojibake filenames so they are re-saved.
+ * v4: cache hits require a recorded source URL, including for blob URLs, so a
+ * reused model ID cannot replay a payload from a different source.
  */
-const live2DOpfsCacheVersion = 3
+const live2DOpfsCacheVersion = 4
 
 interface IgnoredArchivePathSegmentRule {
   matches: (segment: string) => boolean
@@ -151,10 +153,10 @@ export class OPFSCache {
         return null
       }
 
-      const shouldValidateSourceUrl = !sourceUrl.startsWith('blob:')
-      if (shouldValidateSourceUrl && meta.sourceUrl && meta.sourceUrl !== sourceUrl) {
-        // NOTICE: Skip cache when the requested URL changes while the key stays the same.
-        // This avoids serving a stale model when ids are reused or props are out of sync.
+      if (!meta?.sourceUrl || meta.sourceUrl !== sourceUrl) {
+        // NOTICE: Skip cache when the requested source changes while the key stays
+        // the same. Blob URLs are intentionally included: a fresh blob can carry
+        // different bytes even when the imported model ID is reused.
         // eslint-disable-next-line no-console
         console.debug(`[OPFS] Cache mismatch for ${key}, source url changed`)
         await root.removeEntry(dirHandle.name, { recursive: true }) // actually invalidates cache

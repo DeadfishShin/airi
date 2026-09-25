@@ -174,6 +174,17 @@ live2d:
   map-motions:
     play: Play Motion
     title: Map Motions
+    semantic:
+      auto: Auto / Unset
+      idle: Idle
+      happy: Happy
+      sad: Sad
+      angry: Angry
+      think: Think
+      surprise: Surprise
+      awkward: Awkward
+      question: Question
+      curious: Curious
   title: Live2D Settings
   scale-and-position:
     title: Scale And Position
@@ -984,6 +995,38 @@ pages:
       buy: Charge
       description: Flux packages to choose from.
   providers:
+    speech:
+      qwen-audio-tts-token-plan:
+        catalog:
+          loading: Loading the bundled official Token Plan directory…
+          empty: The bundled directory returned no Token Plan TTS models; existing selection and directory were preserved.
+          emptyVoices: The selected model returned no voices; the previous directory and selection were preserved.
+          failed: The bundled directory could not be loaded; existing selection and directory were preserved.
+          loaded: '{models} Token Plan TTS model(s) and {voices} model-compatible voices loaded from the bundled official directory snapshot (published {date}).'
+          source: Bundled official directory snapshot
+          accountSource: Token Plan account API
+          modelSourceLabel: Model source
+          voiceSourceLabel: Voice source
+          accountTitle: Account model directory
+          accountDescription: Refresh the current account's compatible TTS models through the Token Plan API. The saved credential stays in the Electron main process; the official directory remains the fallback.
+          accountReload: Refresh account models
+          accountReloading: Refreshing account models…
+          accountLoading: Refreshing the Token Plan account model directory…
+          accountLoaded: 'Loaded {models} compatible TTS model(s) from the Token Plan account API; {voices} voices remain from the bundled official directory snapshot.'
+          accountFailed: 'Account model refresh returned {responseClass}; the bundled official directory remains available.'
+          notConfigured: No Token Plan credential is configured; the bundled official directory remains available.
+          customNotQueried: 'custom voices: not queried'
+        realtimeProbe:
+          title: Token Plan realtime transcript diagnostic
+          description: One manual, bounded transcript-only probe hypothesis for qwen-audio-3.0-realtime-plus. This is not the production ASR feature.
+          profile: Runtime profile authority
+          credential: Token Plan credential
+          diagnosticReason: Credential diagnostic reason
+          fixture: Probe fixture (raw PCM)
+          readiness: Probe readiness
+          runtimePath: Main-process user data path
+          button: Probe Token Plan realtime transcript contract
+          running: Probing Token Plan realtime transcript…
     catalog:
       edit:
         config-id-not-found: Provider configuration not found.
@@ -1563,6 +1606,26 @@ pages:
           language:
             label: ASR language
             description: Choose a language hint for Qwen Audio recognition, or let the service detect it automatically.
+            placeholder: Select an ASR language
+            options:
+              auto: Auto-detect
+              zh: Chinese
+              en: English
+      qwen-audio-realtime-token-plan-transcription:
+        title: Qwen Audio 3.0 Realtime Plus — Token Plan
+        description: Token Plan speech recognition with transcript-only output.
+        environment: >-
+          Uses the existing Token Plan credential stored by the Electron main
+          process. The provider sends audio only for speech recognition and
+          does not generate answers.
+        fields:
+          model:
+            label: ASR model
+            description: Select the Token Plan realtime transcription model.
+            placeholder: Select an ASR model
+          language:
+            label: ASR language
+            description: Choose a language hint for speech recognition, or let the service detect it automatically.
             placeholder: Select an ASR language
             options:
               auto: Auto-detect

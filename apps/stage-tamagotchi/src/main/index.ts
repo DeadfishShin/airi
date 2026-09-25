@@ -38,7 +38,16 @@ import { setupBuiltInServer } from './services/airi/http-server'
 import { setupMcpStdioManager } from './services/airi/mcp-servers'
 import { setupExtensionHost } from './services/airi/plugins'
 import { setupQwenAudioRealtimeAsr } from './services/airi/qwen-audio-realtime'
+import { setupQwenAudioRealtimePlusTokenPlanProbe } from './services/airi/qwen-audio-realtime-plus-token-plan-transcript-probe'
+import {
+  resolveTokenPlanRealtimeTranscriptProbeMode,
+  runTokenPlanRealtimeTranscriptProbe,
+  TOKEN_PLAN_REALTIME_TRANSCRIPT_PROBE_DAILY_PROFILE,
+} from './services/airi/qwen-audio-realtime-plus-token-plan-transcript-probe/one-shot-runner'
+import { setupQwenAudioRealtimeTokenPlanAsr } from './services/airi/qwen-audio-realtime-token-plan'
 import { setupQwenAudioTtsTokenPlan } from './services/airi/qwen-audio-tts-token-plan'
+import { setupQwenAudioTtsTokenPlanCredentials } from './services/airi/qwen-audio-tts-token-plan-credentials'
+import { setupQwenAudioTtsTokenPlanModelsProbe } from './services/airi/qwen-audio-tts-token-plan-models-probe'
 import { setupDashScopePaygCredentials } from './services/airi/qwen-dashscope-payg-credentials'
 import { setupQwen3TtsRealtime } from './services/airi/qwen-tts-realtime'
 import { setupRealtimeVoiceE2eTelemetry } from './services/airi/realtime-voice-e2e-telemetry'
@@ -86,7 +95,8 @@ setupDebugger()
 
 const log = useLogg('main').useGlobalConfig()
 
-const appUserDataPath = env.APP_USER_DATA_PATH?.trim()
+const tokenPlanRealtimeTranscriptProbeMode = resolveTokenPlanRealtimeTranscriptProbeMode(process.argv)
+const appUserDataPath = env.APP_USER_DATA_PATH?.trim() || (tokenPlanRealtimeTranscriptProbeMode ? TOKEN_PLAN_REALTIME_TRANSCRIPT_PROBE_DAILY_PROFILE : undefined)
 if (appUserDataPath) {
   app.setPath('userData', appUserDataPath)
 }
@@ -178,6 +188,37 @@ app.whenReady().then(async () => {
     return
   }
 
+  if (tokenPlanRealtimeTranscriptProbeMode) {
+    const credentialStore = setupQwenAudioTtsTokenPlanCredentials()
+    const probe = setupQwenAudioRealtimePlusTokenPlanProbe({ credentialStore })
+    try {
+      const run = await runTokenPlanRealtimeTranscriptProbe({
+        mode: tokenPlanRealtimeTranscriptProbeMode,
+        service: probe,
+      })
+      log.log(JSON.stringify({
+        event: 'token-plan-realtime-transcript-probe-complete',
+        artifactPath: run.artifactPath,
+        finalState: run.artifact.finalState,
+        exitCode: run.exitCode,
+      }))
+      await probe.dispose()
+      await credentialStore.dispose()
+      if (run.exitCode !== 0)
+        process.exitCode = run.exitCode
+    }
+    catch (error) {
+      await probe.dispose()
+      await credentialStore.dispose()
+      console.error(error)
+      process.exitCode = 3
+    }
+    finally {
+      app.quit()
+    }
+    return
+  }
+
   setupPermissionHandlers(session.defaultSession, hasSelectedScreenCaptureSource)
 
   // Initialize file logger and register the hook
@@ -238,6 +279,11 @@ app.whenReady().then(async () => {
     build: ({ dependsOn }) => setupDashScopePaygCredentials({ lifecycle: dependsOn.lifecycle }),
   })
 
+  const qwenAudioTtsTokenPlanCredentials = injeca.provide('services:qwen-audio-tts-token-plan-credentials', {
+    dependsOn: { lifecycle },
+    build: ({ dependsOn }) => setupQwenAudioTtsTokenPlanCredentials({ lifecycle: dependsOn.lifecycle }),
+  })
+
   const deepSeekCredentials = injeca.provide('services:deepseek-credentials', {
     dependsOn: { lifecycle },
     build: ({ dependsOn }) => setupDeepSeekCredentials({ lifecycle: dependsOn.lifecycle }),
@@ -251,9 +297,36 @@ app.whenReady().then(async () => {
     }),
   })
 
+  const qwenAudioRealtimeTokenPlanAsr = injeca.provide('modules:qwen-audio-realtime-token-plan-asr', {
+    dependsOn: { lifecycle, qwenAudioTtsTokenPlanCredentials },
+    build: ({ dependsOn }) => setupQwenAudioRealtimeTokenPlanAsr({
+      lifecycle: dependsOn.lifecycle,
+      credentialStore: dependsOn.qwenAudioTtsTokenPlanCredentials,
+    }),
+  })
+
+  const qwenAudioRealtimePlusTokenPlanProbe = injeca.provide('modules:qwen-audio-realtime-plus-token-plan-probe', {
+    dependsOn: { lifecycle, qwenAudioTtsTokenPlanCredentials },
+    build: ({ dependsOn }) => setupQwenAudioRealtimePlusTokenPlanProbe({
+      lifecycle: dependsOn.lifecycle,
+      credentialStore: dependsOn.qwenAudioTtsTokenPlanCredentials,
+    }),
+  })
+
   const qwenAudioTtsTokenPlan = injeca.provide('modules:qwen-audio-tts-token-plan', {
-    dependsOn: { lifecycle },
-    build: ({ dependsOn }) => setupQwenAudioTtsTokenPlan(dependsOn),
+    dependsOn: { lifecycle, qwenAudioTtsTokenPlanCredentials },
+    build: ({ dependsOn }) => setupQwenAudioTtsTokenPlan({
+      lifecycle: dependsOn.lifecycle,
+      credentialStore: dependsOn.qwenAudioTtsTokenPlanCredentials,
+    }),
+  })
+
+  const qwenAudioTtsTokenPlanModelsProbe = injeca.provide('modules:qwen-audio-tts-token-plan-models-probe', {
+    dependsOn: { lifecycle, qwenAudioTtsTokenPlanCredentials },
+    build: ({ dependsOn }) => setupQwenAudioTtsTokenPlanModelsProbe({
+      lifecycle: dependsOn.lifecycle,
+      credentialStore: dependsOn.qwenAudioTtsTokenPlanCredentials,
+    }),
   })
 
   const qwen3TtsRealtime = injeca.provide('modules:qwen3-tts-realtime', {
@@ -366,7 +439,7 @@ app.whenReady().then(async () => {
   }
 
   injeca.invoke({
-    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioTtsTokenPlan, qwen3TtsRealtime, realtimeVoiceE2eTelemetry, deepSeekCredentials },
+    dependsOn: { mainWindow, tray, serverChannel, airiHttpServer, godotStageManager, pluginHost, mcpStdioManager, onboardingWindow: onboardingWindowManager, widgetsWindow: widgetsManager, spotlightWindow, artistryConfig, qwenAudioRealtimeAsr, qwenAudioRealtimeTokenPlanAsr, qwenAudioRealtimePlusTokenPlanProbe, qwenAudioTtsTokenPlan, qwenAudioTtsTokenPlanModelsProbe, qwen3TtsRealtime, realtimeVoiceE2eTelemetry, deepSeekCredentials },
     callback: async (deps) => {
       const { context } = createContext(ipcMain)
       await setupArtistryBridge({

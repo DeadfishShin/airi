@@ -42,9 +42,8 @@ const mmdComponentState = ref<'pending' | 'loading' | 'mounted'>('pending')
 const vrmPreviewStageInstanceId = `model-settings-preview-stage:${Math.random().toString(36).slice(2, 10)}`
 
 const {
-  stageModelSelected,
-  stageModelSelectedUrl,
   stageModelRenderer,
+  stageModelResolved,
   themeColorsHue,
   themeColorsHueDynamic,
 
@@ -81,28 +80,28 @@ function captureCanvasFrame(canvas?: HTMLCanvasElement) {
 }
 
 async function capturePreviewFrame() {
-  if (stageModelRenderer.value === 'live2d')
+  if (stageModelResolved.value?.renderer === 'live2d')
     return captureCanvasFrame(live2dSceneRef.value?.canvasElement())
 
-  if (stageModelRenderer.value === 'vrm')
+  if (stageModelResolved.value?.renderer === 'vrm')
     return captureCanvasFrame(vrmSceneRef.value?.canvasElement())
 
-  if (stageModelRenderer.value === 'spine')
+  if (stageModelResolved.value?.renderer === 'spine')
     return captureCanvasFrame(spineSceneRef.value?.canvasElement())
 
-  if (stageModelRenderer.value === 'tachie')
+  if (stageModelResolved.value?.renderer === 'tachie')
     return captureCanvasFrame(tachieSceneRef.value?.canvasElement())
 
-  if (stageModelRenderer.value === 'mmd')
+  if (stageModelResolved.value?.renderer === 'mmd')
     return captureCanvasFrame(mmdSceneRef.value?.canvasElement())
 
   return undefined
 }
 
 const runtimeSnapshot = computed<ModelSettingsRuntimeSnapshot>(() => {
-  const hasModel = !!stageModelSelectedUrl.value
+  const hasModel = !!stageModelResolved.value
 
-  if (stageModelRenderer.value === 'live2d') {
+  if (stageModelResolved.value?.renderer === 'live2d') {
     const phase = resolveComponentStateToRuntimePhase(live2dComponentState.value, { hasModel })
 
     return createEmptyModelSettingsRuntimeSnapshot({
@@ -116,7 +115,7 @@ const runtimeSnapshot = computed<ModelSettingsRuntimeSnapshot>(() => {
     })
   }
 
-  if (stageModelRenderer.value === 'vrm') {
+  if (stageModelResolved.value?.renderer === 'vrm') {
     return createEmptyModelSettingsRuntimeSnapshot({
       ownerInstanceId: vrmPreviewStageInstanceId,
       renderer: 'vrm',
@@ -128,7 +127,7 @@ const runtimeSnapshot = computed<ModelSettingsRuntimeSnapshot>(() => {
     })
   }
 
-  if (stageModelRenderer.value === 'spine') {
+  if (stageModelResolved.value?.renderer === 'spine') {
     const phase = resolveComponentStateToRuntimePhase(spineComponentState.value, { hasModel })
 
     return createEmptyModelSettingsRuntimeSnapshot({
@@ -142,7 +141,7 @@ const runtimeSnapshot = computed<ModelSettingsRuntimeSnapshot>(() => {
     })
   }
 
-  if (stageModelRenderer.value === 'tachie') {
+  if (stageModelResolved.value?.renderer === 'tachie') {
     const phase = resolveComponentStateToRuntimePhase(tachieComponentState.value, { hasModel })
 
     return createEmptyModelSettingsRuntimeSnapshot({
@@ -156,7 +155,7 @@ const runtimeSnapshot = computed<ModelSettingsRuntimeSnapshot>(() => {
     })
   }
 
-  if (stageModelRenderer.value === 'mmd') {
+  if (stageModelResolved.value?.renderer === 'mmd') {
     const phase = resolveComponentStateToRuntimePhase(mmdComponentState.value, { hasModel })
 
     return createEmptyModelSettingsRuntimeSnapshot({
@@ -202,31 +201,31 @@ const cursorPosition = computed(() => ({
 </script>
 
 <template>
-  <template v-if="stageModelRenderer === 'live2d'">
+  <template v-if="stageModelRenderer === 'live2d' && stageModelResolved?.renderer === 'live2d'">
     <div :class="live2dSceneClassList">
       <Live2DScene
         ref="live2dSceneRef"
         v-model:state="live2dComponentState"
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
+        :model-src="stageModelResolved?.modelSrc"
+        :model-id="stageModelResolved?.modelId"
         :cursor-position="cursorPosition"
         :theme-colors-hue="themeColorsHue"
         :theme-colors-hue-dynamic="themeColorsHueDynamic"
       />
     </div>
   </template>
-  <template v-if="stageModelRenderer === 'vrm'">
+  <template v-if="stageModelRenderer === 'vrm' && stageModelResolved?.renderer === 'vrm'">
     <div :class="vrmSceneClassList">
-      <ThreeScene ref="vrmSceneRef" :cursor-position="cursorPosition" :model-src="stageModelSelectedUrl" />
+      <ThreeScene ref="vrmSceneRef" :cursor-position="cursorPosition" :model-src="stageModelResolved?.modelSrc" />
     </div>
   </template>
-  <template v-if="stageModelRenderer === 'spine'">
+  <template v-if="stageModelRenderer === 'spine' && stageModelResolved?.renderer === 'spine'">
     <div :class="spineSceneClassList">
       <SpineScene
         ref="spineSceneRef"
         v-model:state="spineComponentState"
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
+        :model-src="stageModelResolved?.modelSrc"
+        :model-id="stageModelResolved?.modelId"
         :premultiplied-alpha="spinePremultipliedAlpha"
         :default-mix-duration="spineDefaultMixDuration"
         :idle-animation-enabled="spineIdleAnimationEnabled"
@@ -235,25 +234,25 @@ const cursorPosition = computed(() => ({
       />
     </div>
   </template>
-  <template v-if="stageModelRenderer === 'mmd'">
+  <template v-if="stageModelRenderer === 'mmd' && stageModelResolved?.renderer === 'mmd'">
     <div :class="mmdSceneClassList">
       <MMDScene
         ref="mmdSceneRef"
         v-model:state="mmdComponentState"
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
+        :model-src="stageModelResolved?.modelSrc"
+        :model-id="stageModelResolved?.modelId"
         :cursor-position="cursorPosition"
         :enable-orbit-controls="true"
       />
     </div>
   </template>
-  <template v-if="stageModelRenderer === 'tachie'">
+  <template v-if="stageModelRenderer === 'tachie' && stageModelResolved?.renderer === 'tachie'">
     <div :class="tachieSceneClassList">
       <TachieScene
         ref="tachieSceneRef"
         v-model:state="tachieComponentState"
-        :model-src="stageModelSelectedUrl"
-        :model-id="stageModelSelected"
+        :model-src="stageModelResolved?.modelSrc"
+        :model-id="stageModelResolved?.modelId"
         :theme-colors-hue="themeColorsHue"
         :theme-colors-hue-dynamic="themeColorsHueDynamic"
       />

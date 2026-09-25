@@ -4,22 +4,25 @@ import type { TachieValidationReport } from '@proj-airi/stage-ui-tachie'
 
 import type { DisplayModel } from '../../../../stores/display-models'
 
-import { validateLive2DZip } from '@proj-airi/stage-ui-live2d'
+import { errorMessageFromUnknown } from '@proj-airi/stage-shared'
+import { validateLive2DZip } from '@proj-airi/stage-ui-live2d/utils/live2d-validator'
 import { TACHIE_ARCHIVE_SUFFIX, validateTachieZip } from '@proj-airi/stage-ui-tachie'
 import { Button } from '@proj-airi/ui'
 import { useFileDialog } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuRoot, DropdownMenuTrigger, EditableArea, EditableEditTrigger, EditableInput, EditablePreview, EditableRoot, EditableSubmitTrigger } from 'reka-ui'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import Live2DReportModal from './reports/live2d/modal.vue'
 import TachieReportModal from './tachieReportModal.vue'
 
 import { DisplayModelFormat, useDisplayModelsStore } from '../../../../stores/display-models'
+import { validateDisplayModelReplacement } from './repair-validation'
 
 const props = defineProps<{
   selectedModel?: DisplayModel
+  selectedModelId?: string
 }>()
 const emits = defineEmits<{
   (e: 'close', value: void): void
@@ -27,8 +30,10 @@ const emits = defineEmits<{
 }>()
 
 const displayModelStore = useDisplayModelsStore()
-const { displayModelsFromIndexedDBLoading, displayModels } = storeToRefs(displayModelStore)
+const { displayModelsFromIndexedDBLoading, displayModels, displayModelLoadErrorMetadata } = storeToRefs(displayModelStore)
 const { t } = useI18n()
+
+const unreadableDisplayModels = computed(() => Object.values(displayModelLoadErrorMetadata.value).sort((a, b) => b.importedAt - a.importedAt))
 
 function handleRemoveModel(model: DisplayModel) {
   const wasActive = props.selectedModel?.id === model.id
@@ -50,7 +55,7 @@ const showTachieReportModal = ref(false)
 const pendingTachieFile = ref<File | null>(null)
 const tachieValidationReport = ref<TachieValidationReport | null>(null)
 
-watch(() => props.selectedModel?.id, (modelId) => {
+watch(() => props.selectedModel?.id ?? props.selectedModelId, (modelId) => {
   highlightDisplayModelCard.value = modelId
 }, { immediate: true })
 
@@ -121,6 +126,56 @@ function handlePick(m: DisplayModel) {
   highlightDisplayModelCard.value = m.id
   emits('pick', m)
   emits('close', undefined)
+}
+
+const repairDialog = useFileDialog({ multiple: false, reset: true })
+const repairTargetId = ref<string>()
+const repairErrors = ref<Record<string, string>>({})
+const repairingModelId = ref<string>()
+
+function startRepair(modelId: string) {
+  repairTargetId.value = modelId
+  const nextErrors = { ...repairErrors.value }
+  delete nextErrors[modelId]
+  repairErrors.value = nextErrors
+  repairDialog.open()
+}
+
+async function handleRepairFile(files: FileList | null) {
+  const modelId = repairTargetId.value
+  const replacementFile = files?.[0]
+  if (!modelId || !replacementFile)
+    return
+
+  const metadata = displayModelLoadErrorMetadata.value[modelId]
+  if (!metadata)
+    return
+
+  repairingModelId.value = modelId
+  const validation = await validateDisplayModelReplacement(metadata.format, replacementFile)
+  if (!validation.valid) {
+    repairErrors.value = { ...repairErrors.value, [modelId]: validation.message ?? 'The replacement file is not valid.' }
+    repairingModelId.value = undefined
+    return
+  }
+
+  try {
+    const repairedModel = await displayModelStore.replaceDisplayModelFilePayload(modelId, replacementFile)
+    highlightDisplayModelCard.value = repairedModel.id
+    // Only reselect the repaired record when it was the current durable selection.
+    // This keeps repairing an inactive legacy record from changing the stage.
+    if (props.selectedModelId === modelId)
+      handlePick(repairedModel)
+  }
+  catch (error) {
+    repairErrors.value = {
+      ...repairErrors.value,
+      [modelId]: errorMessageFromUnknown(error, 'The model file could not be repaired.'),
+    }
+  }
+  finally {
+    repairingModelId.value = undefined
+  }
 }
 
 function handleMobilePick() {
@@ -211,6 +266,7 @@ vrmDialog.onChange(handleAddVRMModel)
 spineDialog.onChange(handleAddSpineModel)
 tachieDialog.onChange(handleAddTachieModel)
 mmdDialog.onChange(handleAddMMDModel)
+repairDialog.onChange(handleRepairFile)
 </script>
 
 <template>
@@ -318,6 +374,34 @@ mmdDialog.onChange(handleAddMMDModel)
     </div>
     <div class="flex-1 overflow-x-auto overflow-y-hidden md:flex-none sm:overflow-x-hidden sm:overflow-y-scroll" h-full w-full>
       <div class="w-full flex gap-2 md:grid lg:grid-cols-2 md:grid-cols-1 lg:max-h-80dvh">
+        <div
+          v-for="model of unreadableDisplayModels"
+          :key="`unreadable-${model.id}`"
+          class="relative gap-2 border border-red-300/60 rounded-xl bg-red-50/60 p-4 dark:border-red-800/60 dark:bg-red-950/20"
+          :class="highlightDisplayModelCard === model.id ? 'ring-3 ring-primary-400' : 'ring-0 ring-transparent'"
+          :aria-label="`${model.name} unavailable`"
+        >
+          <div flex flex-col gap-2>
+            <div text-lg font-semibold>
+              {{ model.name }}
+            </div>
+            <div text-sm text-red-700 dark:text-red-300>
+              Model file unavailable. This older model record needs the original file before it can be loaded.
+            </div>
+            <div v-if="model.fileName" text-xs text-neutral-500 dark:text-neutral-400>
+              {{ model.fileName }}
+            </div>
+            <div v-if="repairErrors[model.id]" text-sm text-red-700 dark:text-red-300>
+              {{ repairErrors[model.id] }}
+            </div>
+            <Button
+              :disabled="repairingModelId === model.id"
+              @click.stop="startRepair(model.id)"
+            >
+              {{ repairingModelId === model.id ? 'Repairing…' : 'Repair model file' }}
+            </Button>
+          </div>
+        </div>
         <div
           v-for="(model) of displayModels"
           :key="model.id"

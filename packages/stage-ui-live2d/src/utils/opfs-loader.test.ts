@@ -137,7 +137,7 @@ describe('opfs cache full directory persistence', () => {
 
     await OPFSCache.save('live2d-model', zipBlob, 'blob:first')
 
-    const files = await OPFSCache.get('live2d-model', 'blob:second')
+    const files = await OPFSCache.get('live2d-model', 'blob:first')
 
     expect(files).not.toBeNull()
     expect(filePaths(files ?? [])).toEqual([
@@ -166,13 +166,25 @@ describe('opfs cache full directory persistence', () => {
     await OPFSCache.writeFile(
       dir as unknown as FileSystemDirectoryHandle,
       '__meta.json',
-      JSON.stringify({ sourceUrl: 'blob:first', version: 3 }),
+      JSON.stringify({ sourceUrl: 'blob:first', version: 4 }),
     )
 
-    const files = await OPFSCache.get('metadata-model', 'blob:second')
+    const files = await OPFSCache.get('metadata-model', 'blob:first')
 
     expect(files).not.toBeNull()
     expect(filePaths(files ?? [])).toEqual(['model.model3.json'])
+  })
+
+  it('invalidates a cache when the source URL changes, including blob URLs', async () => {
+    const zipBlob = await createZip({
+      'model.model3.json': JSON.stringify({ Version: 3 }),
+    })
+
+    await OPFSCache.save('changed-source-model', zipBlob, 'blob:first')
+    const files = await OPFSCache.get('changed-source-model', 'blob:second')
+
+    expect(files).toBeNull()
+    await expect(root.getDirectoryHandle('changed-source-model', { create: false })).rejects.toThrow('Directory not found')
   })
 
   it('keeps the original model3.json text without reconstructing or double-encoding paths', async () => {
@@ -191,7 +203,7 @@ describe('opfs cache full directory persistence', () => {
     })
 
     await OPFSCache.save('encoded-model', zipBlob, 'blob:first')
-    const files = await OPFSCache.get('encoded-model', 'blob:second')
+    const files = await OPFSCache.get('encoded-model', 'blob:first')
     const settingsFile = files?.find(file => file.webkitRelativePath === 'model.model3.json')
 
     expect(settingsFile).toBeDefined()
@@ -226,7 +238,7 @@ describe('opfs cache full directory persistence', () => {
     await expect(root.getDirectoryHandle('remote-model', { create: false })).rejects.toThrow('Directory not found')
   })
 
-  it('does not invalidate blob URL cache entries when the stable model key matches', async () => {
+  it('invalidates a blob cache when a new blob source uses the same model key', async () => {
     const zipBlob = await createZip({
       'model.model3.json': JSON.stringify({
         Version: 3,
@@ -239,12 +251,71 @@ describe('opfs cache full directory persistence', () => {
     await OPFSCache.save('blob-model', zipBlob, 'blob:first')
     const files = await OPFSCache.get('blob-model', 'blob:second')
 
+    expect(files).toBeNull()
+    await expect(root.getDirectoryHandle('blob-model', { create: false })).rejects.toThrow('Directory not found')
+  })
+
+  it('hits a current-schema cache only for the exact source URL', async () => {
+    const zipBlob = await createZip({
+      'model.model3.json': JSON.stringify({ Version: 3 }),
+    })
+
+    await OPFSCache.save('same-source-model', zipBlob, 'blob:stable')
+    const files = await OPFSCache.get('same-source-model', 'blob:stable')
+
     expect(files).not.toBeNull()
-    expect(filePaths(files ?? [])).toEqual([
-      'model.moc3',
+    expect(filePaths(files ?? [])).toEqual(['model.model3.json'])
+  })
+
+  it('invalidates a non-blob cache when an Aqua blob replaces a Hiyori source', async () => {
+    const zipBlob = await createZip({
+      'hiyori_pro_zh/runtime/hiyori_pro_t11.model3.json': JSON.stringify({ Version: 3, Name: 'Hiyori' }),
+    })
+
+    await OPFSCache.save('shared-model-id', zipBlob, 'http://localhost/hiyori.zip')
+    const files = await OPFSCache.get('shared-model-id', 'blob:aqua')
+
+    expect(files).toBeNull()
+    await expect(root.getDirectoryHandle('shared-model-id', { create: false })).rejects.toThrow('Directory not found')
+  })
+
+  it('invalidates a current-schema cache whose source URL metadata is missing', async () => {
+    const dir = await root.getDirectoryHandle('missing-source-model', { create: true })
+    await OPFSCache.writeFile(
+      dir as unknown as FileSystemDirectoryHandle,
       'model.model3.json',
-      'texture.png',
-    ])
+      JSON.stringify({ Version: 3 }),
+    )
+    await OPFSCache.writeFile(
+      dir as unknown as FileSystemDirectoryHandle,
+      '__meta.json',
+      JSON.stringify({ version: 4 }),
+    )
+
+    const files = await OPFSCache.get('missing-source-model', 'blob:current')
+
+    expect(files).toBeNull()
+    await expect(root.getDirectoryHandle('missing-source-model', { create: false })).rejects.toThrow('Directory not found')
+  })
+
+  it('rebuilds a stale model-id cache with the new source before serving it', async () => {
+    const hiyoriZip = await createZip({
+      'hiyori_pro_zh/runtime/hiyori_pro_t11.model3.json': JSON.stringify({ Version: 3, Name: 'Hiyori' }),
+    })
+    const aquaZip = await createZip({
+      '1014100.model3.json': JSON.stringify({ Version: 3, Name: 'Aqua' }),
+    })
+
+    await OPFSCache.save('stale-aqua-id', hiyoriZip, 'blob:old-hiyori')
+    expect(await OPFSCache.get('stale-aqua-id', 'blob:new-aqua')).toBeNull()
+
+    await OPFSCache.save('stale-aqua-id', aquaZip, 'blob:new-aqua')
+    const files = await OPFSCache.get('stale-aqua-id', 'blob:new-aqua')
+    const settingsFile = files?.find(file => file.webkitRelativePath === '1014100.model3.json')
+
+    expect(settingsFile).toBeDefined()
+    expect(await settingsFile?.text()).toContain('Aqua')
+    expect(files?.some(file => file.webkitRelativePath.includes('hiyori_pro_zh'))).toBe(false)
   })
 
   it('reads an asar file response through arrayBuffer when Response.blob fails', async () => {
@@ -278,7 +349,10 @@ describe('opfs cache full directory persistence', () => {
     context.source = []
     await OPFSCache.saveMiddleware(context, vi.fn(async () => {}))
 
-    const files = await OPFSCache.get('middleware-model', 'blob:next')
+    const files = await OPFSCache.get(
+      'middleware-model',
+      'file:///C:/AIRI/resources/app.asar/out/renderer/assets/model.zip',
+    )
 
     expect(checkNext).toHaveBeenCalledTimes(1)
     expect(responseArrayBuffer).toHaveBeenCalledTimes(1)

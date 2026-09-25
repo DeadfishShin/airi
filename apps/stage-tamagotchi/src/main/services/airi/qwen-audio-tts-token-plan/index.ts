@@ -2,6 +2,7 @@ import type { Eventa } from '@moeru/eventa'
 import type { createContext, ElectronMainEmitOptions } from '@moeru/eventa/adapters/electron/main'
 import type { Lifecycle } from 'injeca'
 
+import type { QwenAudioTtsTokenPlanCredentialService } from '../qwen-audio-tts-token-plan-credentials'
 import type {
   QwenAudioTtsTokenPlanMainDiagnosticDetails,
   QwenAudioTtsTokenPlanMainMilestone,
@@ -58,6 +59,7 @@ export interface QwenAudioTtsTokenPlanServiceOptions {
   onFailure?: (sessionId: string, error: Error) => void
   onTelemetry?: (sessionId: string, telemetry: QwenAudioTtsTokenPlanTelemetry) => void
   socketFactory?: QwenAudioTtsTokenPlanSocketFactory
+  credentialStore?: Pick<QwenAudioTtsTokenPlanCredentialService, 'getRuntimeProfile'>
 }
 
 function sessionIdFromPayload(payload: { sessionId: string }): string {
@@ -135,7 +137,7 @@ export function createQwenAudioTtsTokenPlanService(options: QwenAudioTtsTokenPla
 
       let config
       try {
-        config = resolveQwenAudioTtsTokenPlanRuntimeConfig(options.environment)
+        config = resolveQwenAudioTtsTokenPlanRuntimeConfig(options.environment, options.credentialStore)
         options.onDiagnostic?.(sessionId, 'TOKEN_PLAN_CREDENTIAL_PRESENT', { credentialPresent: true })
       }
       catch (error) {
@@ -183,6 +185,7 @@ export function createQwenAudioTtsTokenPlanService(options: QwenAudioTtsTokenPla
         },
         socketFactory,
         now,
+        payload.model,
       )
       if (target)
         eventTargets.set(sessionId, target)
