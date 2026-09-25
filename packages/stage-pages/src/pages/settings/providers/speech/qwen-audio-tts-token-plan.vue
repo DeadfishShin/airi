@@ -559,6 +559,24 @@ onMounted(() => {
               </div>
               <div>
                 <dt class="font-medium">
+                  Commit acknowledgement
+                </dt>
+                <dd>{{ realtimeProbeResult.commitAckReceived ? 'received' : 'not received' }} / item ID {{ realtimeProbeResult.committedItemIdPresent ? 'present' : 'missing' }}</dd>
+              </div>
+              <div>
+                <dt class="font-medium">
+                  User item
+                </dt>
+                <dd>{{ realtimeProbeResult.userItemCreatedReceived ? 'created' : 'not received' }} / correlation {{ realtimeProbeResult.userItemCorrelationMatch ? 'matched' : 'not matched' }}</dd>
+              </div>
+              <div>
+                <dt class="font-medium">
+                  Transcription deltas
+                </dt>
+                <dd>{{ realtimeProbeResult.transcriptionDeltaEventCount }} / valid text+stash {{ realtimeProbeResult.validTextStashDeltaObserved ? 'yes' : 'no' }}</dd>
+              </div>
+              <div>
+                <dt class="font-medium">
                   Transcript
                 </dt>
                 <dd>{{ realtimeProbeResult.transcriptPresent ? realtimeProbeResult.transcript : 'not received' }}</dd>

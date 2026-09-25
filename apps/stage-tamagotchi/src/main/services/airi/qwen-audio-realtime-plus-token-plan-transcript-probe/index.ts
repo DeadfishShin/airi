@@ -123,6 +123,13 @@ function baseResult(): QwenAudioRealtimePlusTokenPlanProbeResult {
     audioChunksSent: 0,
     audioBytesSent: 0,
     commitSent: false,
+    commitAckReceived: false,
+    committedItemIdPresent: false,
+    userItemCreatedReceived: false,
+    userItemCorrelationMatch: false,
+    transcriptionDeltaEventCount: 0,
+    validTextStashDeltaObserved: false,
+    malformedPartialEventCount: 0,
     responseCreateSent: false,
     transcriptPresent: false,
   }
@@ -199,6 +206,12 @@ export async function runQwenAudioRealtimePlusTokenPlanProbe(
       }
       return true
     }
+    const captureCommittedItem = (itemId: string) => {
+      if (transcriptionItemId !== undefined && transcriptionItemId !== itemId)
+        return false
+      transcriptionItemId ??= itemId
+      return true
+    }
     const settle = (next: Partial<QwenAudioRealtimePlusTokenPlanProbeResult>) => {
       finish(next)
       if (!settled)
@@ -252,14 +265,32 @@ export async function runQwenAudioRealtimePlusTokenPlanProbe(
         arm(TRANSCRIPT_TIMEOUT_MS, 'TRANSCRIPT_TIMEOUT', 'Timed out waiting for completed input transcription.')
         return
       }
+      if (event.type === 'commit.ack') {
+        if (!captureCommittedItem(event.itemId))
+          return
+        result.commitAckReceived = true
+        result.committedItemIdPresent = true
+        return
+      }
+      if (event.type === 'user.item.created') {
+        if (!captureCommittedItem(event.itemId))
+          return
+        result.userItemCreatedReceived = true
+        result.userItemCorrelationMatch = true
+        return
+      }
       if (event.type === 'transcription.delta') {
         if (!matchesTranscriptionItem(event))
           return
+        result.transcriptionDeltaEventCount++
+        if (event.text || event.stash)
+          result.validTextStashDeltaObserved = true
         return
       }
       if (event.type === 'transcription.delta.malformed') {
         // A partial transcription event does not decide the probe result.
         // Wait for the completed event unless the event envelope itself is unreadable.
+        result.malformedPartialEventCount++
         return
       }
       if (event.type === 'transcription.completed') {

@@ -48,6 +48,8 @@ describe('token Plan realtime-plus transcript-only main probe', () => {
         socket.emit('open')
         socket.emit('message', JSON.stringify({ type: 'session.created' }))
         socket.emit('message', JSON.stringify({ type: 'session.updated' }))
+        socket.emit('message', JSON.stringify({ event_id: 'event_commit', type: 'input_audio_buffer.committed', previous_item_id: null, item_id: 'item_x' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.created', previous_item_id: null, item: { id: 'item_x', type: 'message', role: 'user', content: [{ type: 'input_audio' }] } }))
         socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'item_x', content_index: 0, text: 'AIRI', stash: ' probe' }))
         socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_x', content_index: 0, transcript: 'AIRI probe' }))
       }, 0)
@@ -66,12 +68,49 @@ describe('token Plan realtime-plus transcript-only main probe', () => {
       sessionCreated: true,
       sessionUpdated: true,
       commitSent: true,
+      commitAckReceived: true,
+      committedItemIdPresent: true,
+      userItemCreatedReceived: true,
+      userItemCorrelationMatch: true,
+      transcriptionDeltaEventCount: 1,
+      validTextStashDeltaObserved: true,
       responseCreateSent: false,
     })
     expect(sent.at(-1)).toEqual({ type: 'input_audio_buffer.commit' })
     expect(sent.some(frame => frame.type === 'response.create')).toBe(false)
     expect(JSON.stringify(result)).not.toContain('sk-sp-unit-test')
     expect(JSON.stringify(result)).not.toContain('AQ')
+    expect(socketFactory).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps commit acknowledgement and user-item creation non-terminal before transcript completion', async () => {
+    let socket!: FakeSocket
+    const socketFactory = vi.fn(() => {
+      socket = new FakeSocket()
+      setTimeout(() => {
+        socket.readyState = 1
+        socket.emit('open')
+        socket.emit('message', JSON.stringify({ type: 'session.created' }))
+        socket.emit('message', JSON.stringify({ type: 'session.updated' }))
+        socket.emit('message', JSON.stringify({ event_id: 'event_commit', type: 'input_audio_buffer.committed', item_id: 'item_user' }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.created', item: { id: 'item_user', type: 'message', role: 'user', content: [{ type: 'input_audio' }] } }))
+        socket.emit('message', JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_user', transcript: 'AIRI probe' }))
+      }, 0)
+      return socket
+    })
+
+    const result = await runQwenAudioRealtimePlusTokenPlanProbe(
+      () => ({ apiKey: 'sk-sp-unit-test' }),
+      { socketFactory, fixtureBytes, chunkPacingMs: 0 },
+    )
+
+    expect(result).toMatchObject({
+      responseClass: 'SUCCESS_TRANSCRIPT_ONLY',
+      commitAckReceived: true,
+      committedItemIdPresent: true,
+      userItemCreatedReceived: true,
+      userItemCorrelationMatch: true,
+    })
     expect(socketFactory).toHaveBeenCalledTimes(1)
   })
 

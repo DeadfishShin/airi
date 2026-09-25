@@ -51,6 +51,29 @@ describe('token Plan realtime-plus transcript-only probe protocol', () => {
     expect(() => parseQwenAudioRealtimePlusServerMessage('{')).toThrow()
   })
 
+  it('accepts the normal commit acknowledgement and matching user input item as non-terminal events', () => {
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      event_id: 'event_commit',
+      type: 'input_audio_buffer.committed',
+      previous_item_id: 'item_prev',
+      item_id: 'item_user',
+    }))).toEqual({ type: 'commit.ack', previousItemId: 'item_prev', itemId: 'item_user' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.created',
+      previous_item_id: 'item_prev',
+      item: {
+        id: 'item_user',
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_audio' }],
+      },
+    }))).toEqual({ type: 'user.item.created', previousItemId: 'item_prev', itemId: 'item_user' })
+    expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
+      type: 'conversation.item.created',
+      item: { id: 'item_assistant', type: 'message', role: 'assistant', content: [{ type: 'output_text' }] },
+    }))).toEqual({ type: 'unexpected-generation', eventType: 'conversation.item.created' })
+  })
+
   it('parses Qwen-Audio delta text and stash fields without requiring vendor response.delta', () => {
     expect(parseQwenAudioRealtimePlusServerMessage(JSON.stringify({
       type: 'conversation.item.input_audio_transcription.delta',

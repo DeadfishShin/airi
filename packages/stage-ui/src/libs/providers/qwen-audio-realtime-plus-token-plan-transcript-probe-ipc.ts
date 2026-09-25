@@ -64,6 +64,13 @@ export interface QwenAudioRealtimePlusTokenPlanProbeResult {
   audioChunksSent: number
   audioBytesSent: number
   commitSent: boolean
+  commitAckReceived: boolean
+  committedItemIdPresent: boolean
+  userItemCreatedReceived: boolean
+  userItemCorrelationMatch: boolean
+  transcriptionDeltaEventCount: number
+  validTextStashDeltaObserved: boolean
+  malformedPartialEventCount: number
   responseCreateSent: false
   transcriptPresent: boolean
   transcript?: string

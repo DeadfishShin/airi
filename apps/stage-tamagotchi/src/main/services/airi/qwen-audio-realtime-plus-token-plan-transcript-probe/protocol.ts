@@ -117,6 +117,8 @@ export function buildQwenAudioRealtimePlusAudioCommitFrame() {
 export type QwenAudioRealtimePlusServerMessage
   = | { type: 'session.created' }
     | { type: 'session.updated' }
+    | { type: 'commit.ack', itemId: string, previousItemId?: string | null }
+    | { type: 'user.item.created', itemId: string, previousItemId?: string | null }
     | { type: 'transcription.delta', itemId?: string, contentIndex?: number, text: string, stash: string }
     | { type: 'transcription.delta.malformed' }
     | { type: 'transcription.completed', itemId?: string, contentIndex?: number, transcript: string }
@@ -151,6 +153,13 @@ function optionalCorrelationFields(root: Record<string, unknown>) {
   } as { itemId?: string, contentIndex?: number }
 }
 
+function optionalPreviousItemId(root: Record<string, unknown>) {
+  const previousItemId = root.previous_item_id
+  if (previousItemId !== undefined && previousItemId !== null && (typeof previousItemId !== 'string' || !previousItemId))
+    return undefined
+  return previousItemId === undefined ? {} : { previousItemId }
+}
+
 /** Parses only bounded event fields; raw frames never leave the main process. */
 export function parseQwenAudioRealtimePlusServerMessage(message: unknown): QwenAudioRealtimePlusServerMessage {
   const root = record(JSON.parse(textFromMessage(message)) as unknown)
@@ -161,6 +170,29 @@ export function parseQwenAudioRealtimePlusServerMessage(message: unknown): QwenA
     throw new Error('Realtime probe event type is missing.')
   if (type === 'session.created' || type === 'session.updated')
     return { type }
+  if (type === 'input_audio_buffer.committed') {
+    if (typeof root.event_id !== 'string' || !root.event_id || typeof root.item_id !== 'string' || !root.item_id)
+      throw new Error('Realtime probe committed acknowledgement is malformed.')
+    const previousItemId = optionalPreviousItemId(root)
+    if (!previousItemId)
+      throw new Error('Realtime probe committed acknowledgement correlation is malformed.')
+    return { type: 'commit.ack', itemId: root.item_id, ...previousItemId }
+  }
+  if (type === 'conversation.item.created') {
+    const item = record(root.item)
+    if (!item || typeof item.id !== 'string' || !item.id || item.type !== 'message' || item.role !== 'user') {
+      if (item?.role === 'assistant')
+        return { type: 'unexpected-generation', eventType: type }
+      throw new Error('Realtime probe user item creation is malformed.')
+    }
+    const content = item.content
+    if (!Array.isArray(content) || !content.some(value => record(value)?.type === 'input_audio'))
+      throw new Error('Realtime probe user item does not contain input audio.')
+    const previousItemId = optionalPreviousItemId(root)
+    if (!previousItemId)
+      throw new Error('Realtime probe user item correlation is malformed.')
+    return { type: 'user.item.created', itemId: item.id, ...previousItemId }
+  }
   if (type === 'conversation.item.input_audio_transcription.delta') {
     const correlation = optionalCorrelationFields(root)
     if (!correlation || typeof root.text !== 'string' || typeof root.stash !== 'string')
